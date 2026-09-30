@@ -69,11 +69,15 @@ void CSheduler::internal_Registration()
 		final_states[R.Object] = it;
 	}
 
-	for (const auto& [object, it] : final_states)
+	// Apply in order: unregisters always, register only if it is the latest op for the object
+	for (u32 it = 0; it < Registration.size(); it++)
 	{
 		ItemReg& R = Registration[it];
 		if (R.OP)
-			internal_Register(R.Object, R.RT);
+		{
+			if (final_states[R.Object] == it)
+				internal_Register(R.Object, R.RT);
+		}
 		else
 			internal_Unregister(R.Object, R.RT);
 	}
