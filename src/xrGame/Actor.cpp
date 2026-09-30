@@ -198,6 +198,7 @@ CActor::CActor() : CEntityAlive(), current_ik_cam_shift(0)
 	inventory().SetBeltUseful(true);
 
 	m_pPersonWeLookingAt = NULL;
+	m_pInvBoxWeLookingAt = NULL;
 	m_pVehicleWeLookingAt = NULL;
 	m_pObjectWeLookingAt = NULL;
 	m_bPickupMode = false;

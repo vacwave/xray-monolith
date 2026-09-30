@@ -13,12 +13,12 @@ class CAnomalyDetector
 
 	struct SAnomalyInfo
 	{
-		CObject* object;
+		u16 object_id;
 		u32 time_registered;
 
-		bool operator ==(CObject* obj)
+		bool operator ==(u16 id)
 		{
-			return (object == obj);
+			return (object_id == id);
 		}
 	};
 
