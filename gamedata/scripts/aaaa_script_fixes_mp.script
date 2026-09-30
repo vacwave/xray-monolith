@@ -910,6 +910,7 @@ end
 -- Enabled only for monsters, might be stuttery
 local anomaly_restrictor_db = {}
 local anomaly_restrictor_db_k
+local anomaly_restrictor_db_pending_remove = {}
 local anomaly_restrictor_db_v
 local anomaly_restrictor_db_by_gvid = {}
 function anomaly_add_to_db(obj)
@@ -1051,7 +1052,7 @@ function anomaly_restrictor_update()
 					end
 				end
 			else
-				anomaly_restrictor_db[anomaly_restrictor_db_k] = nil
+				anomaly_restrictor_db_pending_remove[anomaly_restrictor_db_k] = anomaly_restrictor_db_v
 			end
 		else
 			-- Recalculate anomaly_amount_per_update to desired goal
@@ -1069,6 +1070,13 @@ function anomaly_restrictor_update()
 			else
 				anomaly_amount_per_update = 2
 			end
+
+			for k, v in pairs(anomaly_restrictor_db_pending_remove) do
+				if anomaly_restrictor_db[k] == v then
+					anomaly_restrictor_db[k] = nil
+				end
+			end
+			empty_table(anomaly_restrictor_db_pending_remove)
 
 			anomaly_restrictor_db_count = 0
 			anomaly_cycle_start_time = nil

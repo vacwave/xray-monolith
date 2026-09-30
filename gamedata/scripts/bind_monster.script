@@ -252,7 +252,7 @@ function generic_object_binder:death_callback(victim, who)
 		-- Alundaio
 		SendScriptCallback("monster_on_death_callback",victim,who)
 		self.st.death_time = game.get_game_time()
-		self.st.death_by_id = who:id()
+		self.st.death_by_id = who and who:id()
 		-- End Alundaio
 	end
 end
