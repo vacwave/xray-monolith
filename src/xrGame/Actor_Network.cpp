@@ -600,6 +600,7 @@ BOOL CActor::net_Spawn(CSE_Abstract* DC)
 	//	m_bJumpKeyPressed = ((mstate_wishful&mcJump)!=0);
 	//		
 	NET_SavedAccel.set(0, 0, 0);
+	m_vInertiaAccel.set(0, 0, 0);
 	NET_WasInterpolating = TRUE;
 
 	setEnabled(E->s_flags.is(M_SPAWN_OBJECT_LOCAL));

@@ -30,6 +30,118 @@ static const float s_fJumpTime = 0.3f;
 static const float s_fJumpGroundTime = 0.1f; // для снятия флажка Jump если на земле
 const float s_fFallTime = 0.2f;
 
+BOOL g_actor_overweight_rework = TRUE;
+
+//////////////////////////////////////////////////////////////////////////
+// Overweight rework tuning
+// r = TotalWeight / MaxCarryWeight, r_max = MaxWalkWeight / MaxCarryWeight (can't-walk weight)
+// All curves are piecewise-linear between anchors, clamped at the ends.
+//////////////////////////////////////////////////////////////////////////
+namespace overweight_tune
+{
+	static const float r_overweight		= 0.33f;	// speed + turn penalties start
+	static const float r_heavy			= 0.60f;	// extra stamina drain starts
+	static const float r_full			= 1.00f;	// full carry weight
+
+	// movement speed multiplier (1 at r_overweight)
+	static const float speed_at_heavy	= 0.96f;
+	static const float speed_at_full	= 0.90f;
+	static const float speed_at_max		= 0.60f;
+
+	// camera turn speed multiplier (1 at r_overweight)
+	static const float look_at_heavy	= 0.9625f;
+	static const float look_at_full		= 0.8875f;
+	static const float look_at_max		= 0.55f;
+
+	// walk stamina drain multiplier (1 at r_heavy)
+	static const float stamina_at_full	= 1.125f;
+	static const float stamina_at_max	= 2.00f;
+
+	// inertia strength 0..1
+	static const float r_inertia_low	= 0.70f;	// end of the light-load inertia band
+	static const float inertia_base		= 0.05f;	// r = 0
+	static const float inertia_at_low	= 0.15f;	// r = r_inertia_low
+	static const float inertia_at_full	= 0.25f;	// r = r_full
+	static const float inertia_at_max	= 1.00f;	// r = r_max
+	// shape of the r_full -> r_max segment: 1 = linear, >1 = stays low longer, then rises steeply near r_max
+	static const float inertia_high_curve = 2.5f;
+
+	// start-up curve: inertia effect while speeding up scales from start_floor (standing still)
+	// to 1 (at target speed) along (speed fraction ^ start_curve); >1 = snappier start
+	static const float inertia_start_floor = 0.20f;
+	static const float inertia_start_curve = 2.0f;
+
+	// low-speed scaling: inertia effect scales from lowspeed_floor (barely moving) to 1 at walk speed
+	// along (speed fraction ^ lowspeed_curve); speed fraction = accel magnitude / m_fWalkAccel
+	static const float inertia_lowspeed_floor = 0.10f;
+	static const float inertia_lowspeed_curve = 1.5f;
+	// above r_full the curve exponent rises linearly to this value at r_max (slow movement stays responsive when heavy)
+	static const float inertia_lowspeed_curve_max = 3.5f;
+
+	// smoothing time constant (seconds) at inertia 1.0; scaled linearly by inertia strength
+	static const float accel_time_full	= 2.0f;		// speeding up / changing direction
+	static const float decel_time_full	= 1.2f;		// slowing down / stopping
+	// with no input, snap smoothed accel to zero below this magnitude
+	// (CPHActorCharacter::SetAcceleration ignores changes smaller than 0.5)
+	static const float stop_snap_accel	= 1.0f;
+}
+
+static float overweight_lerp(float r, float r0, float v0, float r1, float v1)
+{
+	if (r <= r0)
+		return v0;
+	if (r >= r1)
+		return v1;
+	if (r1 - r0 <= EPS)
+		return v1;
+	return v0 + (v1 - v0) * (r - r0) / (r1 - r0);
+}
+
+// r = TotalWeight / MaxCarryWeight (0 when disabled, godmode or not single player)
+// r_max = MaxWalkWeight / MaxCarryWeight (can't-walk ratio), kept above r_full
+static void overweight_ratios(const CActor* actor, float& r, float& r_max)
+{
+	using namespace overweight_tune;
+	r = 0.f;
+	r_max = r_full + 0.01f;
+	if (!g_actor_overweight_rework || !IsGameTypeSingle() || GodMode())
+		return;
+	float max_w = actor->MaxCarryWeight();
+	if (max_w <= EPS)
+		return;
+	r = actor->inventory().TotalWeight() / max_w;
+	r_max = _max(actor->MaxWalkWeight() / max_w, r_full + 0.01f);
+}
+
+// piecewise-linear through (r_overweight, v_ov) (r_heavy, v_heavy) (r_full, v_full) (r_max, v_max)
+static float overweight_curve(float r, float r_max, float v_ov, float v_heavy, float v_full, float v_max)
+{
+	using namespace overweight_tune;
+	if (r < r_heavy)
+		return overweight_lerp(r, r_overweight, v_ov, r_heavy, v_heavy);
+	if (r < r_full)
+		return overweight_lerp(r, r_heavy, v_heavy, r_full, v_full);
+	return overweight_lerp(r, r_full, v_full, r_max, v_max);
+}
+
+// movement inertia strength 0..1
+static float overweight_inertia(float r, float r_max)
+{
+	using namespace overweight_tune;
+	float res;
+	if (r < r_inertia_low)
+		res = overweight_lerp(r, 0.f, inertia_base, r_inertia_low, inertia_at_low);
+	else if (r < r_full)
+		res = overweight_lerp(r, r_inertia_low, inertia_at_low, r_full, inertia_at_full);
+	else
+	{
+		float u = overweight_lerp(r, r_full, 0.f, r_max, 1.f);
+		res = inertia_at_full + (inertia_at_max - inertia_at_full) * powf(u, inertia_high_curve);
+	}
+	clamp(res, 0.f, 1.f);
+	return res;
+}
+
 IC static void generate_orthonormal_basis1(const Fvector& dir, Fvector& updir, Fvector& right)
 {
 	right.crossproduct(dir, updir); //. <->
@@ -312,6 +424,8 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
 						scale *= m_fWalk_StrafeFactor;
 				}
 
+				scale *= OverweightSpeedFactor(); // overweight speed penalty
+
 				vControlAccel.mul(scale);
 				cam_eff_factor = scale;
 			} //scale>EPS
@@ -368,6 +482,54 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
 	Fmatrix mOrient;
 	mOrient.rotateY(-r_model_yaw);
 	mOrient.transform_dir(vControlAccel);
+
+	// inertia is applied in world space so turning the camera does not instantly redirect momentum
+	ApplyMovementInertia(vControlAccel, dt);
+}
+
+void CActor::ApplyMovementInertia(Fvector& vControlAccel, float dt)
+{
+	using namespace overweight_tune;
+
+	if (!g_actor_overweight_rework || !IsGameTypeSingle() || (mstate_real & mcClimb) || dt <= 0.f)
+	{
+		m_vInertiaAccel.set(vControlAccel);
+		return;
+	}
+
+	CPHMovementControl::EEnvironment env = character_physics_support()->movement()->Environment();
+	if (env != CPHMovementControl::peOnGround && env != CPHMovementControl::peAtWall)
+		return; // airborne: raw air control passes through, momentum state frozen
+
+	float r, r_max;
+	overweight_ratios(this, r, r_max);
+	float inertia = overweight_inertia(r, r_max);
+	float target_mag = vControlAccel.magnitude();
+	float cur_mag = m_vInertiaAccel.magnitude();
+	float speed_f = m_fWalkAccel > EPS ? _max(target_mag, cur_mag) / m_fWalkAccel : 1.f;
+	clamp(speed_f, 0.f, 1.f);
+	float low_curve = overweight_lerp(r, r_full, inertia_lowspeed_curve, r_max, inertia_lowspeed_curve_max);
+	inertia *= inertia_lowspeed_floor + (1.f - inertia_lowspeed_floor) * powf(speed_f, low_curve);
+
+	float t;
+	if (target_mag >= cur_mag)
+	{
+		float f = target_mag > EPS ? cur_mag / target_mag : 1.f;
+		clamp(f, 0.f, 1.f);
+		float start_k = inertia_start_floor + (1.f - inertia_start_floor) * powf(f, inertia_start_curve);
+		t = inertia * accel_time_full * start_k;
+	}
+	else
+		t = inertia * decel_time_full;
+	if (t > EPS)
+		m_vInertiaAccel.lerp(m_vInertiaAccel, vControlAccel, 1.f - expf(-dt / t));
+	else
+		m_vInertiaAccel.set(vControlAccel);
+
+	if (target_mag < EPS && m_vInertiaAccel.magnitude() < stop_snap_accel)
+		m_vInertiaAccel.set(0.f, 0.f, 0.f);
+
+	vControlAccel.set(m_vInertiaAccel);
 }
 
 #define ACTOR_ANIM_SECT "actor_animation"
@@ -730,4 +892,28 @@ float CActor::get_additional_weight() const
 	}
 
 	return res;
+}
+
+float CActor::OverweightSpeedFactor() const
+{
+	using namespace overweight_tune;
+	float r, r_max;
+	overweight_ratios(this, r, r_max);
+	return overweight_curve(r, r_max, 1.f, speed_at_heavy, speed_at_full, speed_at_max);
+}
+
+float CActor::OverweightLookFactor() const
+{
+	using namespace overweight_tune;
+	float r, r_max;
+	overweight_ratios(this, r, r_max);
+	return overweight_curve(r, r_max, 1.f, look_at_heavy, look_at_full, look_at_max);
+}
+
+float CActor::OverweightStaminaFactor() const
+{
+	using namespace overweight_tune;
+	float r, r_max;
+	overweight_ratios(this, r, r_max);
+	return overweight_curve(r, r_max, 1.f, 1.f, stamina_at_full, stamina_at_max);
 }

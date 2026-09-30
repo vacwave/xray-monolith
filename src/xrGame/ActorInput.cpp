@@ -750,6 +750,9 @@ float CActor::GetLookFactor()
 			factor *= outfit->GetControlInertionFactor();
 	}
 
+	// Overweight rework: slower turning when overloaded (factor divides look speed)
+	factor /= OverweightLookFactor();
+
     VERIFY(!fis_zero(factor));
 
 	if (cam_freelook != eflDisabled)

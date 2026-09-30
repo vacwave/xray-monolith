@@ -475,6 +475,8 @@ protected:
 	u32 mstate_real;
 
 	BOOL m_bJumpKeyPressed;
+	Fvector m_vInertiaAccel; // smoothed world-space control accel (overweight inertia), not saved
+	void ApplyMovementInertia(Fvector& vControlAccel, float dt);
 
 public:
 	float m_fWalkAccel;
@@ -523,6 +525,11 @@ public:
 	virtual float MaxCarryWeight() const;
 	float MaxWalkWeight() const;
 	float get_additional_weight() const;
+
+	// Overweight rework (tunables in Actor_Movement.cpp, namespace overweight_tune)
+	float OverweightSpeedFactor() const;   // <=1, movement speed multiplier
+	float OverweightLookFactor() const;    // <=1, camera turn speed multiplier
+	float OverweightStaminaFactor() const; // >=1, walk stamina drain multiplier
 
 #ifdef STATIONARYMGUN_NEW
 	float GetWeaponAccuracyStm();
