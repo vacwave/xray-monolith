@@ -772,6 +772,20 @@ void CPHSimpleCharacter::PhTune(dReal step)
 			              -m.mass * (50.f) * (!b_lose_control && !(is_contact || (b_any_contacts))), //&&!b_climb
 			              -sidedir[2] * vProj * (500.f + 200.f * b_clamb_jump) * m_friction_factor
 			);
+
+		// contact friction is zero while controlling, so gravity's cross-slope component would
+		// drag the character towards the fall line instead of the look direction: cancel it
+		if (!b_lose_control && !b_clamb_jump && !m_elevator_state.Active() && b_good_graund)
+		{
+			dVector3 lat;
+			dCROSS(lat, =, m_ground_contact_normal, m_control_force);
+			if (dDOT(lat, lat) > EPS)
+			{
+				accurate_normalize(lat);
+				dReal k = lat[1] * m.mass * ph_world->Gravity();
+				dBodyAddForce(m_body, lat[0] * k, lat[1] * k, lat[2] * k);
+			}
+		}
 #ifdef DEBUG
 		if(debug_output().ph_dbg_draw_mask().test(phDbgCharacterControl))
 		{
