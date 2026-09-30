@@ -7,7 +7,6 @@ class ENGINE_API CSheduler
 private:
 	struct Item
 	{
-		shared_str scheduled_name;
 		u32 dwTimeForExecute;
 		u32 dwTimeOfLastExecute;
 		ISheduled* Object;

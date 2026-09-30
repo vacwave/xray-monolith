@@ -810,7 +810,7 @@ void CKinematics::CalculateWallmarks()
 	}
 }
 
-void CKinematics::RenderWallmark(intrusive_ptr<CSkeletonWallmark> wm, FVF::LIT* & V)
+void CKinematics::RenderWallmark(const intrusive_ptr<CSkeletonWallmark>& wm, FVF::LIT* & V)
 {
 	PROF_EVENT("CKinematics::RenderWallmark");
 	VERIFY(wm);
@@ -820,11 +820,15 @@ void CKinematics::RenderWallmark(intrusive_ptr<CSkeletonWallmark> wm, FVF::LIT* 
 
 	if ((wm == 0) || (0 == bones) || (0 == bone_instances)) return;
 
+	float w = wm->TimeEnd() == -1.f ? 0.f : (RDEVICE.fTimeGlobal - wm->TimeStart()) / wm->TimeEnd();
+	int aC = iFloor(w * 255.f);
+	clamp(aC, 0, 255);
+	u32 color = color_rgba(128, 128, 128, aC);
+
 	// skin vertices
 	for (u32 f_idx = 0; f_idx < wm->m_Faces.size(); f_idx++)
 	{
-		CSkeletonWallmark::WMFace F = wm->m_Faces[f_idx];
-		float w = wm->TimeEnd() == -1.f ? 0.f : (RDEVICE.fTimeGlobal - wm->TimeStart()) / wm->TimeEnd();
+		const CSkeletonWallmark::WMFace& F = wm->m_Faces[f_idx];
 		for (u32 k = 0; k < 3; k++)
 		{
 			Fvector P;
@@ -887,9 +891,7 @@ void CKinematics::RenderWallmark(intrusive_ptr<CSkeletonWallmark> wm, FVF::LIT* 
 			}
 			wm->XFORM()->transform_tiny(V->p, P);
 			V->t.set(F.uv[k]);
-			int aC = iFloor(w * 255.f);
-			clamp(aC, 0, 255);
-			V->color = color_rgba(128, 128, 128, aC);
+			V->color = color;
 			V++;
 		}
 	}
