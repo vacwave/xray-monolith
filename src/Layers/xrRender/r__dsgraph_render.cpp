@@ -513,7 +513,7 @@ void CDSGraphManager::r_dsgraph_capture_lights()
 	});
 #endif
 
-	for (ISpatialShared spatial : lstLights)
+	for (const ISpatialShared& spatial : lstLights)
 	{
 		if (0 == spatial) continue; spatial->spatial_updatesector();
 		CSector* sector = (CSector*)spatial->spatial.sector;

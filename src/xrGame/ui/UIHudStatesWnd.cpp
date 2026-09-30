@@ -376,7 +376,7 @@ void CUIHudStatesWnd::UpdateActiveItemInfo(CActor* actor)
 
 		//		UIWeaponBack.SetText		( str_name.c_str() );
 		m_fire_mode->SetText(m_item_info.fire_mode.c_str());
-		SetAmmoIcon(m_item_info.icon.c_str());
+		SetAmmoIcon(m_item_info.icon);
 
 		m_ui_weapon_cur_ammo->Show(true);
 		m_ui_weapon_fmj_ammo->Show(true);
@@ -422,7 +422,7 @@ void CUIHudStatesWnd::UpdateActiveItemInfo(CActor* actor)
 	{
 		stm->GetBriefInfo(m_item_info);
 
-		SetAmmoIcon(m_item_info.icon.c_str());
+		SetAmmoIcon(m_item_info.icon);
 		m_fire_mode->SetText(m_item_info.fire_mode.c_str());
 
 		m_ui_weapon_cur_ammo->SetText(m_item_info.cur_ammo.c_str());
@@ -703,7 +703,7 @@ void CUIHudStatesWnd::UpdateIndicatorType(CActor* actor, ALife::EInfluenceType t
 	protect += (helmet) ? helmet->GetDefHitTypeProtection(hit_type) : 0.0f;
 	protect += actor->GetProtection_ArtefactsOnBelt(hit_type);
 
-	CEntityCondition::BOOSTER_MAP& cur_booster_influences = actor->conditions().GetCurBoosterInfluences();
+	const CEntityCondition::BOOSTER_MAP& cur_booster_influences = actor->conditions().GetCurBoosterInfluencesRef();
 	CEntityCondition::BOOSTER_MAP::const_iterator it;
 	if (hit_type == ALife::eHitTypeChemicalBurn)
 	{
@@ -853,7 +853,7 @@ void CUIHudStatesWnd::FakeUpdateIndicatorType(u8 t, float power)
 	protect += (helmet) ? helmet->GetDefHitTypeProtection(hit_type) : 0.0f;
 	protect += actor->GetProtection_ArtefactsOnBelt(hit_type);
 
-	CEntityCondition::BOOSTER_MAP cur_booster_influences = actor->conditions().GetCurBoosterInfluences();
+	const CEntityCondition::BOOSTER_MAP& cur_booster_influences = actor->conditions().GetCurBoosterInfluencesRef();
 	CEntityCondition::BOOSTER_MAP::const_iterator it;
 	if (hit_type == ALife::eHitTypeChemicalBurn)
 	{

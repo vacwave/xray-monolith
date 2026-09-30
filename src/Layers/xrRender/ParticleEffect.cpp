@@ -178,10 +178,11 @@ void CParticleEffect::OnFrame(u32 frame_dt)
 				{
 					vis.box.invalidate();
 					float p_size = 0.f;
+					const bool outside_view = !RImplementation.ViewBase.testSphere_dirty(vis.sphere.P, vis.sphere.R);
 					for (u32 i = 0; i < p_cnt; i++)
 					{
 						Particle& m = particles[i];
-						if(!RImplementation.ViewBase.testSphere_dirty(vis.sphere.P, vis.sphere.R))
+						if (outside_view)
 						{
 							m.posI.set(m.pos);
 							m.rotI.set(m.rot);
@@ -517,6 +518,9 @@ bool ParticleRenderStream(FVF::LIT* pv, u32 count, PAPI::Particle * particles, C
 	// But it must be 0xFFFFFFFF or otherwise some particles won't play
 	float angle = 0xFFFFFFFF;
 
+	float dt = 1.f-10.f*Device.fTimeDelta;
+	clamp(dt,0.f,0.99f);
+	const float fog_dist_sq = _sqr(g_pGamePersistent->Environment().CurrentEnv->fog_distance);
 
 	for (u32 i = 0; i != count; ++i)
 	{
@@ -531,8 +535,6 @@ bool ParticleRenderStream(FVF::LIT* pv, u32 count, PAPI::Particle * particles, C
 			}
 			else
 			{
-				float dt = 1.f-10.f*Device.fTimeDelta;
-				clamp(dt,0.f,0.99f);
 				m.posI.inertion(m.pos, dt);
 				m.rotI.inertion(m.rot, dt);
 				m.velI.inertion(m.vel, dt);
@@ -543,7 +545,7 @@ bool ParticleRenderStream(FVF::LIT* pv, u32 count, PAPI::Particle * particles, C
 		Fvector wp_eff;
 		pPE->m_XFORM.transform_tiny(wp_eff, m.posI);
 
-		if (Device.vCameraPosition.distance_to_sqr(wp_eff) > _sqr(g_pGamePersistent->Environment().CurrentEnv->fog_distance))
+		if (Device.vCameraPosition.distance_to_sqr(wp_eff) > fog_dist_sq)
 		{
 			return true;
 		}

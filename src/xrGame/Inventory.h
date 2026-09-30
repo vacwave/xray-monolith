@@ -98,6 +98,7 @@ public:
 
 	// get all the items with the same section name
 	virtual u32 dwfGetSameItemCount(LPCSTR caSection, bool SearchAll = false);
+	u32 dwfGetSameItemCount(const shared_str& caSection, bool SearchAll = false);
 	virtual u32 dwfGetGrenadeCount(LPCSTR caSection, bool SearchAll);
 	// get all the items with the same object id
 	virtual bool bfCheckForObject(ALife::_OBJECT_ID tObjectID);

@@ -74,6 +74,15 @@ void CStalkerAnimationManager::reload()
 {
 	m_visual = object().Visual();
 
+	{
+		IKinematics* kinematics = smart_cast<IKinematics*>(m_visual);
+		VERIFY(kinematics);
+		LPCSTR section = *object().cNameSect();
+		m_head_bone_id = kinematics->LL_BoneID(pSettings->r_string(section, "bone_head"));
+		m_shoulder_bone_id = kinematics->LL_BoneID(pSettings->r_string(section, "bone_shoulder"));
+		m_spine_bone_id = kinematics->LL_BoneID(pSettings->r_string(section, "bone_spin"));
+	}
+
 	m_crouch_state_config = object().SpecificCharacter().crouch_type();
 	VERIFY((m_crouch_state_config == 0) || (m_crouch_state_config == 1) || (m_crouch_state_config == -1));
 	m_crouch_state = m_crouch_state_config;
