@@ -95,7 +95,6 @@ void CSheduler::internal_Register(ISheduled* O, BOOL RT)
 		TNext.dwTimeForExecute = Device.dwTimeGlobal;
 		TNext.dwTimeOfLastExecute = Device.dwTimeGlobal;
 		TNext.Object = O;
-		TNext.scheduled_name = O->shedule_Name();
 		O->shedule.b_RT = TRUE;
 
 		ItemsRT.push_back(std::move(TNext));
@@ -107,7 +106,6 @@ void CSheduler::internal_Register(ISheduled* O, BOOL RT)
 		TNext.dwTimeForExecute = Device.dwTimeGlobal;
 		TNext.dwTimeOfLastExecute = Device.dwTimeGlobal;
 		TNext.Object = O;
-		TNext.scheduled_name = O->shedule_Name();
 		O->shedule.b_RT = FALSE;
 
 		// Insert into priority Queue
@@ -408,7 +406,6 @@ void CSheduler::ProcessStep()
 			TNext.dwTimeForExecute = dwTime + dwUpdate;
 			TNext.dwTimeOfLastExecute = dwTime;
 			TNext.Object = T.Object;
-			TNext.scheduled_name = T.Object->shedule_Name();
 			ItemsProcessed.push_back(std::move(TNext));
 
 			m_current_step_obj = NULL;

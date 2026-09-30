@@ -99,7 +99,8 @@ void CSkeletonX::_Render(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 			p_WVP.mul(RCache.xforms.m_p_prev, p_WV);
 		}
 
-		RCache.set_c("m_wvp_prev", p_WVP); // Apply prev matrix
+		static shared_str s_wvp_prev_const = "m_wvp_prev";
+		RCache.set_c(s_wvp_prev_const, p_WVP); // Apply prev matrix
 	}
 #endif
 
