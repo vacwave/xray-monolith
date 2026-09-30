@@ -66,6 +66,7 @@ void CSoundRender_Core::update(const Fvector& P, const Fvector& D, const Fvector
 
 	// Update emmitters
 	//Msg	("! update: emitters");
+	u32 dst = 0;
 	for (it = 0; it < s_emitters.size(); it++)
 	{
 		CSoundRender_Emitter* pEmitter = s_emitters[it];
@@ -78,10 +79,11 @@ void CSoundRender_Core::update(const Fvector& P, const Fvector& D, const Fvector
 		{
 			// Stopped
 			xr_delete(pEmitter);
-			s_emitters.erase(s_emitters.begin() + it);
-			it--;
+			continue;
 		}
+		s_emitters[dst++] = pEmitter;
 	}
+	s_emitters.resize(dst);
 
 	// Get currently rendering emitters
 	//Msg	("! update: targets");
