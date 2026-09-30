@@ -68,6 +68,11 @@ private:
 	parameters m_current;
 	parameters_base m_target;
 	shared_str m_animation_id;
+	shared_str m_bone_spin;
+	shared_str m_bone_shoulder;
+	shared_str m_bone_head;
+	shared_str m_weapon_bone0;
+	shared_str m_weapon_bone2;
 	aiming_type m_aiming_type;
 	animation_frame_type m_animation_frame;
 
