@@ -580,6 +580,7 @@ void CKinematics::Visibility_Update()
 			children_invisible.push_back((dxRender_Visual*)children[c_it]);
 			swap(children[c_it], children.back());
 			children.pop_back();
+			c_it--;
 			Update_Visibility = TRUE;
 		}
 	}
@@ -595,6 +596,7 @@ void CKinematics::Visibility_Update()
 			children.push_back(children_invisible[_it]);
 			swap(children_invisible[_it], children_invisible.back());
 			children_invisible.pop_back();
+			_it--;
 			Update_Visibility = TRUE;
 		}
 	}

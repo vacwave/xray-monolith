@@ -769,6 +769,9 @@ void PAExplosion::Transform(const Fmatrix& m)
 // Follow the next particle in the list
 void PAFollow::Execute(ParticleEffect* effect, const float dt, float& tm_max)
 {
+	if (effect->p_count < 2)
+		return;
+
 	float magdt = magnitude * dt;
 	float max_radiusSqr = max_radius * max_radius;
 

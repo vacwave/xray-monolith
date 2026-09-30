@@ -177,6 +177,8 @@ CCameraManager::~CCameraManager()
 {
 	for (EffectorCamIt it = m_EffectorsCam.begin(); it != m_EffectorsCam.end(); it++)
 		xr_delete(*it);
+	for (EffectorCamIt it = m_EffectorsCam_added_deffered.begin(); it != m_EffectorsCam_added_deffered.end(); it++)
+		xr_delete(*it);
 	for (EffectorPPIt it = m_EffectorsPP.begin(); it != m_EffectorsPP.end(); it++)
 		xr_delete(*it);
 }

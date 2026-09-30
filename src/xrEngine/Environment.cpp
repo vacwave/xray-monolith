@@ -670,6 +670,7 @@ void CEnvironment::calculate_config_sun_dir()
 	float current_time = fGameTime / (DAY_LENGTH / 24);
 	int weather_time = floor(current_time);
 	float s_weight = current_time - weather_time;
+	weather_time %= 24; // fGameTime can round up to DAY_LENGTH
 
 	float real_sun_alt, real_sun_long;
 	float s_alt = sun_hp[weather_time].x;
