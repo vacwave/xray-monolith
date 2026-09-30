@@ -361,6 +361,10 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 								                          hw_BatchSize * sizeof(Fvector4) * 4,
 								                          &pVData, 0, 0);
 								c_storage = (Fvector4*)pVData;
+
+								void* pExtraData;
+								RCache.get_ConstantDirect(strExData, hw_BatchSize * sizeof(Fvector4), &pExtraData, 0, 0);
+								c_ExData = (Fvector4*)pExtraData;
 							}
 							VERIFY(c_storage);
 						}

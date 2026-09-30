@@ -152,6 +152,13 @@ void CDangerManager::remove_links(const CObject* object)
 	if (m_selected && (m_selected->object() == object))
 		m_selected = 0;
 
+	// remove_if keeps the order of the kept entries: shift m_selected back by the removed entries before it
+	if (m_selected)
+	{
+		const CDangerObject* B = &m_objects.front();
+		m_selected -= std::count_if(B, m_selected, CDangerPredicate(object));
+	}
+
 	m_objects.erase(
 		std::remove_if(
 			m_objects.begin(),
