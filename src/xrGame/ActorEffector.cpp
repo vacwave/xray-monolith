@@ -178,6 +178,7 @@ void CAnimatorCamEffector::Start(LPCSTR fn)
     m_objectAnimator->Speed() = m_speed;
 	m_objectAnimator->Play(Cyclic());
 	fLifeTime = m_objectAnimator->GetLength();
+	if (m_speed > 0.f) fLifeTime /= m_speed;
 }
 
 BOOL CAnimatorCamEffector::Valid()
