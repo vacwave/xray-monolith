@@ -267,7 +267,7 @@ void HUD_SOUND_COLLECTION_LAYERED::StopSound(LPCSTR alias)
 
 	for (; it != it_e; ++it)
 	{
-		if (it->m_alias == alias)
+		if (!xr_strcmp(it->m_alias, alias))
 			it->StopSound(alias);
 	}
 }
@@ -279,7 +279,7 @@ void HUD_SOUND_COLLECTION_LAYERED::SetPosition(LPCSTR alias, const Fvector& pos)
 
 	for (; it != it_e; ++it)
 	{
-		if (it->m_alias == alias)
+		if (!xr_strcmp(it->m_alias, alias))
 			it->SetPosition(alias, pos);
 	}
 }
@@ -362,7 +362,7 @@ void HUD_SOUND_COLLECTION_LAYERED::PlaySound(LPCSTR alias, const Fvector& positi
 
 	for (; it != it_e; ++it)
 	{
-		if (it->m_alias == alias_to_play && volume_mult > EPS_S)
+		if (!xr_strcmp(it->m_alias, alias_to_play) && volume_mult > EPS_S)
 			it->PlaySound(alias_to_play, position, parent, hud_mode, looped, index, volume_mult);
 	}
 }
@@ -375,7 +375,7 @@ HUD_SOUND_ITEM* HUD_SOUND_COLLECTION_LAYERED::FindSoundItem(LPCSTR alias, bool b
 
 	for (; it != it_e; ++it)
 	{
-		if (it->m_alias == alias)
+		if (!xr_strcmp(it->m_alias, alias))
 			return it->FindSoundItem(alias, b_assert);
 	}
 	return (0);

@@ -724,15 +724,22 @@ void CSightManager::compute_aiming(float const time_delta, float const angular_s
 			VERIFY(object().best_weapon());
 			VERIFY(smart_cast<CWeapon const*>(object().best_weapon()));
 			VERIFY(_valid(aiming_position()));
+			if (!m_weapon_bone0.size())
+			{
+				m_bone_spin = pSettings->r_string(object().cNameSect().c_str(), "bone_spin");
+				m_bone_shoulder = pSettings->r_string(object().cNameSect().c_str(), "bone_shoulder");
+				m_weapon_bone0 = pSettings->r_string(object().cNameSect().c_str(), "weapon_bone0");
+				m_weapon_bone2 = pSettings->r_string(object().cNameSect().c_str(), "weapon_bone2");
+			}
 			aimers::weapon aimer(
 				&object(),
 				m_animation_id.c_str(),
 				m_animation_frame == animation_frame_start,
 				aiming_position(),
-				pSettings->r_string(object().cNameSect().c_str(), "bone_spin"),
-				pSettings->r_string(object().cNameSect().c_str(), "bone_shoulder"),
-				pSettings->r_string(object().cNameSect().c_str(), "weapon_bone0"),
-				pSettings->r_string(object().cNameSect().c_str(), "weapon_bone2"),
+				m_bone_spin.c_str(),
+				m_bone_shoulder.c_str(),
+				m_weapon_bone0.c_str(),
+				m_weapon_bone2.c_str(),
 				*smart_cast<CWeapon const*>(object().best_weapon())
 			);
 			if (forward_blend_callbacks)
@@ -778,11 +785,17 @@ void CSightManager::compute_aiming(float const time_delta, float const angular_s
 
 			VERIFY(m_animation_id.size());
 			VERIFY(m_animation_frame != animation_frame_none);
+			if (!m_bone_head.size())
+			{
+				m_bone_spin = pSettings->r_string(object().cNameSect().c_str(), "bone_spin");
+				m_bone_shoulder = pSettings->r_string(object().cNameSect().c_str(), "bone_shoulder");
+				m_bone_head = pSettings->r_string(object().cNameSect().c_str(), "bone_head");
+			}
 			LPCSTR bones[] =
 			{
-				pSettings->r_string(object().cNameSect().c_str(), "bone_spin"),
-				pSettings->r_string(object().cNameSect().c_str(), "bone_shoulder"),
-				pSettings->r_string(object().cNameSect().c_str(), "bone_head"),
+				m_bone_spin.c_str(),
+				m_bone_shoulder.c_str(),
+				m_bone_head.c_str(),
 			};
 
 			bool forward_blend_callbacks = object().animation().forward_blend_callbacks();

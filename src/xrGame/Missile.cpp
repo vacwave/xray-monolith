@@ -290,7 +290,7 @@ void CMissile::UpdateCL()
 	Center(P);
 
 	m_sounds.UpdateAllSoundsPositions(P);
-	if (m_sounds.FindSoundItem("sndThrow", false) && m_fake_missile)
+	if (m_fake_missile)
 		m_sounds.SetPosition("sndThrow", m_fake_missile->Position());
 }
 

@@ -601,6 +601,9 @@ void CCustomZone::shedule_Update(u32 dt)
 
 		//пройтись по всем объектам в зоне
 		//и проверить их состояние
+		::luabind::functor<bool> funct;
+		bool funct_checked = false;
+		bool funct_exists = false;
 		for (OBJECT_INFO_VEC_IT it = m_ObjectInfoMap.begin();
 		     m_ObjectInfoMap.end() != it; ++it)
 		{
@@ -627,8 +630,12 @@ void CCustomZone::shedule_Update(u32 dt)
 			// Ignore object override script callback
 			if (pEntityAlive)
 			{
-				::luabind::functor<bool> funct;
-				if (ai().script_engine().functor("_G.CCustomZone_BeforeActivateCallback", funct))
+				if (!funct_checked)
+				{
+					funct_exists = ai().script_engine().functor("_G.CCustomZone_BeforeActivateCallback", funct);
+					funct_checked = true;
+				}
+				if (funct_exists)
 					info.zone_ignore = !funct(this->lua_game_object(), pObject->lua_game_object());
 			}
 
