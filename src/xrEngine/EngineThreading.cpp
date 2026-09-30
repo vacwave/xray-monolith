@@ -46,7 +46,7 @@ struct SpatialSnapshot
     IKinematics* pKin;
     float distSq;
 
-    SpatialSnapshot(ISpatialShared _ptr, IKinematics* _pKin, float _distSq) : ptr(_ptr), pKin(_pKin), distSq(_distSq) {};
+    SpatialSnapshot(ISpatialShared _ptr, IKinematics* _pKin, float _distSq) : ptr(std::move(_ptr)), pKin(_pKin), distSq(_distSq) {};
 };
 void XRay::Engine::CalculateBonesThread()
 {
@@ -76,7 +76,7 @@ void XRay::Engine::CalculateBonesThread()
 	static xr_vector<SpatialSnapshot> spatialsSnapshot;
 	spatialsSnapshot.clear();
 	{
-		for (ISpatialShared spatial : spatials)
+		for (const ISpatialShared& spatial : spatials)
 		{
 			if (!spatial)
 				continue;

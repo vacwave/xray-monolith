@@ -692,6 +692,15 @@ _G.alife_clone_weapon = function(se_obj, section, parent_id)
 end
 
 -- Patch _G functions to recognize new weapon classes
+local ssrs_classes
+local function get_ssrs_classes()
+	ssrs_classes = ssrs_classes or {
+		[clsid.wpn_ssrs] 				= true,
+		[clsid.wpn_ssrs_s] 				= true,
+	}
+	return ssrs_classes
+end
+
 IsWeapon = _G.IsWeapon
 _G.IsWeapon = function(o, c)
 	if IsWeapon(o, c) then
@@ -701,10 +710,7 @@ _G.IsWeapon = function(o, c)
 	if not (c) then
 		c = o and o:clsid()
 	end
-	local weapon_classes = {
-		[clsid.wpn_ssrs] 				= true,
-		[clsid.wpn_ssrs_s] 				= true,
-	}
+	local weapon_classes = get_ssrs_classes()
 	return c and weapon_classes[c] or false
 end
 
@@ -717,10 +723,7 @@ _G.IsLauncher = function(o, c)
 	if not (c) then
 		c = o and o:clsid()
 	end
-	local launcher = {
-		[clsid.wpn_ssrs] 				= true,
-		[clsid.wpn_ssrs_s] 				= true,
-	}
+	local launcher = get_ssrs_classes()
 	return c and launcher[c] or false
 end
 

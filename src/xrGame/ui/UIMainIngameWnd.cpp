@@ -869,7 +869,7 @@ void CUIMainIngameWnd::UpdateQuickSlots()
 			shared_str item_name = g_quick_use_slots[i];
 			if (item_name.size())
 			{
-				u32 count = pActor->inventory().dwfGetSameItemCount(item_name.c_str(), true);
+				u32 count = pActor->inventory().dwfGetSameItemCount(item_name, true);
 				string32 str;
 				xr_sprintf(str, "x%d", count);
 				wnd->TextItemControl()->SetText(str);
@@ -924,7 +924,7 @@ void CUIMainIngameWnd::DrawMainIndicatorsForInventory()
 		return;
 
 	UpdateQuickSlots();
-	UpdateBoosterIndicators(pActor->conditions().GetCurBoosterInfluences());
+	UpdateBoosterIndicators(pActor->conditions().GetCurBoosterInfluencesRef());
 
 	for (int i = 0; i < 4; i++)
 		m_quick_slots_icons[i]->Draw();
@@ -985,7 +985,7 @@ void CUIMainIngameWnd::DrawMainIndicatorsForInventory()
 	m_ui_hud_states->DrawZoneIndicators();
 }
 
-void CUIMainIngameWnd::UpdateBoosterIndicators(const xr_map<EBoostParams, SBooster> influences)
+void CUIMainIngameWnd::UpdateBoosterIndicators(const xr_map<EBoostParams, SBooster>& influences)
 {
 	m_ind_boost_psy->Show(false);
 	m_ind_boost_radia->Show(false);

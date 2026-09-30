@@ -1571,11 +1571,12 @@ BOOL CInifile::section_exist(LPCSTR S) const
 
 BOOL CInifile::line_exist(LPCSTR S, LPCSTR L) const
 {
-	if (!section_exist(S)) return FALSE;
+	RootCIt I = std::lower_bound(DATA.begin(), DATA.end(), S, sect_pred);
+	if (I == DATA.end() || xr_strcmp(*(*I).Name, S) != 0) return FALSE;
 
-	Sect& I = r_section(S);
-	auto A = std::lower_bound(I.Data.begin(), I.Data.end(), L, item_comparator());
-	return A != I.Data.end() && xr_strcmp(*A->first, L) == 0;
+	const Sect& sect = *I;
+	auto A = std::lower_bound(sect.Data.begin(), sect.Data.end(), L, item_comparator());
+	return A != sect.Data.end() && xr_strcmp(*A->first, L) == 0;
 }
 
 u32 CInifile::line_count(LPCSTR Sname) const

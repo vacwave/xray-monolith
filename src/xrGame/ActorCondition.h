@@ -74,6 +74,7 @@ public:
 	void BoostTelepaticProtection(const float value);
 	void BoostChemicalBurnProtection(const float value);
 	BOOSTER_MAP GetCurBoosterInfluences() { return m_booster_influences; };
+	const BOOSTER_MAP& GetCurBoosterInfluencesRef() const { return m_booster_influences; };
 
 	// хромание при потере сил и здоровья
 	virtual bool IsLimping() const;

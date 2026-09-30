@@ -120,6 +120,10 @@ private:
 	callback_params m_shoulder_params;
 	callback_params m_head_params;
 
+	u16 m_head_bone_id;
+	u16 m_shoulder_bone_id;
+	u16 m_spine_bone_id;
+
 private:
 	IC bool strapped() const;
 
