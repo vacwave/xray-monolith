@@ -159,12 +159,10 @@ void CDetailManager::cache_Update(int v_x, int v_z, Fvector& view, int limit)
 	// Task performer
 	if(ps_r2_ls_flags.test(R2FLAG_FAST_DETAILS_UPDATE))
 	{
+		// Decompress all tasks, then remove them
 		for (u32 iteration=0; iteration<cache_task.size(); iteration++)
-		{
-			// Decompress and remove task
 			cache_Decompress	(cache_task[iteration]);
-			cache_task.erase	(iteration);
-		}
+		cache_task.clear	();
 	}
 	else
 	{

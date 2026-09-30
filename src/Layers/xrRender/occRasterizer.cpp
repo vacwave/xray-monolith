@@ -95,9 +95,9 @@ void occRasterizer::propagade()
 			int pos_up = pos - occ_dim;
 			if (pos_up < 0) pos_up = pos;
 			int pos_down = pos + occ_dim;
-			if (pos_down >= occ_dim_0 * occ_dim_0) pos_down = pos;
+			if (pos_down >= occ_dim * occ_dim) pos_down = pos;
 			int pos_down2 = pos_down + occ_dim;
-			if (pos_down2 >= occ_dim_0 * occ_dim_0) pos_down2 = pos_down;
+			if (pos_down2 >= occ_dim * occ_dim) pos_down2 = pos_down;
 
 			occTri* Tu1 = pFrame[pos_up];
 			if (Tu1)
