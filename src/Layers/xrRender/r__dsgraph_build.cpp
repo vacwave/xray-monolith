@@ -614,7 +614,7 @@ void CDSGraphManager::add_Static(IRenderVisual* piVisual, CFrustum& frustum, u32
 	}
 }
 
-void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_vector<CFrustum>& frustums, const xr_vector<u32>& masks)
+void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_vector<CFrustum>& frustums, const u32* masks)
 {
 	constexpr u32 FULLY_VISIBLE_MASK = u32(-1);
 
@@ -629,10 +629,11 @@ void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_
 	vis_data& vis = pVisual->vis;
 	bool anyVisible = false;
 	bool hasFullyVisibleFrustum = false;
-	xr_vector<u32> childMasks;
-	childMasks.resize(masks.size(), 0);
+	const u32 frustumCount = u32(frustums.size());
+	u32* childMasks = (u32*)_alloca(frustumCount * sizeof(u32));
+	ZeroMemory(childMasks, frustumCount * sizeof(u32));
 
-	for (u32 i = 0; i < masks.size(); ++i)
+	for (u32 i = 0; i < frustumCount; ++i)
 	{
 		u32 planeMask = masks[i];
 		if (!planeMask)

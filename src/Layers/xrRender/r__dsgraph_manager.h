@@ -61,7 +61,7 @@ public:
 	virtual void set_Object(IRenderable* O = nullptr);
 
 	virtual void add_Static(IRenderVisual* pVisual, CFrustum& frustum, u32 planes);
-	virtual void add_Static_MultiFrustum(IRenderVisual* pVisual, const xr_vector<CFrustum>& frustums, const xr_vector<u32>& masks);
+	virtual void add_Static_MultiFrustum(IRenderVisual* pVisual, const xr_vector<CFrustum>& frustums, const u32* masks);
 	void add_leaf_Static(dxRender_Visual* pVisual);
 	void add_leafs_Static(xr_vector<dxRender_Visual*>& children);
 	void add_leafs_Static(xr_vector<IRenderVisual*>& children);

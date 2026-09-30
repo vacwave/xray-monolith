@@ -211,8 +211,6 @@ void CObjectList::Update(bool bForce)
 		{
 			// Select Crow-Mode
 			Device.Statistic->UpdateClient_updated = 0;
-			Objects workload;
-			workload.reserve(objects_active.capacity());
 
 			{
 				PROF_EVENT("CObjectList::Update/Crows");
@@ -239,12 +237,12 @@ void CObjectList::Update(bool bForce)
 
 				{
 					PROF_EVENT("CObjectList::Update/CopyWorkload");
-					workload = *required_workload;
+					m_update_workload = *required_workload;
 				}
 
 				crows.clear_not_free();
 
-				for (const auto obj : workload)
+				for (const auto obj : m_update_workload)
 				{
 					obj->IAmNotACrowAnyMore();
 					obj->dwFrame_AsCrow = u32(-1);
@@ -253,7 +251,7 @@ void CObjectList::Update(bool bForce)
 
 			{
 				PROF_EVENT("CObjectList::Update/SingleUpdate");
-				for (const auto obj : workload)
+				for (const auto obj : m_update_workload)
 				{
 					SingleUpdate(obj);
 				}

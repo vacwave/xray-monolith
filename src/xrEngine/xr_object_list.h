@@ -21,6 +21,7 @@ private:
 	Objects objects_active;
 	Objects objects_sleeping;
 	Objects m_crows[2];
+	Objects m_update_workload;
 	u32 m_owner_thread_id;
 
 public:
