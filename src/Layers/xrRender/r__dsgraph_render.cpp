@@ -617,7 +617,7 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
 			// Determine visibility for dynamic part of scene
 			for (u32 o_it = 0; o_it < lstRenderables.size(); o_it++)
 			{
-				ISpatialShared spatial = lstRenderables[o_it];
+				const ISpatialShared& spatial = lstRenderables[o_it];
 				if (0 == spatial) continue;
 				CSector* sector = (CSector*)spatial->spatial.sector;
 				if (0 == sector) continue;

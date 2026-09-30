@@ -189,8 +189,8 @@ public:
 	xr_vector<ISpatialShared> items;
 public:
 	void						_init			(ISpatial_NODE* _parent);
-	void						_remove			(ISpatialShared _S);
-	void						_insert			(ISpatialShared _S);
+	void						_remove			(const ISpatialShared& _S);
+	void						_insert			(const ISpatialShared& _S);
 
 	BOOL _empty()
 	{
@@ -218,7 +218,6 @@ public:
 class XRCDB_API ISpatial_DB
 {
 private:
-	xr_vector<ISpatial_NODE*> nodes;
 	ISpatialShared					rt_insert_object;
 public:
 	xrSRWLock db_lock;
@@ -252,8 +251,8 @@ public:
 	// managing
 	void initialize(Fbox& BB);
 	//void							destroy			();
-	void							insert			(ISpatialShared S);
-	void							remove			(ISpatialShared S);
+	void							insert			(const ISpatialShared& S);
+	void							remove			(const ISpatialShared& S);
 	void update(u32 nodes = 8);
 	BOOL verify();
 
