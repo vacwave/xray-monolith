@@ -328,6 +328,9 @@ void CDSGraphManager::r_dsgraph_render_water_ssr()
 {
 #ifdef USE_DX11
 	PROF_EVENT("r_dsgraph_render_water_ssr");
+	static shared_str strCamPos("cam_pos");
+	static shared_str strMCurrent("m_current");
+	static shared_str strMPrevious("m_previous");
 	std::sort(RGraph.mapWater.begin(), RGraph.mapWater.end());
 	for (auto& N : RGraph.mapWater)
 	{
@@ -340,11 +343,11 @@ void CDSGraphManager::r_dsgraph_render_water_ssr()
 		RImplementation.apply_object(N.pObject);
 		RImplementation.apply_lmaterial();
 
-		RCache.set_c("cam_pos", RImplementation.Target->Position_previous.x, RImplementation.Target->Position_previous.y, RImplementation.Target->Position_previous.z, 0.0f);
+		RCache.set_c(strCamPos, RImplementation.Target->Position_previous.x, RImplementation.Target->Position_previous.y, RImplementation.Target->Position_previous.z, 0.0f);
 
 		// Previous matrix data
-		RCache.set_c("m_current", RImplementation.Target->Matrix_current);
-		RCache.set_c("m_previous", RImplementation.Target->Matrix_previous);
+		RCache.set_c(strMCurrent, RImplementation.Target->Matrix_current);
+		RCache.set_c(strMPrevious, RImplementation.Target->Matrix_previous);
 
 		V->Render(calcLOD(N.ssa, V->vis.sphere.R));
 	}
@@ -354,6 +357,7 @@ void CDSGraphManager::r_dsgraph_render_water_ssr()
 void CDSGraphManager::r_dsgraph_render_water()
 {
 	PROF_EVENT("r_dsgraph_render_water_ssr");
+	static shared_str strWindSetup("wind_setup");
     std::sort(RGraph.mapWater.begin(), RGraph.mapWater.end());
     for (auto& N : RGraph.mapWater)
 	{
@@ -374,7 +378,7 @@ void CDSGraphManager::r_dsgraph_render_water()
 		// Wind settings
 		float WindDir = g_pGamePersistent->Environment().CurrentEnv->wind_direction;
 		float WindVel = g_pGamePersistent->Environment().CurrentEnv->wind_velocity;
-		RCache.set_c("wind_setup", WindDir, WindVel, 0, 0);
+		RCache.set_c(strWindSetup, WindDir, WindVel, 0, 0);
 
 		V->Render(calcLOD(N.ssa, V->vis.sphere.R));
 	}

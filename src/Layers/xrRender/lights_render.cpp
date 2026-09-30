@@ -334,13 +334,14 @@ void CRender::render_indirect(light* L)
 {
 	if (!ps_r2_ls_flags.test(R2FLAG_GI)) return;
 
+	xr_vector<light_indirect>& Lvec = L->indirect;
+	if (Lvec.empty()) return;
+
 	light LIGEN;
 	LIGEN.set_type(IRender_Light::REFLECTED);
 	LIGEN.set_shadow(false);
 	LIGEN.set_cone(PI_DIV_2 * 2.f);
 
-	xr_vector<light_indirect>& Lvec = L->indirect;
-	if (Lvec.empty()) return;
 	float LE = L->color.intensity();
 	for (u32 it = 0; it < Lvec.size(); it++)
 	{
