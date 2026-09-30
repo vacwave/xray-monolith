@@ -6,6 +6,13 @@
 
 void CRenderTarget::accum_spot(light* L)
 {
+	static shared_str strLdynamic_pos("Ldynamic_pos");
+	static shared_str strLdynamic_color("Ldynamic_color");
+	static shared_str strm_texgen("m_texgen");
+	static shared_str strm_texgen_J("m_texgen_J");
+	static shared_str strm_shadow("m_shadow");
+	static shared_str strm_lmap("m_lmap");
+	static shared_str strsss_id("sss_id");
 	PROF_EVENT("CRenderTarget::accum_spot");
 	phase_accumulator();
 	RImplementation.stats.l_visible ++;
@@ -160,18 +167,18 @@ void CRenderTarget::accum_spot(light* L)
 		// Constants
 		float att_R = L->range * .95f;
 		float att_factor = 1.f / (att_R * att_R);
-		RCache.set_c("Ldynamic_pos", L_pos.x, L_pos.y, L_pos.z, att_factor);
-		RCache.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, L_spec);
-		RCache.set_c("m_texgen", m_Texgen);
-		RCache.set_c("m_texgen_J", m_Texgen_J);
-		RCache.set_c("m_shadow", m_Shadow);
-		RCache.set_ca("m_lmap", 0, m_Lmap._11, m_Lmap._21, m_Lmap._31, m_Lmap._41);
-		RCache.set_ca("m_lmap", 1, m_Lmap._12, m_Lmap._22, m_Lmap._32, m_Lmap._42);
+		RCache.set_c(strLdynamic_pos, L_pos.x, L_pos.y, L_pos.z, att_factor);
+		RCache.set_c(strLdynamic_color, L_clr.x, L_clr.y, L_clr.z, L_spec);
+		RCache.set_c(strm_texgen, m_Texgen);
+		RCache.set_c(strm_texgen_J, m_Texgen_J);
+		RCache.set_c(strm_shadow, m_Shadow);
+		RCache.set_ca(strm_lmap, 0, m_Lmap._11, m_Lmap._21, m_Lmap._31, m_Lmap._41);
+		RCache.set_ca(strm_lmap, 1, m_Lmap._12, m_Lmap._22, m_Lmap._32, m_Lmap._42);
 
 		if (!Device.m_SecondViewport.IsSVPFrame())
-			RCache.set_c("sss_id", L->sss_id);
+			RCache.set_c(strsss_id, L->sss_id);
 		else
-			RCache.set_c("sss_id", -1);
+			RCache.set_c(strsss_id, -1);
 
 		// Fetch4 : enable
 		//		if (RImplementation.o.HW_smap_FETCH4)	{
@@ -231,8 +238,8 @@ void CRenderTarget::accum_spot(light* L)
 		else
 			u_setrt(rt_Accumulator,NULL,NULL, rt_MSAADepth->pZRT);
 		RCache.set_Element(s_accum_mask->E[SE_MASK_ACCUM_VOL]);
-		RCache.set_c("m_texgen", m_Texgen);
-		RCache.set_c("m_texgen_J", m_Texgen_J);
+		RCache.set_c(strm_texgen, m_Texgen);
+		RCache.set_c(strm_texgen_J, m_Texgen_J);
 		if (!RImplementation.o.dx10_msaa)
 		{
 			RCache.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID, 0xff, 0x00);

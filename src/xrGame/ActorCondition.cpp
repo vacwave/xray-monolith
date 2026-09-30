@@ -269,21 +269,19 @@ void CActorCondition::UpdateCondition()
 		}
 
 
-		string512 pp_sect_name;
 		shared_str ln = Level().name();
 		if (ln.size())
 		{
 			CEffectorPP* ppe = object().Cameras().GetPPEffector((EEffectorPPType)effPsyHealth);
 
-
-			strconcat(sizeof(pp_sect_name), pp_sect_name, "effector_psy_health", "_", *ln);
-			if (!pSettings->section_exist(pp_sect_name))
-				xr_strcpy(pp_sect_name, "effector_psy_health");
-
 			if (!fsimilar(GetPsyHealth(), 1.0f, 0.05f))
 			{
 				if (!ppe)
 				{
+					string512 pp_sect_name;
+					strconcat(sizeof(pp_sect_name), pp_sect_name, "effector_psy_health", "_", *ln);
+					if (!pSettings->section_exist(pp_sect_name))
+						xr_strcpy(pp_sect_name, "effector_psy_health");
 					AddEffector(m_object,effPsyHealth, pp_sect_name, GET_KOEFF_FUNC(this, &CActorCondition::GetPsy));
 				}
 			}
@@ -604,7 +602,8 @@ bool CActorCondition::IsLimping() const
 
 bool CActorCondition::IsSleeping() const
 {
-	return object().HasInfo("actor_is_sleeping");
+	static const shared_str actor_is_sleeping = "actor_is_sleeping";
+	return object().HasInfo(actor_is_sleeping);
 }
 
 
