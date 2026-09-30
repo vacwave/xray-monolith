@@ -51,6 +51,8 @@ void CHelicopter::init()
 	m_min_rocket_dist = 20.0f;
 	m_max_rocket_dist = 200.0f;
 	m_time_between_rocket_attack = 0;
+	delta_t = -1.f;
+	flag_by_fire = 0.f;
 	m_last_rocket_attack = Device.dwTimeGlobal;
 
 	SetfHealth(1.0f);
