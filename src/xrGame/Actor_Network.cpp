@@ -783,6 +783,9 @@ void CActor::net_Relcase(CObject* O)
 	if (GO && m_pObjectWeLookingAt == GO)
 	{
 		m_pObjectWeLookingAt = NULL;
+		m_pUsableObject = NULL;
+		m_pInvBoxWeLookingAt = NULL;
+		m_pPersonWeLookingAt = NULL;
 	}
 	CHolderCustom* HC = smart_cast<CHolderCustom*>(GO);
 	if (HC && HC == m_pVehicleWeLookingAt)

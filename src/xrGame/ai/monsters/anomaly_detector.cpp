@@ -46,7 +46,7 @@ void CAnomalyDetector::update_schedule()
 	{
 		if (it->time_registered == 0)
 		{
-			temp_in_restrictors.push_back(it->object->ID());
+			temp_in_restrictors.push_back(it->object_id);
 			it->time_registered = time();
 		}
 	}
@@ -59,7 +59,7 @@ void CAnomalyDetector::update_schedule()
 	{
 		if (it->time_registered + m_time_to_rememeber < time())
 		{
-			temp_in_restrictors.push_back(it->object->ID());
+			temp_in_restrictors.push_back(it->object_id);
 		}
 	}
 
@@ -91,11 +91,11 @@ void CAnomalyDetector::on_contact(CObject* obj)
 		m_object->control().path_builder().restrictions().in_restrictions(), custom_zone->cName()))
 		return;
 
-	ANOMALY_INFO_VEC_IT it = std::find(m_storage.begin(), m_storage.end(), custom_zone);
+	ANOMALY_INFO_VEC_IT it = std::find(m_storage.begin(), m_storage.end(), obj->ID());
 	if (it != m_storage.end()) return;
 
 	SAnomalyInfo info;
-	info.object = obj;
+	info.object_id = obj->ID();
 	info.time_registered = 0;
 	m_storage.push_back(info);
 }
