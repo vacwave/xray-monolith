@@ -530,6 +530,7 @@ public:
 	float OverweightSpeedFactor() const;   // <=1, movement speed multiplier
 	float OverweightLookFactor() const;    // <=1, camera turn speed multiplier
 	float OverweightStaminaFactor() const; // >=1, walk stamina drain multiplier
+	float OverweightAirTurnFactor() const; // <=1, mid-air turn rate multiplier
 
 #ifdef STATIONARYMGUN_NEW
 	float GetWeaponAccuracyStm();

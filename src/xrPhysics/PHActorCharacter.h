@@ -101,6 +101,7 @@ class CPHActorCharacter :
 	RESRICTORS_V m_restrictors;
 	float m_speed_goal;
 	bool b_single_game;
+	float m_air_turn_factor;
 public:
 	typedef TPHCharacterRestrictor<rtStalker> stalker_restrictor;
 	typedef TPHCharacterRestrictor<rtStalkerSmall> stalker_small_restrictor;
@@ -113,6 +114,7 @@ public:
 	virtual void Destroy(void);
 	virtual void SetPhysicsRefObject(IPhysicsShellHolder* ref_object);
 	virtual void SetAcceleration(Fvector accel);
+	virtual void SetAirTurnFactor(float factor) { m_air_turn_factor = factor; }
 	virtual void Disable();
 	virtual void Jump(const Fvector& jump_velocity);
 	virtual void InitContact(dContact* c, bool& do_collide, u16 material_idx_1, u16 material_idx_2);

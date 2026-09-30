@@ -183,6 +183,9 @@ public:
 	virtual void GetSmothedVelocity(Fvector& vvel) =0;
 	virtual void SetVelocity(Fvector vel) =0;
 	virtual void SetAirControlFactor(float factor) =0;
+	virtual void SetAirTurnFactor(float factor)
+	{
+	}
 	virtual void GetPosition(Fvector& vpos) =0;
 	virtual void GetBodyPosition(Fvector& vpos) =0;
 	virtual const Fvector& BodyPosition() const =0;

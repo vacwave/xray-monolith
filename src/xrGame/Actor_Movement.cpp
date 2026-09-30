@@ -917,3 +917,15 @@ float CActor::OverweightStaminaFactor() const
 	overweight_ratios(this, r, r_max);
 	return overweight_curve(r, r_max, 1.f, 1.f, stamina_at_full, stamina_at_max);
 }
+
+float CActor::OverweightAirTurnFactor() const
+{
+	using namespace overweight_tune;
+	float r, r_max;
+	overweight_ratios(this, r, r_max);
+	if (r < r_inertia_low)
+		return 1.f;
+	float res = (1.f - overweight_inertia(r, r_max)) / (1.f - inertia_at_low);
+	clamp(res, 0.f, 1.f);
+	return res;
+}
