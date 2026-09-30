@@ -15,7 +15,7 @@ const float JUMP_INCREASE_VELOCITY_RATE = 1.2f;
 //#ifdef DEBUG
 //XRPHYSICS_API BOOL use_controllers_separation = TRUE;
 //#endif
-CPHActorCharacter::CPHActorCharacter(bool single_game): b_single_game(single_game)
+CPHActorCharacter::CPHActorCharacter(bool single_game): b_single_game(single_game), m_air_turn_factor(1.f)
 {
 	SetRestrictionType(rtActor);
 
@@ -433,6 +433,8 @@ void CPHActorCharacter::update_last_material()
 }
 
 float free_fly_up_force_limit = 4000.f;
+static const float air_turn_rate = deg2rad(100.f); // max mid-air turn rate of horizontal velocity, rad/s
+static const float air_turn_max_angle = deg2rad(160.f); // input further behind than this (e.g. holding back) does not turn
 
 void CPHActorCharacter::PhTune(dReal step)
 {
@@ -448,5 +450,23 @@ void CPHActorCharacter::PhTune(dReal step)
 		              fy,
 		              force[2]
 		);
+		if (is_control)
+		{
+			// slight air control: turn horizontal velocity towards the input direction, keep speed
+			const dReal* vel = dBodyGetLinearVel(m_body);
+			float angle = atan2f(vel[0] * m_acceleration.z - vel[2] * m_acceleration.x,
+			                     vel[0] * m_acceleration.x + vel[2] * m_acceleration.z);
+			if (_abs(angle) < air_turn_max_angle)
+			{
+				float max_turn = air_turn_rate * m_air_turn_factor * float(step);
+				clamp(angle, -max_turn, max_turn);
+				float s = _sin(angle), c = _cos(angle);
+				dBodySetLinearVel(m_body,
+				                  vel[0] * c - vel[2] * s,
+				                  vel[1],
+				                  vel[0] * s + vel[2] * c
+				);
+			}
+		}
 	}
 }

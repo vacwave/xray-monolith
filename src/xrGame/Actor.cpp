@@ -54,6 +54,7 @@
 #include "CharacterPhysicsSupport.h"
 #include "material_manager.h"
 #include "../xrphysics/IColisiondamageInfo.h"
+#include "../xrphysics/PHCharacter.h"
 #include "ui/UIMainIngameWnd.h"
 #include "map_manager.h"
 #include "GameTaskManager.h"
@@ -1038,6 +1039,7 @@ void CActor::g_Physics(Fvector& _accel, float jump, float dt)
 	{
 		if (mstate_real & mcClimb && !cameras[eacFirstEye]->bClampYaw)
 			accel.set(0.f, 0.f, 0.f);
+		character_physics_support()->movement()->PHCharacter()->SetAirTurnFactor(OverweightAirTurnFactor());
 		character_physics_support()->movement()->Calculate(accel, cameras[cam_active]->vDirection, 0, jump, dt, false);
 		bool new_border_state = character_physics_support()->movement()->isOutBorder();
 		if (m_bOutBorder != new_border_state && Level().CurrentControlEntity() == this)
