@@ -490,7 +490,7 @@ void IReader::r_string(xr_string& dest)
 void IReader::r_stringZ(char* dest, u32 tgt_sz)
 {
 	char* src = (char*)data;
-	u32 sz = xr_strlen(src);
+	u32 sz = xr_strlen(src + Pos);
 	R_ASSERT2(sz < tgt_sz, "Dest string less than needed.");
 	while ((src[Pos] != 0) && (!eof())) *dest++ = src[Pos++];
 	*dest = 0;
