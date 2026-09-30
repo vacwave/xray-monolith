@@ -1347,7 +1347,28 @@ void CAI_Stalker::net_Relcase(CObject* O)
         m_throw_ignore_object = nullptr;
 
     if (m_best_item_to_kill && m_best_item_to_kill->object_id() == O->ID())
+    {
         m_best_item_to_kill = nullptr;
+        m_item_actuality = false;
+    }
+
+    if (m_best_ammo && m_best_ammo->object_id() == O->ID())
+    {
+        m_best_ammo = nullptr;
+        m_item_actuality = false;
+    }
+
+    if (m_best_found_item_to_kill && m_best_found_item_to_kill->object_id() == O->ID())
+    {
+        m_best_found_item_to_kill = nullptr;
+        m_item_actuality = false;
+    }
+
+    if (m_best_found_ammo && m_best_found_ammo->object_id() == O->ID())
+    {
+        m_best_found_ammo = nullptr;
+        m_item_actuality = false;
+    }
 
 	if (!g_Alive())
 		return;    
@@ -1550,9 +1571,10 @@ bool CAI_Stalker::can_fire_right_now()
 	if (!ready_to_kill())
 		return (false);
 
-	VERIFY(best_weapon());
-	CWeapon& best_weapon = smart_cast<CWeapon&>(*this->best_weapon());
-	return best_weapon.GetAmmoElapsed() > 0;
+	CWeapon* best_weapon = smart_cast<CWeapon*>(this->best_weapon());
+	if (!best_weapon)
+		return (false);
+	return best_weapon->GetAmmoElapsed() > 0;
 }
 
 bool CAI_Stalker::unlimited_ammo()

@@ -329,7 +329,8 @@ void CStalkerActionKillWounded::execute()
 	SHit HS;
 	HS.GenHeader(GE_HIT, enemy->ID());
 	HS.whoID = object().ID();
-	HS.weaponID = weapon_to_kill(&object())->object().ID();
+	CInventoryItem* weapon = weapon_to_kill(&object());
+	HS.weaponID = weapon ? weapon->object().ID() : object().ID();
 	HS.dir = Fvector().set(0.f, 0.f, 1.f);
 	HS.power = 1.f;
 	HS.boneID = smart_cast<IKinematics*>((const_cast<CEntityAlive*>(enemy))->Visual())->LL_GetBoneRoot();

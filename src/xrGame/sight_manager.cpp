@@ -707,7 +707,8 @@ void CSightManager::compute_aiming(float const time_delta, float const angular_s
 				break;
 			}
 
-			if (!object().best_weapon())
+			CWeapon const* weapon = smart_cast<CWeapon const*>(object().best_weapon());
+			if (!weapon)
 			{
 				m_target.m_spine.m_rotation = Fidentity;
 				m_target.m_shoulder.m_rotation = Fidentity;
@@ -721,8 +722,6 @@ void CSightManager::compute_aiming(float const time_delta, float const angular_s
 			bool forward_blend_callbacks = object().animation().forward_blend_callbacks();
 			bool backward_blend_callbacks = object().animation().backward_blend_callbacks();
 			object().animation().remove_bone_callbacks();
-			VERIFY(object().best_weapon());
-			VERIFY(smart_cast<CWeapon const*>(object().best_weapon()));
 			VERIFY(_valid(aiming_position()));
 			if (!m_weapon_bone0.size())
 			{
@@ -740,7 +739,7 @@ void CSightManager::compute_aiming(float const time_delta, float const angular_s
 				m_bone_shoulder.c_str(),
 				m_weapon_bone0.c_str(),
 				m_weapon_bone2.c_str(),
-				*smart_cast<CWeapon const*>(object().best_weapon())
+				*weapon
 			);
 			if (forward_blend_callbacks)
 				object().animation().assign_bone_blend_callbacks(true);
