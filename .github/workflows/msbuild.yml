@@ -7,10 +7,6 @@ name: MSBuild
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ "all-in-one-vs2022-wpo-mt-vac" ]
-  pull_request:
-    branches: [ "all-in-one-vs2022-wpo-mt-vac" ]
 
 permissions: write-all
 
