@@ -156,7 +156,7 @@ void CControlAnimationBase::set_override_animation_script(EMotionAnim anim, u32 
 		return;
 	}
 
-	if (m_anim_storage[anim]->count < index)
+	if (m_anim_storage[anim]->count <= index)
 	{
 		Msg("![CControlAnimationBase] wrong animation index.");
 		return;

@@ -93,11 +93,11 @@ CPatrolPath& CPatrolPath::load_from_config(CInifile* ini_paths, LPCSTR patrol_na
 	return (*this);
 }
 
-std::pair<u32, float> CPatrolPath::parse_point_link(LPCSTR patrol_name, xr_string link, xr_map<shared_str, u32> vertex_ids_by_name)
+std::pair<u32, float> CPatrolPath::parse_point_link(LPCSTR patrol_name, const xr_string& link, const xr_map<shared_str, u32>& vertex_ids_by_name)
 {
 	Msg("[PP] Linking %s", link.c_str());
 
-    std::regex pattern("(\\w+)\\((\\d+)\\)");
+    static const std::regex pattern("(\\w+)\\((\\d+)\\)");
     std::smatch matches;
 
 	bool matched = std::regex_search(link, matches, pattern);
