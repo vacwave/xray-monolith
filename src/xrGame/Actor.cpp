@@ -119,6 +119,7 @@ int psActorSleepTime = 1;
 
 CActor::CActor() : CEntityAlive(), current_ik_cam_shift(0)
 {
+	m_vInertiaAccel.set(0.f, 0.f, 0.f);
 	game_news_registry = xr_new<CGameNewsRegistryWrapper>();
 	// Cameras
 	cameras[eacFirstEye] = xr_new<CCameraFirstEye>(this);
@@ -1806,6 +1807,7 @@ void CActor::shedule_Update(u32 DT)
 
 	if (m_holder || !getEnabled() || !Ready())
 	{
+		m_vInertiaAccel.set(0.f, 0.f, 0.f);
 		m_sDefaultObjAction = NULL;
 		inherited::shedule_Update(DT);
 		return;
@@ -2558,6 +2560,7 @@ void CActor::ForceTransform(const Fmatrix& m)
 	//character_physics_support()->movement()->SetVelocity( 0, 0, 0 );
 
 	character_physics_support()->ForceTransform(m);
+	m_vInertiaAccel.set(0.f, 0.f, 0.f); // teleport: drop overweight movement momentum
 	const float block_damage_time_seconds = 2.f;
 	if (!IsGameTypeSingle())
 		character_physics_support()->movement()->BlockDamageSet(u64(block_damage_time_seconds / fixed_step));

@@ -542,6 +542,9 @@ void CActorCondition::ConditionWalk(float weight, bool accel, bool sprint)
 	else
 		power += m_fWalkWeightPower * weight * (weight > 1.f ? m_fOverweightWalkK : 1.f);
 
+	// Overweight rework: progressive extra drain when heavily loaded
+	power *= object().OverweightStaminaFactor();
+
 	power *= m_fDeltaTime * (accel ? (sprint ? m_fSprintK : m_fAccelK) : 1.f);
 	m_fPower -= HitPowerEffect(power);
 	clamp(m_fPower, 0.f, 1.f);
