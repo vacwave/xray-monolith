@@ -1135,12 +1135,15 @@ void CAI_Stalker::shedule_Update(u32 DT)
 			{
 				animation().play_delayed_callbacks();
 
-				::luabind::functor<bool> funct;
-				float distance = Actor()->Position().distance_to(Position());
-				auto luaObject = lua_game_object();
-				if (luaObject && distance < NPCsLookAtActorMinDistance && ai().script_engine().functor("_G.CNPCBeforeLookAtActor", funct))
+				if (Actor())
 				{
-					LookAtActorLuaResult = funct(luaObject, distance);
+					::luabind::functor<bool> funct;
+					float distance = Actor()->Position().distance_to(Position());
+					auto luaObject = lua_game_object();
+					if (luaObject && distance < NPCsLookAtActorMinDistance && ai().script_engine().functor("_G.CNPCBeforeLookAtActor", funct))
+					{
+						LookAtActorLuaResult = funct(luaObject, distance);
+					}
 				}
 
 #ifndef USE_SCHEDULER_IN_AGENT_MANAGER

@@ -117,7 +117,7 @@ void CHitMemoryManager::add(float amount, const Fvector& vLocalDir, const CObjec
 		m_object->lua_game_object(),
 		amount,
 		vLocalDir,
-		smart_cast<const CGameObject*>(who)->lua_game_object(),
+		who ? smart_cast<const CGameObject*>(who)->lua_game_object() : 0,
 		element
 	);
 

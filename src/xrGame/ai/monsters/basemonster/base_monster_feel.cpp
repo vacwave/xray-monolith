@@ -244,7 +244,7 @@ void CBaseMonster::HitSignal(float amount, Fvector& vLocalDir, CObject* who, s16
 {
 	if (!g_Alive()) return;
 
-	feel_sound_new(who, SOUND_TYPE_WEAPON_SHOOTING, 0, who->Position(), 1.f);
+	if (who) feel_sound_new(who, SOUND_TYPE_WEAPON_SHOOTING, 0, who->Position(), 1.f);
 	if (g_Alive()) sound().play(MonsterSound::eMonsterSoundTakeDamage);
 
 	if (element < 0) return;
@@ -270,7 +270,7 @@ void CBaseMonster::HitSignal(float amount, Fvector& vLocalDir, CObject* who, s16
 		lua_game_object(),
 		amount,
 		vLocalDir,
-		smart_cast<const CGameObject*>(who)->lua_game_object(),
+		who ? smart_cast<const CGameObject*>(who)->lua_game_object() : 0,
 		element
 	);
 

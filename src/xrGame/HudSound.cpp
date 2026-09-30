@@ -299,6 +299,7 @@ void HUD_SOUND_COLLECTION_LAYERED::PlaySound(LPCSTR alias, const Fvector& positi
                                              bool hud_mode, bool looped, u8 index, float volume_mult)
 {
 	LPCSTR alias_to_play = alias;
+	xr_string new_alias;
 	::luabind::functor<::luabind::object> funct;
 	if (ai().script_engine().functor("_G.COnBeforePlayHudSound", funct))
 	{
@@ -329,7 +330,7 @@ void HUD_SOUND_COLLECTION_LAYERED::PlaySound(LPCSTR alias, const Fvector& positi
 				}
 				else
 				{
-					xr_string new_alias = xr_string(section) + "|" + line;
+					new_alias = xr_string(section) + "|" + line;
 					if (!FindSoundItem(new_alias.c_str(), false))
 					{
 						auto old_sound = FindSoundItem(alias, false);
