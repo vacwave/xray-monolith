@@ -473,6 +473,12 @@ void CScriptGameObject::MakeItemActive(CScriptGameObject* pItem)
 {
 	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
 	CInventoryItem* item = smart_cast<CInventoryItem*>(&pItem->object());
+	if (!owner || !item)
+	{
+		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
+			"CScriptGameObject::MakeItemActive non-CInventoryOwner object !!!");
+		return;
+	}
 	u16 slot = item->BaseSlot();
 
 	CInventoryItem* item_in_slot = owner->inventory().ItemFromSlot(slot);
@@ -499,7 +505,7 @@ void CScriptGameObject::MoveItemToRuck(CScriptGameObject* pItem)
 {
 	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
 	CInventoryItem* item = smart_cast<CInventoryItem*>(&pItem->object());
-	if (!owner)
+	if (!owner || !item)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
 			"CScriptGameObject::MoveItemToRuck non-CInventoryOwner object !!!");
@@ -519,7 +525,7 @@ void CScriptGameObject::MoveItemToSlot(CScriptGameObject* pItem, u16 slot_id, bo
 {
 	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
 	CInventoryItem* item = smart_cast<CInventoryItem*>(&pItem->object());
-	if (!owner)
+	if (!owner || !item)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
 			"CScriptGameObject::MoveItemToSlot non-CInventoryOwner object !!!");
@@ -557,7 +563,7 @@ void CScriptGameObject::MoveItemToBelt(CScriptGameObject* pItem)
 {
 	CInventoryOwner* owner = smart_cast<CInventoryOwner*>(&object());
 	CInventoryItem* item = smart_cast<CInventoryItem*>(&pItem->object());
-	if (!owner)
+	if (!owner || !item)
 	{
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
 			"CScriptGameObject::MoveItemToBelt non-CInventoryOwner object !!!");

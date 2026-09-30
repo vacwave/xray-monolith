@@ -267,6 +267,9 @@ CActor::~CActor()
 	xr_delete(m_location_manager);
 	xr_delete(m_memory);
 	xr_delete(game_news_registry);
+	for (u32 i = 0; i < m_defferedMessages.size(); ++i)
+		xr_delete(m_defferedMessages[i].news_data);
+	m_defferedMessages.clear();
 #ifdef DEBUG
     Device.seqRender.Remove(this);
 #endif
