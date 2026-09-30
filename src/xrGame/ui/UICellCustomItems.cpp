@@ -45,13 +45,12 @@ CUIInventoryCellItem::CUIInventoryCellItem(CInventoryItem* itm)
 	//Alundaio; Layered icon
 	u8 itrNum = 1;
 	LPCSTR field = "1icon_layer";
+	string32 buf;
 	while (pSettings->line_exist(itm->m_section_id, field))
 	{
-		string32 buf;
-
 		LPCSTR section = pSettings->r_string(itm->m_section_id, field);
 		if (!section)
-			continue;
+			break;
 
 		Fvector2 offset;
 		offset.x = pSettings->r_float(itm->m_section_id,
@@ -84,6 +83,12 @@ CUIInventoryCellItem::CUIInventoryCellItem(CInventoryItem* itm)
 	}
 }
 
+CUIInventoryCellItem::~CUIInventoryCellItem()
+{
+	for (xr_vector<SIconLayer*>::iterator it = m_layers.begin(); m_layers.end() != it; ++it)
+		xr_delete(*it);
+}
+
 void CUIInventoryCellItem::OnAfterChild(CUIDragDropListEx* parent_list)
 {
 	for (xr_vector<SIconLayer*>::iterator it = m_layers.begin(); m_layers.end() != it; ++it)
@@ -98,7 +103,7 @@ void CUIInventoryCellItem::OnAfterChild(CUIDragDropListEx* parent_list)
 bool CUIInventoryCellItem::EqualTo(CUICellItem* itm)
 {
 	CUIInventoryCellItem* ci = smart_cast<CUIInventoryCellItem*>(itm);
-	if (!itm)
+	if (!ci)
 	{
 		return false;
 	}
@@ -198,6 +203,7 @@ void CUIInventoryCellItem::RemoveLayer(SIconLayer* layer)
 		if ((*it) == layer)
 		{
 			DetachChild((*it)->m_icon);
+			xr_delete(*it);
 			m_layers.erase(it);
 			return;
 		}
@@ -295,6 +301,7 @@ void CUIInventoryCellItem::Update()
 {
 	bool b = Heading();
 	inherited::Update();
+	bool bForceReInitLayers = (b != Heading());
 
 	inherited::UpdateConditionProgressBar(); //Alundaio
 	UpdateItemText();
@@ -313,7 +320,8 @@ void CUIInventoryCellItem::Update()
 
 	for (xr_vector<SIconLayer*>::iterator it = m_layers.begin(); m_layers.end() != it; ++it)
 	{
-		(*it)->m_icon = InitLayer((*it)->m_icon, (*it)->m_name, (*it)->offset, Heading(), (*it)->m_scale);
+		if (!(*it)->m_icon || bForceReInitLayers)
+			(*it)->m_icon = InitLayer((*it)->m_icon, (*it)->m_name, (*it)->offset, Heading(), (*it)->m_scale);
 		(*it)->m_icon->SetTextureColor(color);
 	}
 }
@@ -321,9 +329,7 @@ void CUIInventoryCellItem::Update()
 void CUIInventoryCellItem::UpdateItemText()
 {
 	const u32 helper_count = (u32)std::count_if(m_childs.begin(), m_childs.end(), detail::is_helper_pred())
-	                         + IsHelper()
-		                         ? 1
-		                         : 0;
+	                         + (IsHelper() ? 1 : 0);
 
 	const u32 count = ChildsCount() + 1 - helper_count;
 
