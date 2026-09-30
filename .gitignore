@@ -38,3 +38,7 @@ compressor/mod/
 # emacs temp file
 \#*\#
 *~
+
+# Claude Code local config (not pushed)
+CLAUDE.md
+.claude/
