@@ -487,7 +487,7 @@ void CDSGraphManager::r_dsgraph_capture_static()
 					}
 				}
 
-				add_Static_MultiFrustum((IRenderVisual*)pair.key->root(), frustums, masks);
+				add_Static_MultiFrustum((IRenderVisual*)pair.key->root(), frustums, masks.data());
 			}
 		}
 	}

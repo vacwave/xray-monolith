@@ -22,6 +22,7 @@ namespace CObjectSpaceThreadData {
 	thread_local xrXRC xrc;
 	thread_local collide::rq_results r_temp;
 	thread_local xr_vector<ISpatialShared> r_spatial;
+	thread_local xr_vector<CObject*> ignore_single;
 }
 
 //--------------------------------------------------------------------------------
@@ -53,7 +54,7 @@ BOOL CObjectSpace::_RayTest(const Fvector& start, const Fvector& dir, float rang
 		// Determine visibility for dynamic part of scene
 		for (u32 o_it = 0; o_it < CObjectSpaceThreadData::r_spatial.size(); o_it++)
 		{
-			ISpatialShared spatial = CObjectSpaceThreadData::r_spatial[o_it];
+			const ISpatialShared& spatial = CObjectSpaceThreadData::r_spatial[o_it];
 			CObject* collidable = spatial->dcast_CObject();
 			if (collidable && (collidable != ignore_object) && collidable->collidable.model)
 			{
@@ -120,7 +121,8 @@ BOOL CObjectSpace::_RayTest(const Fvector& start, const Fvector& dir, float rang
 BOOL CObjectSpace::RayPick(const Fvector& start, const Fvector& dir, float range, rq_target tgt, rq_result& R,
                            CObject* ignore_object)
 {
-	xr_vector<CObject*> ignore_objects;
+	xr_vector<CObject*>& ignore_objects = CObjectSpaceThreadData::ignore_single;
+	ignore_objects.clear();
 	if (ignore_object)
 		ignore_objects.push_back(ignore_object);
 	return RayPick(start, dir, range, tgt, R, ignore_objects);
@@ -136,7 +138,8 @@ BOOL CObjectSpace::RayPick(const Fvector& start, const Fvector& dir, float range
 BOOL CObjectSpace::_RayPick(const Fvector& start, const Fvector& dir, float range, rq_target tgt, rq_result& R,
                             CObject* ignore_object)
 {
-	xr_vector<CObject*> ignore_objects;
+	xr_vector<CObject*>& ignore_objects = CObjectSpaceThreadData::ignore_single;
+	ignore_objects.clear();
 	if (ignore_object)
 		ignore_objects.push_back(ignore_object);
 	return _RayPick(start, dir, range, tgt, R, ignore_objects);
@@ -167,7 +170,7 @@ BOOL CObjectSpace::_RayPick(const Fvector& start, const Fvector& dir, float rang
 		// Determine visibility for dynamic part of scene
 		for (u32 o_it = 0; o_it < CObjectSpaceThreadData::r_spatial.size(); o_it++)
 		{
-			ISpatialShared spatial = CObjectSpaceThreadData::r_spatial[o_it];
+			const ISpatialShared& spatial = CObjectSpaceThreadData::r_spatial[o_it];
 			CObject* collidable = spatial->dcast_CObject();
 			if (0 == collidable) continue;
 
