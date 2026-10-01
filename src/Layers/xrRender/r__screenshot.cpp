@@ -670,6 +670,7 @@ void CRender::TakeScreenshot(LPCSTR path, Fvector2 dimensions, DxEncoding encodi
 
 	// cleanup
 	_RELEASE(pSrcSmallTexture);
+	_RELEASE(pSrcTexture);
 }
 #else //DX
 // Antglobes: Export Screenshot Func + variable resolution & encoding

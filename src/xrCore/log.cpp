@@ -145,7 +145,7 @@ void xrLogger::Msg(LPCSTR Msg, va_list argList)
 	int MsgSize = _vsnprintf(formattedMessage, sizeof(formattedMessage) - 1, Msg, argList);
 
 	if (MsgSize < 0)
-		return;
+		MsgSize = sizeof(formattedMessage) - 1;
 
 	formattedMessage[MsgSize] = 0;
 
@@ -355,16 +355,11 @@ void xrLogger::InternalPrintRecord()
 
 	xr_vector<xr_string> LogLines = theRecord.Message.Split('\n');
 
-	string256 TimeOfDay = {};
-
 	PROF_EVENT("Log: Apply Messages")
-		int TimeOfDaySize = 0;
 	for (const xr_string& line : LogLines)
 	{
-		string4096 finalLine;
-		xr_strconcat(finalLine, TimeOfDay, line.c_str());
-
-		int FinalSize = TimeOfDaySize + (int)line.size();
+		const char* finalLine = line.c_str();
+		int FinalSize = (int)line.size();
 		// line is ready, ready up everything
 
 		// Output to MSVC debug output
@@ -441,8 +436,8 @@ void xrLogger::LogThreadEntry()
 		WaitForSingleObject(hLogThread, INFINITE);
 		{
 			PROF_EVENT("Log Frame");
-			InternalPrintAllRecords();
 			PauseLogging();
+			InternalPrintAllRecords();
 			FlushLogIfRequestedLambda();
 		}
 	}
