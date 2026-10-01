@@ -543,7 +543,7 @@ void CWallmarksEngine::Render()
                 PROF_EVENT("DYNAMIC_WALLMARKS");
                 for (int j = 0; j < slot->skeleton_items.size(); j++)
                 {
-                    intrusive_ptr<CSkeletonWallmark> W = slot->skeleton_items[j];
+                    const intrusive_ptr<CSkeletonWallmark>& W = slot->skeleton_items[j];
                     if (!W) continue;
 
 #ifdef DEBUG

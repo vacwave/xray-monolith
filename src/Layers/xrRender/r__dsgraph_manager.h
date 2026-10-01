@@ -26,6 +26,7 @@ public:
 
 	FixedMAP<CSector*, std::pair<xr_vector<CFrustum>, FixedSet<CPortal*>>>		m_sector_frustums;
 	xr_unordered_flat_set<dxRender_Visual*>				m_static_seen;
+	xr_vector<u32>										m_static_root_masks;
 	xr_vector<ISpatialShared>				lstRenderables, lstLights;
 	FixedMAP<CPortal*, float>				f_portals;
 	sPoly S, D;
