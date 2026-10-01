@@ -188,6 +188,7 @@ void CALifeMonsterPatrolPathManager::navigate()
 			};
 		default: NODEFAULT;
 		};
+		return;
 	}
 
 	u32 chosen = use_randomness() ? object().get_object().randI(branching_factor) : 0;
