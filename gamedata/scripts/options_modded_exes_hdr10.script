@@ -509,5 +509,6 @@ function HDRLiveEditingControl:Close()
     self:Show(false)
 
     Unregister_UI("HDRLiveEditingControl")
+    UnregisterScriptCallback("actor_on_net_destroy", self)
     HDRLiveEditingGUI = nil
 end
