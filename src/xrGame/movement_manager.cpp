@@ -39,6 +39,7 @@ CMovementManager::CMovementManager(CCustomMonster* object)
 	m_object = object;
 	m_restriction_rebuild_smooth_frames = 0;
 	m_allow_rebuild_smoothing = false;
+	m_nearest_objects_query_pos.set(flt_max, flt_max, flt_max);
 }
 
 CMovementManager::~CMovementManager()
@@ -94,6 +95,8 @@ void CMovementManager::reinit()
 	m_build_at_once = false;
 	m_restriction_rebuild_smooth_frames = 0;
 	m_allow_rebuild_smoothing = false;
+	m_nearest_objects.clear_not_free();
+	m_nearest_objects_query_pos.set(flt_max, flt_max, flt_max);
 
 	enable_movement(true);
 	game_selector().reinit(&ai().game_graph());
