@@ -85,7 +85,7 @@ BOOL ISpatial::spatial_inside()
 	return TRUE;
 }
 
-BOOL verify_sp(ISpatialShared sp, Fvector& node_center, float node_radius)
+BOOL verify_sp(const ISpatialShared& sp, Fvector& node_center, float node_radius)
 {
 	float dr = -(- node_radius + sp->spatial.sphere.R);
 	if (sp->spatial.sphere.P.x < node_center.x - dr) return FALSE;
@@ -165,7 +165,6 @@ Fvector ISpatial::OwnerSectorPoint()
     ISpatialOwner* owner = RawOwner;
     if (owner)
     {
-        ISpatialShared ptr = owner->SpatialComponent;
         result = owner->spatial_sector_point();
     }
 
@@ -205,14 +204,14 @@ void ISpatial_NODE::_init(ISpatial_NODE* _parent)
 	items.clear();
 }
 
-void ISpatial_NODE::_insert(ISpatialShared S)
+void ISpatial_NODE::_insert(const ISpatialShared& S)
 {
 	S->spatial.node_ptr = this;
 	items.push_back(S);
 	S->spatial.space->stat_objects ++;
 }
 
-void ISpatial_NODE::_remove(ISpatialShared S)
+void ISpatial_NODE::_remove(const ISpatialShared& S)
 {
 	S->spatial.node_ptr = nullptr;
 	auto it = std::find(items.begin(),items.end(),S);
@@ -241,11 +240,6 @@ ISpatial_DB::~ISpatial_DB()
 	{
 		_node_destroy(m_root);
 	}
-
-	while (!nodes.empty())
-	{
-		nodes.pop_back();
-	}
 }
 
 void ISpatial_DB::initialize(Fbox& BB)
@@ -259,7 +253,6 @@ void ISpatial_DB::initialize(Fbox& BB)
 		bbc.set(0, 0, 0); // generic
 		bbd.set(1024, 1024, 1024); // generic
 
-		nodes.reserve(512);
 		m_center.set(bbc);
 		m_bounds = _max(_max(bbd.x, bbd.y), bbd.z);
 		rt_insert_object = NULL;
@@ -271,17 +264,13 @@ void ISpatial_DB::initialize(Fbox& BB)
 ISpatial_NODE* ISpatial_DB::_node_create()
 {
 	stat_nodes++;
-	return nodes.emplace_back(xr_new<ISpatial_NODE>());
+	return xr_new<ISpatial_NODE>();
 }
 
 void ISpatial_DB::_node_destroy(ISpatial_NODE* &P)
 {
 	//VERIFY						(P->_empty());
 	stat_nodes--;
-	auto it = std::find(nodes.begin(), nodes.end(), P);
-	if (it != nodes.end())
-		nodes.erase(it);
-
 	xr_delete(P);
 }
 
@@ -335,7 +324,7 @@ void ISpatial_DB::_insert(ISpatial_NODE* N, Fvector& n_C, float n_R)
 	}
 }
 
-void ISpatial_DB::insert(ISpatialShared S)
+void ISpatial_DB::insert(const ISpatialShared& S)
 {
 	if (m_root && verify_sp(S, m_center, m_bounds))
 	{
@@ -382,7 +371,7 @@ void ISpatial_DB::_remove(ISpatial_NODE* N, ISpatial_NODE* N_sub)
 	if (N->_empty()) _remove(N->parent, N);
 }
 
-void ISpatial_DB::remove(ISpatialShared S)
+void ISpatial_DB::remove(const ISpatialShared& S)
 {
 #ifdef DEBUG
 	stat_remove.Begin	();

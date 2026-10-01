@@ -45,13 +45,14 @@ void CEliteDetector::UpdateAf()
 	CAfList::ItemsMapIt it = it_b;
 
 	Fvector detector_pos = Position();
+	static const shared_str af_sign = "af_sign";
 	for (; it_b != it_e; ++it_b)
 	{
 		CArtefact* pAf = it_b->first;
 		if (pAf->H_Parent())
 			continue;
 
-		ui().RegisterItemToDraw(pAf->Position(), "af_sign");
+		ui().RegisterItemToDraw(pAf->Position(), af_sign);
 
 		if (pAf->CanBeInvisible())
 		{
@@ -217,7 +218,7 @@ void CUIArtefactDetectorElite::RegisterItemToDraw(const Fvector& p, const shared
 		Msg("! RegisterItemToDraw. static not found for [%s]", palette_idx.c_str());
 		return;
 	}
-	CUIStatic* S = m_palette[palette_idx];
+	CUIStatic* S = it->second;
 	SDrawOneItem itm(S, p);
 	m_items_to_draw.push_back(itm);
 }
