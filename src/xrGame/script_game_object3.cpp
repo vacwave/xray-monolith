@@ -105,6 +105,11 @@ const xr_vector<MemorySpace::CVisibleObject>& CScriptGameObject::memory_visible_
 		                                make_string("CGameObject [%s]: cannot access class member memory_visible_objects!", object().cNameSect().c_str()).c_str());
 		NODEFAULT;
 	}
+	if (!monster->g_Alive())
+	{
+		static const xr_vector<MemorySpace::CVisibleObject> empty;
+		return (empty);
+	}
 	return (monster->memory().visual().objects());
 }
 
@@ -117,6 +122,11 @@ const xr_vector<MemorySpace::CSoundObject>& CScriptGameObject::memory_sound_obje
 		                                make_string("CGameObject [%s]: cannot access class member memory_sound_objects!", object().cNameSect().c_str()).c_str());
 		NODEFAULT;
 	}
+	if (!monster->g_Alive())
+	{
+		static const xr_vector<MemorySpace::CSoundObject> empty;
+		return (empty);
+	}
 	return (monster->memory().sound().objects());
 }
 
@@ -128,6 +138,11 @@ const xr_vector<MemorySpace::CHitObject>& CScriptGameObject::memory_hit_objects(
 		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
 		                                make_string("CGameObject [%s]: cannot access class member memory_hit_objects!", object().cNameSect().c_str()).c_str());
 		NODEFAULT;
+	}
+	if (!monster->g_Alive())
+	{
+		static const xr_vector<MemorySpace::CHitObject> empty;
+		return (empty);
 	}
 	return (monster->memory().hit().objects());
 }

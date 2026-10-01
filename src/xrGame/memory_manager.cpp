@@ -152,6 +152,9 @@ void CMemoryManager::update(float time_delta)
 
 void CMemoryManager::enable(const CObject* object, bool enable)
 {
+	if (!m_object->g_Alive())
+		return;
+
 	visual().enable(object, enable);
 	sound().enable(object, enable);
 	hit().enable(object, enable);
