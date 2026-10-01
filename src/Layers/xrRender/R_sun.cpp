@@ -85,7 +85,8 @@ void CRender::render_sun_cascade(u32 cascade_ind)
 	sun::cascade& cascade = m_sun_cascades[cascade_ind];
 
 	CFrustum& cull_frustum = cascade.cull_frustum;
-	xr_vector<Fplane> cull_planes;
+	static xr_vector<Fplane> cull_planes;
+	cull_planes.clear();
 	Fvector3& cull_COP = cascade.cull_COP;
 	Fmatrix& cull_xform = cascade.cull_xform;
 

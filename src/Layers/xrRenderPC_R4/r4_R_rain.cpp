@@ -80,7 +80,8 @@ void CRender::render_rain()
 
 	// Compute volume(s) - something like a frustum for infinite directional light
 	// Also compute virtual light position and sector it is inside
-	xr_vector<Fplane> cull_planes;
+	static xr_vector<Fplane> cull_planes;
+	cull_planes.clear();
 	{
 		FPU::m64r();
 		// Lets begin from base frustum
