@@ -233,7 +233,7 @@ void CGameTaskManager::RPC_UpdateTaskName()
 {
 	CGameTask* tr = ActiveTask();
 	if (tr)
-		snprintf(discord_gameinfo.task_name, 128, xr_ToUTF8(*CStringTable().translate(tr->m_Title)));
+		snprintf(discord_gameinfo.task_name, 128, "%s", xr_ToUTF8(*CStringTable().translate(tr->m_Title)));
 }
 
 CGameTask* CGameTaskManager::ActiveTask()
