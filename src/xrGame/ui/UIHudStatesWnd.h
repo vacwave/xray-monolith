@@ -49,6 +49,10 @@ public:
 	bool m_ui_psy_bar_show;
 
 private:
+	shared_str m_ammo_icon_sect;
+	Frect m_ammo_icon_rect;
+	shared_str m_ammo_icon_texture;
+
 	float m_last_health;
 	float m_health_blink;
 

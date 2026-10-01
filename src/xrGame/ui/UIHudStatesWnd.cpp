@@ -467,20 +467,23 @@ void CUIHudStatesWnd::SetAmmoIcon(const shared_str& sect_name)
 	}
 	m_ui_weapon_icon->Show(true);
 
-	Frect texture_rect;
-	texture_rect.x1 = pSettings->r_float(sect_name, "inv_grid_x") * INV_GRID_WIDTH;
-	texture_rect.y1 = pSettings->r_float(sect_name, "inv_grid_y") * INV_GRID_HEIGHT;
-	texture_rect.x2 = pSettings->r_float(sect_name, "inv_grid_width") * INV_GRID_WIDTH;
-	texture_rect.y2 = pSettings->r_float(sect_name, "inv_grid_height") * INV_GRID_HEIGHT;
-	texture_rect.rb.add(texture_rect.lt);
+	if (sect_name != m_ammo_icon_sect)
+	{
+		m_ammo_icon_sect = sect_name;
+		m_ammo_icon_rect.x1 = pSettings->r_float(sect_name, "inv_grid_x") * INV_GRID_WIDTH;
+		m_ammo_icon_rect.y1 = pSettings->r_float(sect_name, "inv_grid_y") * INV_GRID_HEIGHT;
+		m_ammo_icon_rect.x2 = pSettings->r_float(sect_name, "inv_grid_width") * INV_GRID_WIDTH;
+		m_ammo_icon_rect.y2 = pSettings->r_float(sect_name, "inv_grid_height") * INV_GRID_HEIGHT;
+		m_ammo_icon_rect.rb.add(m_ammo_icon_rect.lt);
+		m_ammo_icon_texture = pSettings->line_exist(sect_name, "icons_texture") ? pSettings->r_string(sect_name, "icons_texture") : NULL;
+	}
+
+	Frect texture_rect = m_ammo_icon_rect;
 	m_ui_weapon_icon->GetUIStaticItem().SetTextureRect(texture_rect);
 	m_ui_weapon_icon->SetStretchTexture(true);
 
-	if (pSettings->line_exist(sect_name, "icons_texture"))
-	{
-		LPCSTR icons_texture = pSettings->r_string(sect_name, "icons_texture");
-		m_ui_weapon_icon->SetShader(InventoryUtilities::GetCustomIconTextureShader(icons_texture));
-	}
+	if (m_ammo_icon_texture.size())
+		m_ui_weapon_icon->SetShader(InventoryUtilities::GetCustomIconTextureShader(m_ammo_icon_texture.c_str()));
 	else
 		m_ui_weapon_icon->SetShader(InventoryUtilities::GetEquipmentIconsShader());
 

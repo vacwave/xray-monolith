@@ -369,7 +369,7 @@ void CMapLocation::UpdateSpot(CUICustomMap* map, CMapSpot* sp)
 			return;
 		}
 
-		if (IsGameTypeSingle())
+		if (IsGameTypeSingle() && m_owner_task_id.size()) // only task-linked spots can have a task
 		{
 			CGameTask* ml_task = Level().GameTaskManager().HasGameTask(this, true);
 			if (ml_task)
