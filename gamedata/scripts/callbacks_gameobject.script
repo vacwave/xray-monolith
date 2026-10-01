@@ -359,7 +359,7 @@ end
 AddScriptCallback("npc_on_before_look_at_actor")
 _G.CNPCBeforeLookAtActor = function(npc, distance)
 	local flags = {ret_value = true}
-	SendScriptCallback("npc_on_before_look_at_actor", npc, distance)
+	SendScriptCallback("npc_on_before_look_at_actor", npc, distance, flags)
 	return flags.ret_value
 end
 

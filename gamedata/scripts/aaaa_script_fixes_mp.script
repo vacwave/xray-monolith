@@ -126,7 +126,7 @@ function axr_trade_manager.npc_trade_buy_sell(npc)
 
 	local smart = xr_gulag.get_npc_smart(npc)
 	local npc_info = smart and smart.npc_info[id]
-	if (npc_info) then
+	if (npc_info and npc_info.job) then
 		npc_info.job.idle = time_global() + 20000
 	end
 
@@ -313,7 +313,7 @@ function axr_trade_manager.npc_tech_upgrade_sell(npc)
 
 	local smart = xr_gulag.get_npc_smart(npc)
 	local npc_info = smart and smart.npc_info[id]
-	if (npc_info) then
+	if (npc_info and npc_info.job) then
 		npc_info.job.idle = time_global() + 20000
 	end
 
@@ -680,7 +680,7 @@ function ActorMenu_on_item_focus_receive(obj)
 		end)
 	end
 	local inventory = GetActorMenu()
-	if not ((#focus_tbl > 0) or (inventory and inventory:IsShown())) then
+	if not ((#focus_tbl > 0) and (inventory and inventory:IsShown())) then
 		return
 	end
 	

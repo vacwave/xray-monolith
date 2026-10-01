@@ -181,7 +181,7 @@ _G.print_r = function(t, sort, sorting_func)
     		saved_pos[t] = {}
     	end
     	local new_table = false
-    	for k, v in iterator_func(t, sort_func) do
+    	for k, v in iterator_func(t, sorting_func) do
     		local key = k
     		if type(k) == "userdata" then
     			key = vec_to_str(k) or "userdata"
