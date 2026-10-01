@@ -102,6 +102,8 @@ class CPHActorCharacter :
 	float m_speed_goal;
 	bool b_single_game;
 	float m_air_turn_factor;
+	float m_step_up_height; // walkable step top found ahead by the last PhTune, above the foot (0 = none)
+	bool b_step_up; // a contact was turned into a step-up contact and the body is still rising
 public:
 	typedef TPHCharacterRestrictor<rtStalker> stalker_restrictor;
 	typedef TPHCharacterRestrictor<rtStalkerSmall> stalker_small_restrictor;

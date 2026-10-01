@@ -34,6 +34,7 @@ class CFPCamEffector;
 ENGINE_API extern float psHUD_FOV;
 ENGINE_API extern float psHUD_FOV_def;
 BOOL g_freelook_while_reloading = 1;
+extern BOOL g_smooth_steps;
 
 void CActor::cam_Set(EActorCameras style)
 {
@@ -565,8 +566,27 @@ void CActor::cam_Update(float dt, float fFOV)
 
 	float flCurrentPlayerY = xform.c.y;
 
+	if (g_smooth_steps)
+	{
+		// Smooth out small step ups and downs, follow the ground slope without lag
+		CPHMovementControl* movement_control = character_physics_support()->movement();
+		if (movement_control->Environment() == CPHMovementControl::peOnGround && xform.c.distance_to(vPrevStepCamPos) < 1.f)
+		{
+			Fvector ground_normal;
+			movement_control->GroundNormal(ground_normal);
+			if (ground_normal.y > 0.5f)
+				fPrevCamPos -= (ground_normal.x * (xform.c.x - vPrevStepCamPos.x) +
+					ground_normal.z * (xform.c.z - vPrevStepCamPos.z)) / ground_normal.y;
+			fPrevCamPos += (flCurrentPlayerY - fPrevCamPos) * (1.f - expf(-10.f * dt));
+			clamp(fPrevCamPos, flCurrentPlayerY - 0.3f, flCurrentPlayerY + 0.3f);
+			point.y += fPrevCamPos - flCurrentPlayerY;
+		}
+		else
+			fPrevCamPos = flCurrentPlayerY;
+		vPrevStepCamPos.set(xform.c);
+	}
 	// Smooth out stair step ups
-	if ((character_physics_support()->movement()->Environment() == CPHMovementControl::peOnGround) && (flCurrentPlayerY
+	else if ((character_physics_support()->movement()->Environment() == CPHMovementControl::peOnGround) && (flCurrentPlayerY
 		- fPrevCamPos > 0))
 	{
 		fPrevCamPos += dt * 1.5f;
