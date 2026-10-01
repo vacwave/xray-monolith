@@ -288,15 +288,12 @@ void CMapManager::Update()
 	Locations_it it = Locations().begin();
 	Locations_it it_e = Locations().end();
 
-	for (u32 idx = 0; it != it_e; ++it, ++idx)
+	for (; it != it_e; ++it)
 	{
-		bool bForce = Device.dwFrame % 3 == idx % 3;
 		(*it).actual = (*it).location->Update();
-
-		if ((*it).actual && bForce)
-			(*it).location->CalcPosition();
 	}
-	std::sort(Locations().begin(), Locations().end());
+	if (!std::is_sorted(Locations().begin(), Locations().end()))
+		std::sort(Locations().begin(), Locations().end());
 
 	while ((!Locations().empty()) && (!Locations().back().actual))
 	{
