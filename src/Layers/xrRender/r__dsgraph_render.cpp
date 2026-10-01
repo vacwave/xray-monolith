@@ -470,10 +470,9 @@ void CDSGraphManager::r_dsgraph_capture_static()
 					continue;
 				}
 
-				xr_vector<u32> masks;
-				masks.reserve(frustums.size());
+				m_static_root_masks.clear();
 				for (CFrustum& frustum_node : frustums)
-					masks.push_back(frustum_node.getMask());
+					m_static_root_masks.push_back(frustum_node.getMask());
 
 				if (dbg)
 				{
@@ -491,7 +490,7 @@ void CDSGraphManager::r_dsgraph_capture_static()
 					}
 				}
 
-				add_Static_MultiFrustum((IRenderVisual*)pair.key->root(), frustums, masks.data());
+				add_Static_MultiFrustum((IRenderVisual*)pair.key->root(), frustums, m_static_root_masks.data());
 			}
 		}
 	}
