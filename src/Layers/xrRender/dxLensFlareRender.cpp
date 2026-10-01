@@ -80,6 +80,7 @@ void dxLensFlareRender::Render(CLensFlare& owner, BOOL bSun, BOOL bFlares, BOOL 
 				                                                                                 .m_Current->m_Flares.
 				                                                                                 end(); it++)
 				{
+					if (_2render.size() >= MAX_Flares) break;
 					CLensFlareDescriptor::SFlare& F = *it;
 					vec.mul(owner.vecAxis, F.fPosition);
 					vec.add(owner.vecCenter);
@@ -102,7 +103,7 @@ void dxLensFlareRender::Render(CLensFlare& owner, BOOL bSun, BOOL bFlares, BOOL 
 			}
 		}
 		// gradient
-		if (bGradient && (owner.fGradientValue >= EPS_L))
+		if (bGradient && (owner.fGradientValue >= EPS_L) && (_2render.size() < MAX_Flares))
 		{
 			if (owner.m_Current->m_Flags.is(CLensFlareDescriptor::flGradient))
 			{
