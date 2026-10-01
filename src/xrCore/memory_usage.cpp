@@ -47,11 +47,14 @@ size_t xrMemory::mem_usage(bool assert)
 	_HEAPINFO hinfo = {};
 	int status;
 	size_t bytesUsed = 0;
+	HANDLE heap = (HANDLE)_get_heap_handle();
+	HeapLock(heap);
 	while ((status = _heapwalk(&hinfo)) == _HEAPOK)
 	{
 		if (hinfo._useflag == _USEDENTRY)
 			bytesUsed += hinfo._size;
 	}
+	HeapUnlock(heap);
 	switch (status)
 	{
 	case _HEAPEMPTY:
