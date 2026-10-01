@@ -383,7 +383,7 @@ void AlifeRemoveInfo(const CALifeSimulator *alife, const ALife::_OBJECT_ID &id, 
 	static shared_str AlifeRemoveInfo;
 	AlifeRemoveInfo = info_id;
 
-	known_info->erase(std::find_if(known_info->begin(), known_info->end(), CFindByIDPred(AlifeRemoveInfo)),known_info->end());
+	known_info->erase(std::remove_if(known_info->begin(), known_info->end(), CFindByIDPred(AlifeRemoveInfo)),known_info->end());
 }
 
 //Alundaio: teleport object

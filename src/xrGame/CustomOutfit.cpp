@@ -402,6 +402,7 @@ bool CCustomOutfit::install_upgrade_impl(LPCSTR section, bool test)
 		m_BonesProtectionSect = str;
 		ReloadBonesProtection();
 	}
+	result |= result2;
 	result2 = process_if_exists_set(section, "bones_koeff_protection_add", &CInifile::r_string, str, test);
 	if (result2 && !test)
 		AddBonesProtection(str);

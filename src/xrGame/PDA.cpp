@@ -33,6 +33,10 @@ CPda::CPda(void)
 	m_fUD_InertiaFactor = 0.f;
 	m_bNoticedEmptyBattery = false;
 	m_PdaEnabled = true;
+	m_bPowerSaving = false;
+	m_psy_factor = 0.f;
+	m_fZoomfactor = 0.f;
+	m_LastMBZoom = false;
 }
 
 CPda::~CPda() {}
