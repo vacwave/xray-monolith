@@ -152,6 +152,7 @@ CActor::CActor() : CEntityAlive(), current_ik_cam_shift(0)
 
 	cam_active = eacFirstEye;
 	fPrevCamPos = 0.0f;
+	vPrevStepCamPos.set(0.f, 0.f, 0.f);
 	vPrevCamDir.set(0.f, 0.f, 1.f);
 	fCurAVelocity = 0.0f;
 	fFPCamYawMagnitude = 0.0f; //--#SM+#--

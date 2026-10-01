@@ -171,6 +171,7 @@ extern int g_nearwall;
 extern int g_nearwall_trace;
 extern BOOL drawPickupItemNames;
 extern BOOL fun_allowed;
+extern BOOL g_smooth_steps;
 extern BOOL progressiveStaminaCost;
 extern BOOL g_actor_overweight_rework;
 extern BOOL NPCsLookAtActor;
@@ -3260,6 +3261,9 @@ void CCC_RegisterCommands()
 
 	// demonized: Restores fun physics bugs like lift
 	CMD4(CCC_Integer, "fun_allowed", &fun_allowed, 0, 1);
+
+	// Smooth actor movement over small edges, rocks and thin slabs (camera + physics)
+	CMD4(CCC_Integer, "g_smooth_steps", &g_smooth_steps, 0, 1);
 
 #ifdef DEBUG
 	//extern BOOL g_use_new_ballistics;

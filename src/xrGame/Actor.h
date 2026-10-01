@@ -381,6 +381,7 @@ protected:
 	CCameraBase* cameras[eacMaxCam];
 	EActorCameras cam_active;
 	float fPrevCamPos;
+	Fvector vPrevStepCamPos;
 	float current_ik_cam_shift;
 	Fvector vPrevCamDir;
 	float fCurAVelocity;

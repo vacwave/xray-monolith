@@ -7,7 +7,15 @@
 //#include "ai/stalker/ai_stalker.h"
 //#include "Actor.h"
 #include "../xrEngine/gamemtllib.h"
+#include "../xrcdb/xr_area.h"
+#include "../xrcdb/xrXRC.h"
 //#include "level.h"
+
+BOOL g_smooth_steps = TRUE;
+static const float step_up_height = 0.25f; // max auto step-up height above the foot
+static const float step_up_min_height = 0.03f; // lower edges are rolled over by the wheel anyway
+static const float step_up_probe_dist = 0.05f; // probe the step top this far beyond the wheel
+static const float step_up_tolerance = 0.05f; // contact may sit this much above the probed top (rounded rocks)
 
 //const float JUMP_HIGHT=0.5;
 const float JUMP_UP_VELOCITY = 6.0f; //5.6f;
@@ -15,7 +23,7 @@ const float JUMP_INCREASE_VELOCITY_RATE = 1.2f;
 //#ifdef DEBUG
 //XRPHYSICS_API BOOL use_controllers_separation = TRUE;
 //#endif
-CPHActorCharacter::CPHActorCharacter(bool single_game): b_single_game(single_game), m_air_turn_factor(1.f)
+CPHActorCharacter::CPHActorCharacter(bool single_game): b_single_game(single_game), m_air_turn_factor(1.f), m_step_up_height(0.f), b_step_up(false)
 {
 	SetRestrictionType(rtActor);
 
@@ -349,7 +357,34 @@ void CPHActorCharacter::InitContact(dContact* c, bool& do_collide, u16 material_
 			c->surface.mu = 0.00f;
 		}
 		else
+		{
+			if (g_smooth_steps && m_step_up_height > 0.f && do_collide && !b_jump &&
+				!(dGeomGetBody(c->geom.g1) && dGeomGetBody(c->geom.g2)))
+			{
+				dGeomID g = c->geom.g1;
+				float sign = 1.f;
+				if (g != m_wheel && g != m_shell_transform)
+				{
+					g = c->geom.g2;
+					sign = -1.f;
+				}
+				if (g == m_wheel || g == m_shell_transform)
+				{
+					dReal* normal = c->geom.normal;
+					float h = c->geom.pos[1] - (dBodyGetPosition(m_body)[1] - m_radius); // contact height above the foot
+					if (h > 0.f && h <= m_step_up_height + step_up_tolerance && sign * normal[1] < M_SQRT1_2 &&
+						dXZDot(m_acceleration, cast_fv(normal)) * sign < 0.f)
+					{
+						// low edge against the motion: treat it as ground so the wheel steps up instead of stopping (same as FootProcess)
+						normal[0] = normal[2] = 0.f;
+						normal[1] = sign;
+						c->geom.depth = h;
+						b_step_up = true;
+					}
+				}
+			}
 			inherited::InitContact(c, do_collide, material_idx_1, material_idx_2);
+		}
 		if (b_restrictor &&
 			do_collide &&
 			!(b1
@@ -439,6 +474,48 @@ static const float air_turn_max_angle = deg2rad(160.f); // input further behind 
 void CPHActorCharacter::PhTune(dReal step)
 {
 	inherited::PhTune(step);
+	if (g_smooth_steps)
+	{
+		if (b_step_up)
+		{
+			const dReal* vel = dBodyGetLinearVel(m_body);
+			bool step_up_over = !is_contact || b_lose_control || b_jumping || vel[1] <= 0.f;
+			// body left the edge after an assisted step-up: don't let leftover upward speed launch it
+			if (!is_contact && !b_lose_control && !b_jumping && vel[1] > 0.f)
+				dBodySetLinearVel(m_body, vel[0], 0.f, vel[2]);
+			if (step_up_over)
+				b_step_up = false;
+		}
+
+		// probe for a walkable step top ahead, used by the next InitContact
+		m_step_up_height = 0.f;
+		if (is_control && !b_lose_control && !b_jumping && !m_elevator_state.Active())
+		{
+			Fvector dir;
+			dir.set(m_acceleration.x, 0.f, m_acceleration.z);
+			float mag = dir.magnitude();
+			if (mag > EPS_L)
+			{
+				Fvector start;
+				start.set(cast_fv(dBodyGetPosition(m_body)));
+				start.mad(dir, (m_radius + step_up_probe_dist) / mag);
+				start.y += step_up_height - m_radius;
+				XRC.ray_options(CDB::OPT_ONLYNEAREST | CDB::OPT_CULL);
+				XRC.ray_query(inl_ph_world().ObjectSpace().GetStaticModel(), start, Fvector().set(0.f, -1.f, 0.f),
+				              step_up_height);
+				if (XRC.r_count())
+				{
+					CDB::RESULT* R = XRC.r_begin();
+					Fvector n;
+					n.mknormal(R->verts[0], R->verts[1], R->verts[2]);
+					float h = step_up_height - R->range;
+					if (h > step_up_min_height && _abs(n.y) > M_SQRT1_2 &&
+						!GMLibrary().GetMaterialByIdx(u16(R->material))->Flags.test(SGameMtl::flPassable))
+						m_step_up_height = h;
+				}
+			}
+		}
+	}
 	if (b_lose_control && !b_external_impulse) //
 	{
 		const float* force = dBodyGetForce(m_body);
