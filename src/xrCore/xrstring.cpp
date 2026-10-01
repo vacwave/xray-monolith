@@ -283,7 +283,7 @@ xr_string::xr_string(LPCSTR Str, u32 Size)
 }
 
 xr_string::xr_string(Super&& other)
-	: Super(other)
+	: Super(std::move(other))
 {
 }
 
@@ -314,7 +314,7 @@ xr_vector<xr_string> xr_string::Split(u32 NumberOfSplits, ...) const
 
 	for (u32 i = 0; i < NumberOfSplits; ++i)
 	{
-		char splitCh = va_arg(args, char);
+		char splitCh = (char)va_arg(args, int);
 
 		//special case for first try
 		if (i == 0)
@@ -354,7 +354,7 @@ xr_string xr_string::RemoveWhitespaces() const
 
 	for (size_t i = 0; i < Size; ++i)
 	{
-		if (*OrigStr != ' ')
+		if (OrigStr[i] != ' ')
 		{
 			Result.push_back(OrigStr[i]);
 		}
@@ -447,7 +447,7 @@ xr_string xr_string::Join(xrStringVector::iterator beginIter, xrStringVector::it
 		cursorIter++;
 	}
 
-	if (delimeter != '\0')
+	if (delimeter != '\0' && !Result.empty())
 	{
 		Result.erase(Result.end() - 1);
 	}
