@@ -239,6 +239,9 @@ bool enemy_inaccessible(CBaseMonster* const object)
 	if (!enemy)
 		return false;
 
+	if (!ai().level_graph().valid_vertex_id(enemy->ai_location().level_vertex_id()))
+		return true;
+
 	Fvector const enemy_pos = enemy->Position();
 	Fvector const enemy_vert_pos = ai().level_graph().vertex_position(enemy->ai_location().level_vertex_id());
 
@@ -258,9 +261,6 @@ bool enemy_inaccessible(CBaseMonster* const object)
 		return true;
 
 	if (!ai().level_graph().valid_vertex_position(enemy_pos))
-		return true;
-
-	if (!ai().level_graph().valid_vertex_id(enemy->ai_location().level_vertex_id()))
 		return true;
 
 	return false;

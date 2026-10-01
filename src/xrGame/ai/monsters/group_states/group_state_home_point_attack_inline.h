@@ -82,6 +82,11 @@ TEMPLATE_SPECIALIZATION
 bool CStateGroupAttackMoveToHomePointAbstract::enemy_inaccessible()
 {
 	CEntityAlive const* enemy = object->EnemyMan.get_enemy();
+	if (!ai().level_graph().valid_vertex_id(enemy->ai_location().level_vertex_id()))
+	{
+		return true;
+	}
+
 	Fvector const enemy_pos = enemy->Position();
 	Fvector const enemy_vert_pos = ai().level_graph().vertex_position(enemy->ai_location().level_vertex_id());
 	if (enemy_vert_pos.distance_to(enemy_pos) > 1.f)
@@ -94,11 +99,6 @@ bool CStateGroupAttackMoveToHomePointAbstract::enemy_inaccessible()
 	}
 
 	if (!ai().level_graph().valid_vertex_position(enemy_pos))
-	{
-		return true;
-	}
-
-	if (!ai().level_graph().valid_vertex_id(enemy->ai_location().level_vertex_id()))
 	{
 		return true;
 	}
