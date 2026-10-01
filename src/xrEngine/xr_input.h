@@ -57,6 +57,8 @@ private:
 
 	//----------------------
 	BOOL KBState[COUNT_KB_BUTTONS];
+	xr_vector<DIDEVICEOBJECTDATA> kbBuffer;
+	xr_vector<DIDEVICEOBJECTDATA> mouseBuffer;
 
 	HRESULT CreateInputDevice(LPDIRECTINPUTDEVICE8* device, GUID guidDevice,
 	                          const DIDATAFORMAT* pdidDataFormat, u32 dwFlags,

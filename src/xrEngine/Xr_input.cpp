@@ -193,7 +193,10 @@ void CInput::KeyUpdate()
 
 	HRESULT hr;
 	DWORD dwElements = KEYBOARDBUFFERSIZE;
-	auto od = std::make_unique<DIDEVICEOBJECTDATA[]>(KEYBOARDBUFFERSIZE);
+	if (kbBuffer.size() < (u32)KEYBOARDBUFFERSIZE)
+		kbBuffer.resize(KEYBOARDBUFFERSIZE);
+	DIDEVICEOBJECTDATA* od = kbBuffer.data();
+	ZeroMemory(od, KEYBOARDBUFFERSIZE * sizeof(DIDEVICEOBJECTDATA)); // uAppData == 666 marks skipped keys, clear stale marks
 	DWORD key = 0;
 
 	VERIFY(pKeyboard);
@@ -435,7 +438,9 @@ void CInput::MouseUpdate()
 {
 	HRESULT hr;
 	DWORD dwElements = MOUSEBUFFERSIZE;
-	auto od = std::make_unique<DIDEVICEOBJECTDATA[]>(MOUSEBUFFERSIZE);
+	if (mouseBuffer.size() < (u32)MOUSEBUFFERSIZE)
+		mouseBuffer.resize(MOUSEBUFFERSIZE);
+	DIDEVICEOBJECTDATA* od = mouseBuffer.data();
 
 	VERIFY(pMouse);
 

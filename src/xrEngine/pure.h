@@ -98,8 +98,8 @@ public:
 
 	void Process(RP_FUNC* f)
 	{
-		in_process = true;
 		if (R.empty()) return;
+		in_process = true;
 		if (R[0].Prio == REG_PRIORITY_CAPTURE) f(R[0].Object);
 		else
 		{
@@ -113,7 +113,7 @@ public:
 
 	void Resort(void)
 	{
-		qsort(&*R.begin(), R.size(), sizeof(_REG_INFO), _REG_Compare);
+		qsort(R.data(), R.size(), sizeof(_REG_INFO), _REG_Compare);
 		while ((R.size()) && (R[R.size() - 1].Prio == REG_PRIORITY_INVALID)) R.pop_back();
 		if (R.empty()) R.clear();
 		changed = false;
