@@ -1319,8 +1319,9 @@ void CActor::UpdateCL()
 		}
 
 		//Current Time
-		str_c current_time = InventoryUtilities::GetGameTimeAsString(InventoryUtilities::etpTimeToMinutes).c_str();
-		discord_gameinfo.currenttime = current_time;
+		static shared_str current_time;
+		current_time = InventoryUtilities::GetGameTimeAsString(InventoryUtilities::etpTimeToMinutes);
+		discord_gameinfo.currenttime = current_time.c_str();
 
 		// Update once after a loadscreen
 		if (!discord_gameinfo.loadscreen && discord_gameinfo.ex_update)
@@ -1352,7 +1353,7 @@ void CActor::UpdateCL()
 			//Level
 			if (g_pGameLevel && g_pGameLevel->name() != NULL)
 			{
-				snprintf(discord_gameinfo.level_name, 128, xr_ToUTF8(*CStringTable().translate(g_pGameLevel->name())));
+				snprintf(discord_gameinfo.level_name, 128, "%s", xr_ToUTF8(*CStringTable().translate(g_pGameLevel->name())));
 				srand(time(0));
 				int level_icon_id = rand() % 3 + 1;
 				discord_gameinfo.level_icon_index = level_icon_id;
@@ -1362,16 +1363,16 @@ void CActor::UpdateCL()
 			//Story Mode
 			::luabind::functor<bool> game_mode;
 			if (ai().script_engine().functor("_g.IsStoryMode", game_mode) && game_mode())
-				snprintf(discord_gameinfo.gamemode, 128, xr_ToUTF8(*CStringTable().translate("st_cap_check_story")));
+				snprintf(discord_gameinfo.gamemode, 128, "%s", xr_ToUTF8(*CStringTable().translate("st_cap_check_story")));
 
 			//Warfare
 			else if (ai().script_engine().functor("_g.IsWarfare", game_mode) && game_mode())
-				snprintf(discord_gameinfo.gamemode, 128, xr_ToUTF8(*CStringTable().translate("st_cap_check_warfare")));
+				snprintf(discord_gameinfo.gamemode, 128, "%s", xr_ToUTF8(*CStringTable().translate("st_cap_check_warfare")));
 
 			//Azazel Mode
 			else if (ai().script_engine().functor("_g.IsAzazelMode", game_mode) && game_mode())
 			{
-				snprintf(discord_gameinfo.gamemode, 128, xr_ToUTF8(*CStringTable().translate("st_cap_check_azazel_mode")));
+				snprintf(discord_gameinfo.gamemode, 128, "%s", xr_ToUTF8(*CStringTable().translate("st_cap_check_azazel_mode")));
 
 				::luabind::functor<int> possessed_lives;
 				if (ai().script_engine().functor("azazel_mode.get_possessed_lives", possessed_lives))
@@ -1383,11 +1384,11 @@ void CActor::UpdateCL()
 
 			//Survival Mode
 			else if (ai().script_engine().functor("_g.IsSurvivalMode", game_mode) && game_mode())
-				snprintf(discord_gameinfo.gamemode, 128, xr_ToUTF8(*CStringTable().translate("st_cap_check_survival")));
+				snprintf(discord_gameinfo.gamemode, 128, "%s", xr_ToUTF8(*CStringTable().translate("st_cap_check_survival")));
 
 			//Freeplay Mode
 			else
-				snprintf(discord_gameinfo.gamemode, 128, xr_ToUTF8(*CStringTable().translate("st_cap_check_freeplay")));
+				snprintf(discord_gameinfo.gamemode, 128, "%s", xr_ToUTF8(*CStringTable().translate("st_cap_check_freeplay")));
 
 			//Update Active Task
 			Level().GameTaskManager().RPC_UpdateTaskName();
@@ -1434,10 +1435,12 @@ void CActor::RPC_UpdateFaction()
 		if (real_faction)
 		{
 			LPCSTR faction_name = real_faction();
-			discord_gameinfo.faction = faction_name;
+			static shared_str faction;
+			faction = faction_name;
+			discord_gameinfo.faction = faction.c_str();
 			char buffer[128];
-			sprintf(buffer, "st_faction_%s", faction_name);
-			snprintf(discord_gameinfo.faction_name, 128, xr_ToUTF8(*CStringTable().translate(buffer)));
+			xr_sprintf(buffer, sizeof(buffer), "st_faction_%s", faction_name);
+			snprintf(discord_gameinfo.faction_name, 128, "%s", xr_ToUTF8(*CStringTable().translate(buffer)));
 		}
 	}
 }
@@ -1452,8 +1455,8 @@ void CActor::RPC_UpdateRank()
 		{
 			LPCSTR rank = actor_rank();
 			char rank_name[100];
-			sprintf(rank_name, "st_rank_%s", rank);
-			snprintf(discord_gameinfo.rank_name, 128, xr_ToUTF8(*CStringTable().translate(rank_name)));
+			xr_sprintf(rank_name, sizeof(rank_name), "st_rank_%s", rank);
+			snprintf(discord_gameinfo.rank_name, 128, "%s", xr_ToUTF8(*CStringTable().translate(rank_name)));
 		}
 	}
 }
@@ -1474,7 +1477,7 @@ void CActor::RPC_UpdateReputation()
 				{
 					LPCSTR reputation_name = actor_rep(reputation);
 					if (reputation_name)
-						snprintf(discord_gameinfo.reputation, 128, xr_ToUTF8(*CStringTable().translate(reputation_name)));
+						snprintf(discord_gameinfo.reputation, 128, "%s", xr_ToUTF8(*CStringTable().translate(reputation_name)));
 				}
 			}
 		}
