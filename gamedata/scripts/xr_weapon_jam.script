@@ -41,7 +41,7 @@ function npc_misfire(weapon, npc, base_value, t)
 	local ammo_spent = ammo_then - ammo_now 
 	GUN_TRACKING[gun_id].ammo_last_update = ammo_now
 	
-	print_dbg('ammo difference: %s - %s = %s', ammo_spent, ammo_now, ammo_spent)
+	print_dbg('ammo difference: %s - %s = %s', ammo_then, ammo_now, ammo_spent)
 	
 	-- Calculate and apply jam
 	local new_ammo

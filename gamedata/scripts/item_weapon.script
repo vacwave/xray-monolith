@@ -604,9 +604,11 @@ function start_ammo_wheel()
 			GUI:ShowDialog(true)
 			GUI:Reset(wpn)
 			
-			aw_cooldown = time_global()
-			
-			Register_UI("UIWheelAmmo","item_weapon")
+			if GUI:IsShown() then
+				aw_cooldown = time_global()
+				
+				Register_UI("UIWheelAmmo","item_weapon")
+			end
 		end
 	end
 end
@@ -737,6 +739,7 @@ function UIWheelAmmo:Reset(obj)
 	if not self.ammo_list then
 		printf("ERROR: could not find ammo list for [%s] - grenade mode: %s", self.section, self.grenade_mode)
 		self:Close()
+		return
 	end
 	
 	
