@@ -161,6 +161,9 @@ void CSoundMemoryManager::feel_sound_new(CObject* object, int sound_type, CSound
 	if (!entity_alive->g_Alive())
 		return;
 
+	if (!m_sounds)
+		return;
+
 	VERIFY(_valid(sound_power));
 	if (is_sound_type(sound_type, SOUND_TYPE_WEAPON))
 		sound_power *= m_weapon_factor;

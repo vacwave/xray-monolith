@@ -82,6 +82,7 @@ void CHitMemoryManager::reinit()
 	m_hits = 0;
 	m_last_hit_object_id = ALife::_OBJECT_ID(-1);
 	m_last_hit_time = 0;
+	m_no_squad_hits_logged = false;
 }
 
 void CHitMemoryManager::reload(LPCSTR section)
@@ -90,6 +91,17 @@ void CHitMemoryManager::reload(LPCSTR section)
 	xr_delete				(m_selected_hit);
 #endif
 	m_max_hit_count = READ_IF_EXISTS(pSettings, r_s32, section, "DynamicHitCount", 1);
+}
+
+void CHitMemoryManager::log_no_squad_hits()
+{
+	if (m_no_squad_hits_logged)
+		return;
+
+	m_no_squad_hits_logged = true;
+	Msg("! [CHitMemoryManager] no squad hit memory for %s, section %s, id %d, team %d, squad %d, group %d, alive %d, health %f, already_die %d, killer %d",
+		m_object->cName().c_str(), m_object->cNameSect().c_str(), m_object->ID(), m_object->g_Team(), m_object->g_Squad(), m_object->g_Group(),
+		m_object->g_Alive(), m_object->GetfHealth(), m_object->AlreadyDie(), m_object->killer_id());
 }
 
 void CHitMemoryManager::add(float amount, const Fvector& vLocalDir, const CObject* who, s16 element)
@@ -120,6 +132,12 @@ void CHitMemoryManager::add(float amount, const Fvector& vLocalDir, const CObjec
 		who ? smart_cast<const CGameObject*>(who)->lua_game_object() : 0,
 		element
 	);
+
+	if (!m_hits)
+	{
+		log_no_squad_hits();
+		return;
+	}
 
 	Fvector direction;
 	m_object->XFORM().transform_dir(direction, vLocalDir);
@@ -173,6 +191,12 @@ void CHitMemoryManager::add(const CHitObject& _hit_object)
 	VERIFY(m_hits);
 	if (!object().g_Alive())
 		return;
+
+	if (!m_hits)
+	{
+		log_no_squad_hits();
+		return;
+	}
 
 	CHitObject hit_object = _hit_object;
 	hit_object.m_squad_mask.set(!m_stalker ? squad_mask_type(-1) : m_stalker->agent_manager().member().mask(m_stalker),
