@@ -24,6 +24,7 @@ private:
 	CUIStatic m_Counter;
 	CUITextWnd m_Counter_text;
 	u8 m_current_map_idx;
+	u64 m_last_clock_minute;
 
 public:
 	CUIZoneMap();

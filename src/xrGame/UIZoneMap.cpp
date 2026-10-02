@@ -40,6 +40,7 @@ void CUIZoneMap::Init()
 	xml_init.InitStatic(uiXml, "minimap:center", 0, &m_center);
 
 	m_clock_wnd = UIHelper::CreateStatic(uiXml, "minimap:clock_wnd", &m_background);
+	m_last_clock_minute = u64(-1);
 
 	BOOL bRotate = uiXml.ReadAttribInt("minimap:level_frame", 0, "rotate", TRUE);
 	BOOL bRounded = uiXml.ReadAttribInt("minimap:level_frame", 0, "rounded", TRUE);
@@ -175,8 +176,13 @@ void CUIZoneMap::Update()
 	Device.vCameraDirection.getHP(h, p);
 	SetHeading(-h);
 
-	m_clock_wnd->TextItemControl()->SetText(
-		InventoryUtilities::GetGameTimeAsString(InventoryUtilities::etpTimeToMinutes).c_str());
+	u64 const clock_minute = Level().GetGameTime() / 60000;
+	if (clock_minute != m_last_clock_minute)
+	{
+		m_last_clock_minute = clock_minute;
+		m_clock_wnd->TextItemControl()->SetText(
+			InventoryUtilities::GetGameTimeAsString(InventoryUtilities::etpTimeToMinutes).c_str());
+	}
 }
 
 void CUIZoneMap::SetHeading(float angle)

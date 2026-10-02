@@ -182,14 +182,16 @@ void CActor::PickupModeUpdate_COD(pickup_result_t pickup_result)
 	frustum.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB | FRUSTUM_P_FAR);
 
 	ISpatialResult.clear_not_free();
-	g_SpatialSpace->q_frustum(ISpatialResult, 0, STYPE_COLLIDEABLE, frustum);
+	// Only items within 2m of the actor qualify (see distance check below), so query a box around the actor, not the whole frustum
+	g_SpatialSpace->q_box(ISpatialResult, 0, STYPE_COLLIDEABLE, Position(), Fvector().set(2.f, 2.f, 2.f));
 
 	float maxlen = 1000.0f;
 	CInventoryItem* pNearestItem = NULL;
 
 	for (u32 o_it = 0; o_it < ISpatialResult.size(); o_it++)
 	{
-		ISpatialShared spatial = ISpatialResult[o_it];
+		const ISpatialShared& spatial = ISpatialResult[o_it];
+		if (!frustum.testSphere_dirty(spatial->spatial.sphere.P, spatial->spatial.sphere.R)) continue;
 		CInventoryItem* pIItem = smart_cast<CInventoryItem*>(spatial->dcast_CObject());
 
 		if (0 == pIItem) continue;
