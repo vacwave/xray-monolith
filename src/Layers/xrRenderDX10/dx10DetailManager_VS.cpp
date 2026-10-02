@@ -146,6 +146,10 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 	if (RImplementation.phase == CRender::PHASE_SMAP && var_id == 0)
 		return;
 
+	// sector visibility can't change during the dump, test it once instead of per instance
+	const bool skip_instances = !RImplementation.GMBase.is_sector_visible(RImplementation.pOutdoorSector) ||
+		(RImplementation.phase == CRender::PHASE_SMAP && L && !L->GMLight.is_sector_visible(RImplementation.pOutdoorSector));
+
 	static shared_str strConsts("consts");
 	static shared_str strWave("wave");
 	static shared_str strDir2D("dir2D");
@@ -292,14 +296,11 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 					{
 						SlotItem& Instance = **_iI;
 
-						if (!RImplementation.GMBase.is_sector_visible(RImplementation.pOutdoorSector))
+						if (skip_instances)
 							continue;
 
 						if (RImplementation.phase == CRender::PHASE_SMAP && L)
 						{
-							if (!L->GMLight.is_sector_visible(RImplementation.pOutdoorSector))
-								continue;
-
 							if (L->position.distance_to_sqr(Instance.position) >= _sqr(L->range))
 								continue;
 						}
