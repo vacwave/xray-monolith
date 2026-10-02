@@ -455,7 +455,12 @@ void CScriptGameObject::SetHealthEx(float hp)
 	// a killed entity has left its group, reviving it leaves it without squad memory
 	if (hp > 0.f && obj->AlreadyDie())
 	{
-		Msg("! [set_health_ex] refused to revive dead %s, section %s, id %d", obj->cName().c_str(), obj->cNameSect().c_str(), obj->ID());
+		static u16 last_refused_id = u16(-1); // log once per object, scripts may retry on every hit
+		if (last_refused_id != obj->ID())
+		{
+			last_refused_id = obj->ID();
+			Msg("! [set_health_ex] refused to revive dead %s, section %s, id %d", obj->cName().c_str(), obj->cNameSect().c_str(), obj->ID());
+		}
 		return;
 	}
 
