@@ -67,7 +67,7 @@ void dxRainRender::Render(CEffect_Rain& owner)
 	float _drop_len = drop_length;
 	float _drop_width = drop_width;
 	float _drop_speed = 1.0f;
-	ref_shader& _splash_SH = DM_Drop->shader;
+	ref_shader _splash_SH = DM_Drop->shader;
 	static shared_str s_shader_setup = "ssfx_rain_setup";
 
 	int rain_max_particles = max_desired_items;
