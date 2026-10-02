@@ -646,8 +646,15 @@ void CInput::MouseUpdate()
 void CInput::iCapture(IInputReceiver* p)
 {
 	VERIFY(p);
+	// iCapture can run from a receiver callback inside KeyUpdate/MouseUpdate, whose loops still read
+	// kbBuffer/mouseBuffer. Flush into separate buffers so the outer loop's events are not overwritten.
+	xr_vector<DIDEVICEOBJECTDATA> kbOuter, mouseOuter;
+	kbBuffer.swap(kbOuter);
+	mouseBuffer.swap(mouseOuter);
 	if (pMouse) MouseUpdate();
 	if (pKeyboard) KeyUpdate();
+	kbBuffer.swap(kbOuter);
+	mouseBuffer.swap(mouseOuter);
 
 	// change focus
 	if (!cbStack.empty())

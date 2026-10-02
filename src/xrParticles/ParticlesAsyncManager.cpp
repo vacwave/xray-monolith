@@ -79,7 +79,7 @@ CParticlesAsync::CParticlesAsync()
     Device.ParticleWorkerCallback.bind(&CParticlesAsync::Start);
 }
 
-void CParticlesAsync::UpdateParticle(intrusive_ptr<CPS_Instance> particle) const
+void CParticlesAsync::UpdateParticle(const intrusive_ptr<CPS_Instance>& particle) const
 {
 	u32 dt = Device.dwTimeGlobal - particle->dwLastTime;
 	IParticleCustom* V = smart_cast<IParticleCustom*>(particle->renderable.visual);

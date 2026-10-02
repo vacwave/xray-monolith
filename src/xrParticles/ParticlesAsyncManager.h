@@ -13,7 +13,7 @@ public:
 	static bool NeedForceUpdate();
 
 private:
-	void UpdateParticle(intrusive_ptr<CPS_Instance> particle) const;
+	void UpdateParticle(const intrusive_ptr<CPS_Instance>& particle) const;
 	static void Start();
 
 public:
