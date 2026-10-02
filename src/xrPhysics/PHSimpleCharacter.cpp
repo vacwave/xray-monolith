@@ -772,6 +772,14 @@ void CPHSimpleCharacter::PhTune(dReal step)
 			              -m.mass * (50.f) * (!b_lose_control && !(is_contact || (b_any_contacts))), //&&!b_climb
 			              -sidedir[2] * vProj * (500.f + 200.f * b_clamb_jump) * m_friction_factor
 			);
+        if (!b_lose_control && !b_clamb_jump && !m_elevator_state.Active() && b_good_graund)
+        {
+            dVector3 lateral;
+            dCROSS(lateral, =, m_ground_contact_normal, m_control_force);
+            accurate_normalize(lateral);
+            dReal k = lateral[1] * m.mass * ph_world->Gravity() * _min(m_friction_factor, 1.f);
+            dBodyAddForce(m_body, lateral[0] * k, lateral[1] * k, lateral[2] * k);
+        }
 #ifdef DEBUG
 		if(debug_output().ph_dbg_draw_mask().test(phDbgCharacterControl))
 		{
