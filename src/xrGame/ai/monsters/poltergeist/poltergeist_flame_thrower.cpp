@@ -274,6 +274,7 @@ bool CPolterFlame::get_valid_flame_position(const CObject* target_object, Fvecto
 {
 	const CGameObject* Obj = smart_cast<const CGameObject *>(target_object);
 	if (!Obj) return (false);
+	if (!ai().level_graph().valid_vertex_id(Obj->ai_location().level_vertex_id())) return (false);
 
 	Fvector dir;
 	float h, p;

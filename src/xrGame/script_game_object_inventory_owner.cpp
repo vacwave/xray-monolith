@@ -682,7 +682,12 @@ void CScriptGameObject::TakeItem(CScriptGameObject* pItem)
 u32 CScriptGameObject::Money()
 {
 	CInventoryOwner* pOurOwner = smart_cast<CInventoryOwner*>(&object());
-	VERIFY(pOurOwner);
+	if (!pOurOwner)
+	{
+		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
+		                                "CScriptGameObject::Money non-CInventoryOwner object !!!");
+		return 0;
+	}
 	return pOurOwner->get_money();
 }
 
@@ -721,9 +726,13 @@ void CScriptGameObject::TransferMoney(int money, CScriptGameObject* pForWho)
 		return;
 	}
 	CInventoryOwner* pOurOwner = smart_cast<CInventoryOwner*>(&object());
-	VERIFY(pOurOwner);
 	CInventoryOwner* pOtherOwner = smart_cast<CInventoryOwner*>(&pForWho->object());
-	VERIFY(pOtherOwner);
+	if (!pOurOwner || !pOtherOwner)
+	{
+		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
+		                                "CScriptGameObject::TransferMoney non-CInventoryOwner object !!!");
+		return;
+	}
 
 	if (pOurOwner->get_money() < money)
 	{
@@ -741,7 +750,12 @@ void CScriptGameObject::TransferMoney(int money, CScriptGameObject* pForWho)
 void CScriptGameObject::GiveMoney(int money)
 {
 	CInventoryOwner* pOurOwner = smart_cast<CInventoryOwner*>(&object());
-	VERIFY(pOurOwner);
+	if (!pOurOwner)
+	{
+		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
+		                                "CScriptGameObject::GiveMoney non-CInventoryOwner object !!!");
+		return;
+	}
 
     GiveMoneySafe(pOurOwner, money, true);
 }
@@ -887,10 +901,20 @@ void CScriptGameObject::SetCommunityGoodwill_obj(LPCSTR community, int goodwill)
 
 int CScriptGameObject::GetAttitude(CScriptGameObject* pToWho)
 {
+	if (!pToWho)
+	{
+		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
+		                                "CScriptGameObject::GetAttitude NULL object !!!");
+		return 0;
+	}
 	CInventoryOwner* pInventoryOwner = smart_cast<CInventoryOwner*>(&object());
-	VERIFY(pInventoryOwner);
 	CInventoryOwner* pOthersInventoryOwner = smart_cast<CInventoryOwner*>(&pToWho->object());
-	VERIFY(pOthersInventoryOwner);
+	if (!pInventoryOwner || !pOthersInventoryOwner)
+	{
+		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
+		                                "CScriptGameObject::GetAttitude non-CInventoryOwner object !!!");
+		return 0;
+	}
 	return RELATION_REGISTRY().GetAttitude(pInventoryOwner, pOthersInventoryOwner);
 }
 
@@ -1152,7 +1176,12 @@ void CScriptGameObject::SwitchToTalk()
 void CScriptGameObject::AllowBreakTalkDialog(bool b)
 {
 	CInventoryOwner* inv_owner = smart_cast<CInventoryOwner*>(&object());
-	VERIFY(inv_owner);
+	if (!inv_owner)
+	{
+		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
+		                                "CScriptGameObject::AllowBreakTalkDialog non-CInventoryOwner object !!!");
+		return;
+	}
 	inv_owner->bDisableBreakDialog = !b;
 }
 
