@@ -385,6 +385,7 @@ void CAI_Crow::shedule_Update(u32 DT)
 		{
 			fGoalChangeTime += fGoalChangeDelta + fGoalChangeDelta * Random.randF(-0.5f, 0.5f);
 
+			deadNPCs.clear_not_free();
 			Level().ObjectSpace.GetNearest(nearbyObjects, Position(), 300.0f, NULL);
 			for (CObject* obj : nearbyObjects) 
 			{

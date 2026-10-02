@@ -568,7 +568,7 @@ void CHudItem::UpdateCL()
                     float speed = def.Dequantize(s);
 
                     // get the final_anim_speed after the ltx speed changes / script changes from actor_on_hud_animation_play and scale the marks accordingly to the two timings
-                    float final_anim_speed = HudItemData()->final_anim_speed;
+                    float final_anim_speed = IsAttachedToHUD() ? HudItemData()->final_anim_speed : 1.f;
 
                     motion_prev_time = (((float)m_dwMotionCurrTm - (float)m_dwMotionStartTm) / 1000.0f) * speed * final_anim_speed;
                     motion_curr_time = (((float)Device.dwTimeGlobal - (float)m_dwMotionStartTm) / 1000.0f) * speed * final_anim_speed;

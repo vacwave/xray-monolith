@@ -313,7 +313,8 @@ void CPseudoGigant::on_threaten_execute()
 			HS.weaponID = ID(); 
 			HS.dir = Fvector().set(0.f, 1.f, 0.f); 
 			HS.power = hit_value; 
-			HS.boneID = smart_cast<IKinematics*>(obj->Visual())->LL_GetBoneRoot();
+			IKinematics* K = smart_cast<IKinematics*>(obj->Visual());
+			HS.boneID = K ? K->LL_GetBoneRoot() : 0;
 			HS.p_in_bone_space = Fvector().set(0.f, 0.f, 0.f);
 
 			HS.impulse = obj->cast_entity_alive() && obj->cast_entity_alive()->g_Alive() ? 80 * 80 : 0; // 0 impulse for not alive objects, they will receive the impulse later
