@@ -288,7 +288,7 @@ void CRenderTarget::accum_volumetric_lv(light* L)
 		return;
 
 	// [ SSS ] Fade through distance volumetric lights.
-	if (ps_ssfx_volumetric.x > 0)
+	if (ps_ssfx_volumetric.x > 0 && RImplementation.o.ssfx_volumetric)
 	{
 		float Falloff = ps_ssfx_volumetric.y - std::min(std::max((L->vis.distance - 20) * 0.01f, 0.0f), 1.0f) * ps_ssfx_volumetric.y;
 		L->m_volumetric_intensity = Falloff;
@@ -392,12 +392,15 @@ void CRenderTarget::accum_volumetric_lv(light* L)
 void CRenderTarget::accum_volumetric(light* L)
 {
 	// [ SSS ] Fade through distance volumetric lights.
-	if (ps_ssfx_volumetric.x > 0)
+	if (ps_ssfx_volumetric.x > 0 && RImplementation.o.ssfx_volumetric)
 	{
 		float Falloff = ps_ssfx_volumetric.y - std::min(std::max((L->vis.distance - 20) * 0.01f, 0.0f), 1.0f) * ps_ssfx_volumetric.y;
 		L->m_volumetric_intensity = Falloff;
 		L->flags.bVolumetric = Falloff <= 0 ? false : true;
 	}
+
+	if (!L->flags.bVolumetric)
+		return;
 
 	//if (L->flags.type != IRender_Light::SPOT) return;
 	PROF_EVENT("CRenderTarget::accum_volumetric");
@@ -568,7 +571,7 @@ void CRenderTarget::accum_volumetric(light* L)
 	L_clr.set(L->color.r, L->color.g, L->color.b);
 	L_clr.mul(L->m_volumetric_distance);
 
-	if (ps_ssfx_volumetric.x <= 0)
+	if (ps_ssfx_volumetric.x <= 0 || !RImplementation.o.ssfx_volumetric)
 	{
 		// Vanilla Method
 		fQuality = L->m_volumetric_quality;

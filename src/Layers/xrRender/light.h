@@ -149,17 +149,11 @@ public:
 #endif	//	RENDER!=R_R1
 
 	virtual void set_shadow(bool b);
-	virtual void set_volumetric(bool b)
-	{
-		if (ps_ssfx_volumetric.x > 0)
-			b = true;
-
-		flags.bVolumetric = b;
-	}
+	virtual void set_volumetric(bool b);
 
 	virtual void set_volumetric_quality(float fValue) { m_volumetric_quality = fValue; }
-	virtual void set_volumetric_intensity(float fValue) { m_volumetric_intensity = ps_ssfx_volumetric.y; }
-	virtual void set_volumetric_distance(float fValue) { m_volumetric_distance = 1.0f; }
+	virtual void set_volumetric_intensity(float fValue);
+	virtual void set_volumetric_distance(float fValue);
 
 	virtual void set_position(const Fvector& P, const float eps = EPS);
 	virtual void set_rotation(const Fvector& D, const Fvector& R, const float eps = EPS);
