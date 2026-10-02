@@ -217,7 +217,7 @@ void TargetCrosshair::Update(const SPickParam& pp, bool is_far)
 	}
 	crosshair.SetTransform(mat_aim);
 
-	bool occluded = is_occluded(Fvector().add(pp.defs.start, Fvector().mul(pp.defs.dir, dist)));
+	bool occluded = !is_far && is_occluded(Fvector().add(pp.defs.start, Fvector().mul(pp.defs.dir, dist)));
 	float opacity_target = 1.f;
 	if (!is_far && occluded && !pp.barrel_blocked)
 		opacity_target = settings.occluded_opacity;
