@@ -59,6 +59,8 @@ IC bool CScriptEngine::functor(LPCSTR function_to_call, ::luabind::functor<_resu
 {
 	
 #ifdef USE_LUA_FUNCTOR_CACHE
+	static const size_t result_type_hash = typeid(_result_type).hash_code();
+
 	// Check if cache is valid
 	if (!m_cache_valid)
 	{
@@ -69,7 +71,9 @@ IC bool CScriptEngine::functor(LPCSTR function_to_call, ::luabind::functor<_resu
 		// PROF_EVENT("CScriptEngine::functor cached");
 
 		// Create cache key
-		FunctorCacheKey key{ function_to_call, typeid(_result_type).hash_code() };
+		static thread_local FunctorCacheKey key;
+		key.function_name.assign(function_to_call);
+		key.result_type_hash = result_type_hash;
 
 		// Try to find in cache
 		auto it = m_functor_cache.find(key);
@@ -94,8 +98,8 @@ IC bool CScriptEngine::functor(LPCSTR function_to_call, ::luabind::functor<_resu
 	// Store in cache
 	if (lua_use_functor_cache && m_cache_valid && g_bootComplete)
 	{
-		FunctorCacheKey key{ function_to_call, typeid(_result_type).hash_code() };
-		m_functor_cache.insert({ key, object });
+		FunctorCacheKey insert_key{ function_to_call, result_type_hash };
+		m_functor_cache.insert({ insert_key, object });
 	}
 #endif
 

@@ -134,6 +134,7 @@ public:
 	TIItemContainer m_all;
 	TIItemContainer m_ruck, m_belt;
 	TIItemContainer m_activ_last_items;
+	xr_atomic_bool m_drop_manual_pending; // set by CInventoryItem::SetDropManual(TRUE), consumed by UpdateDropTasks
 
 protected:
 	TISlotArr m_slots;
