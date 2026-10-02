@@ -52,8 +52,8 @@ intrusive_ptr<str_value> str_container::dock(str_c value)
 {
 	if (!value) return nullptr;
 
-	size_t hash = xr_hash<std::string_view>()(value);
 	u32 len = xr_strlen(value);
+	size_t hash = xr_hash<std::string_view>()(std::string_view(value, len));
 	u32 slot = u32(hash % buffer_size);
 
 	// Most of the time, the string already exists. Use shared lock

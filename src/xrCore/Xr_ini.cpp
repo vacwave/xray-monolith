@@ -1632,9 +1632,7 @@ LPCSTR CInifile::r_string(LPCSTR S, LPCSTR L) const
 	auto A = std::lower_bound(I.Data.begin(), I.Data.end(), L, item_comparator());
 	if (A != I.Data.end() && xr_strcmp(*A->first, L) == 0)
 	{
-		shared_str V = A->second;
-		LPCSTR res = *V;
-		return res;
+		return *A->second;
 	}
 	else
 		Debug.fatal(DEBUG_INFO, "Can't find variable %s in [%s]", L, S);
