@@ -858,9 +858,17 @@ void CAI_Stalker::net_Export(NET_Packet& P)
 	R_ASSERT(Local());
 
 	// export last known packet
-	if (NET.empty()) {
-		Msg("![CAI_Stalker::net_Export] net_update deque is empty for %s, section %s, id %d, crash", cName().c_str(), cNameSect().c_str(), ID());
-		R_ASSERT(!NET.empty());
+	if (NET.empty())
+	{
+		// object is exported before its net_update deque was seeded, use current state
+		Msg("![CAI_Stalker::net_Export] net_update deque is empty for %s, section %s, id %d, exporting current state", cName().c_str(), cNameSect().c_str(), ID());
+		net_update uNext;
+		uNext.dwTimeStamp = Level().timeServer();
+		uNext.o_model = movement().m_body.current.yaw;
+		uNext.o_torso = movement().m_head.current;
+		uNext.p_pos = Position();
+		uNext.fHealth = GetfHealth();
+		NET.push_back(uNext);
 	}
 	net_update& N = NET.back();
 	//	P.w_float						(inventory().TotalWeight());

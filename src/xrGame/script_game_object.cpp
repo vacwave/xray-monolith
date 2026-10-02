@@ -123,7 +123,29 @@ BIND_FUNCTION10(&object(), CScriptGameObject::GetFOV, CEntityAlive, ffGetFov, fl
 BIND_FUNCTION10(&object(), CScriptGameObject::GetRange, CEntityAlive, ffGetRange, float, -1);
 
 BIND_FUNCTION10(&object(), CScriptGameObject::GetHealth, CEntityAlive, conditions().GetHealth, float, -1);
-BIND_FUNCTION01(&object(), CScriptGameObject::SetHealth, CEntityAlive, conditions().SetHealth, float, float);
+void CScriptGameObject::SetHealth(float f)
+{
+	CEntityAlive* l_tpEntity = smart_cast<CEntityAlive*>(&object());
+	if (!l_tpEntity)
+	{
+		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError, "%s : cannot access class member %s!", "CEntityAlive", "CScriptGameObject::SetHealth");
+		return;
+	}
+
+	// a killed entity has left its group, reviving it leaves it without squad memory
+	if (f > 0.f && l_tpEntity->AlreadyDie())
+	{
+		static u16 last_refused_id = u16(-1); // log once per object, scripts may retry on every hit
+		if (last_refused_id != l_tpEntity->ID())
+		{
+			last_refused_id = l_tpEntity->ID();
+			Msg("! [health] refused to revive dead %s, section %s, id %d", l_tpEntity->cName().c_str(), l_tpEntity->cNameSect().c_str(), l_tpEntity->ID());
+		}
+		return;
+	}
+
+	l_tpEntity->conditions().SetHealth(f);
+}
 BIND_FUNCTION01(&object(), CScriptGameObject::ChangeHealth, CEntityAlive, conditions().ChangeHealth, float, float);
 
 BIND_FUNCTION10(&object(), CScriptGameObject::GetPsyHealth, CEntityAlive, conditions().GetPsyHealth, float, -1);

@@ -50,6 +50,7 @@ private:
 #endif
 	ALife::_OBJECT_ID m_last_hit_object_id;
 	u32 m_last_hit_time;
+	bool m_no_squad_hits_logged;
 
 public:
 	IC CHitMemoryManager(CCustomMonster* object, CAI_Stalker* stalker);
@@ -86,6 +87,7 @@ public:
 
 private:
 	void clear_delayed_objects();
+	void log_no_squad_hits();
 };
 
 #include "hit_memory_manager_inline.h"
