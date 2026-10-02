@@ -451,6 +451,14 @@ void CScriptGameObject::SetHealthEx(float hp)
 	CEntity* obj = smart_cast<CEntity*>(&object());
 	if (!obj) return;
 	clamp(hp, -0.01f, 1.0f);
+
+	// a killed entity has left its group, reviving it leaves it without squad memory
+	if (hp > 0.f && obj->AlreadyDie())
+	{
+		Msg("! [set_health_ex] refused to revive dead %s, section %s, id %d", obj->cName().c_str(), obj->cNameSect().c_str(), obj->ID());
+		return;
+	}
+
 	obj->SetfHealth(hp);
 }
 
