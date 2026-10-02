@@ -423,17 +423,15 @@ void CGameFont::MasterOut(
 	rs.height = fCurrentHeight;
 	rs.align = eCurrentAlignment;
 #ifndef _EDITOR
-	int vs_sz = vsprintf_s(rs.string, fmt, p);
+	int vs_sz = _vsnprintf(rs.string, sizeof(rs.string) - 1, fmt, p);
 #else
     int vs_sz = vsprintf(rs.string, fmt, p);
 #endif
 	//VERIFY( ( vs_sz != -1 ) && ( rs.string[ vs_sz ] == '\0' ) );
 
 	rs.string[sizeof(rs.string) - 1] = 0;
-	if (vs_sz == -1)
-	{
-		return;
-	}
+	if (vs_sz < 0) // longer than the buffer: draw it truncated instead of hitting the CRT invalid-parameter fatal
+		vs_sz = sizeof(rs.string) - 1;
 
 	if (vs_sz)
 		strings.push_back(rs);
