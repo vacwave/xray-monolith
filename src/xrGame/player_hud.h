@@ -313,7 +313,7 @@ struct attachable_hud_item
 	Fmatrix m_item_transform;
 
     // ver; final anim speed holder for use in motion mark timing scaling
-    float final_anim_speed;
+    float final_anim_speed = 1.f;
 
 	player_hud_motion_container* m_hand_motions;
 
