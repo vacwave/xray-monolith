@@ -249,6 +249,36 @@ void light::set_shadow(bool b)
 #endif
 }
 
+void light::set_volumetric(bool b)
+{
+#if RENDER==R_R4
+	if (ps_ssfx_volumetric.x > 0 && RImplementation.o.ssfx_volumetric)
+#else
+	if (ps_ssfx_volumetric.x > 0)
+#endif
+		b = true;
+
+	flags.bVolumetric = b;
+}
+
+void light::set_volumetric_intensity(float fValue)
+{
+#if RENDER==R_R4
+	m_volumetric_intensity = RImplementation.o.ssfx_volumetric ? ps_ssfx_volumetric.y : fValue;
+#else
+	m_volumetric_intensity = ps_ssfx_volumetric.y;
+#endif
+}
+
+void light::set_volumetric_distance(float fValue)
+{
+#if RENDER==R_R4
+	m_volumetric_distance = RImplementation.o.ssfx_volumetric ? 1.0f : fValue;
+#else
+	m_volumetric_distance = 1.0f;
+#endif
+}
+
 #if RENDER!=R_R1
 void light::get_sectors()
 {
