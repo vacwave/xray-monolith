@@ -399,6 +399,9 @@ void CRenderTarget::accum_volumetric(light* L)
 		L->flags.bVolumetric = Falloff <= 0 ? false : true;
 	}
 
+	if (!L->flags.bVolumetric)
+		return;
+
 	//if (L->flags.type != IRender_Light::SPOT) return;
 	PROF_EVENT("CRenderTarget::accum_volumetric");
 	
