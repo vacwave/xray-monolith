@@ -1516,6 +1516,8 @@ u16 CInventoryItem::parent_id() const
 void CInventoryItem::SetDropManual(BOOL val)
 {
 	m_flags.set(FdropManual, val);
+	if (val && m_pInventory)
+		m_pInventory->m_drop_manual_pending = true;
 
 #ifdef DEBUG
 	if (!IsGameTypeSingle())

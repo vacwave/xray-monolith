@@ -227,8 +227,9 @@ STRING_VALUE CStringTable::translate(const STRING_ID& str_id) const
 {
 	VERIFY(pData);
 
-	if (pData->m_StringTable.find(str_id) != pData->m_StringTable.end())
-		return pData->m_StringTable[str_id];
+	auto it = pData->m_StringTable.find(str_id);
+	if (it != pData->m_StringTable.end())
+		return it->second;
 	else
 		return str_id;
 }

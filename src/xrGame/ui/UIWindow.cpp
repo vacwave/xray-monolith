@@ -312,12 +312,15 @@ void CUIWindow::DetachChild(CUIWindow* pChild)
 		xrCriticalSectionGuard guard(csUi);
 
 		//.	SafeRemoveChild			(pChild);
-		WINDOW_LIST_it it = std::find(m_ChildWndList.begin(), m_ChildWndList.end(), pChild);
-		R_ASSERT(it != m_ChildWndList.end());
-		m_ChildWndList.erase(it);
+		WINDOW_LIST::reverse_iterator rit = std::find(m_ChildWndList.rbegin(), m_ChildWndList.rend(), pChild);
+		R_ASSERT(rit != m_ChildWndList.rend());
+		m_ChildWndList.erase(std::next(rit).base());
 	}
 
-	pChild->SetParent(NULL);
+	if (pChild->m_pParentWnd == this)
+		pChild->m_pParentWnd = NULL; // already erased and AttachChild blocks duplicates, so SetParent's IsChild rescan is redundant
+	else
+		pChild->SetParent(NULL);
 
     if (pChild->IsAutoDelete())
         if (std::find(m_ChildWndToDelete.begin(), m_ChildWndToDelete.end(), pChild) == m_ChildWndToDelete.end())

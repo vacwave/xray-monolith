@@ -99,6 +99,7 @@ CInventory::CInventory()
 	m_fTotalWeight = -1.f;
 	m_dwModifyFrame = 0;
 	m_drop_last_frame = false;
+	m_drop_manual_pending = false;
 
 	InitPriorityGroupsForQSwitch();
 	m_next_item_iteration_time = 0;
@@ -883,23 +884,26 @@ void CInventory::Update()
 
 void CInventory::UpdateDropTasks()
 {
-	//проверить слоты
-	for (u16 i = FirstSlot(); i <= LastSlot(); ++i)
+	if (m_drop_manual_pending.exchange(false))
 	{
-		PIItem itm = ItemFromSlot(i);
-		if (itm)
-			UpdateDropItem(itm);
-	}
-
-	for (u16 i = 0; i < 2; ++i)
-	{
-		TIItemContainer& list = i ? m_ruck : m_belt;
-		TIItemContainer::iterator it = list.begin();
-		TIItemContainer::iterator it_e = list.end();
-
-		for (; it != it_e; ++it)
+		//проверить слоты
+		for (u16 i = FirstSlot(); i <= LastSlot(); ++i)
 		{
-			UpdateDropItem(*it);
+			PIItem itm = ItemFromSlot(i);
+			if (itm)
+				UpdateDropItem(itm);
+		}
+
+		for (u16 i = 0; i < 2; ++i)
+		{
+			TIItemContainer& list = i ? m_ruck : m_belt;
+			TIItemContainer::iterator it = list.begin();
+			TIItemContainer::iterator it_e = list.end();
+
+			for (; it != it_e; ++it)
+			{
+				UpdateDropItem(*it);
+			}
 		}
 	}
 
