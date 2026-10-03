@@ -1819,6 +1819,7 @@ void CActor::shedule_Update(u32 DT)
 	if (m_holder || !getEnabled() || !Ready())
 	{
 		m_vInertiaAccel.set(0.f, 0.f, 0.f);
+		m_parkour_wallrun = false;
 		m_sDefaultObjAction = NULL;
 		inherited::shedule_Update(DT);
 		return;

@@ -305,7 +305,11 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
 		}
 	}
 	if (parkour_Mantle(mstate_wf))
+	{
+		m_parkour_wallrun = false;
 		return;
+	}
+	parkour_WallRun(mstate_wf, dt);
 	// update player accel
 	if (mstate_wf & mcFwd) vControlAccel.z += 1;
 	if (mstate_wf & mcBack) vControlAccel.z += -1;
@@ -611,6 +615,8 @@ void CActor::g_Orientate(u32 mstate_rl, float dt)
 		if ((mstate_rl & mcLLookout) && (mstate_rl & mcRLookout))
 			tgt_roll = 0.0f;
 	}
+	if (m_parkour_wallrun)
+		tgt_roll = m_parkour_wallrun_roll; // tilt away from the wall
 	if (!fsimilar(tgt_roll, r_torso_tgt_roll, EPS))
 	{
 		r_torso_tgt_roll = angle_inertion_var(r_torso_tgt_roll, tgt_roll, 0.f, CurrentHeight * PI_MUL_2, PI_DIV_2, dt);
@@ -836,6 +842,18 @@ namespace parkour_tune
 	static const float slide_decel			= 4.0f;	// m/s^2
 	static const float slide_max_time		= 1.0f;	// s
 	static const float slide_steer			= 1.5f;	// per second, how fast input turns the slide
+	static const float wall_reach			= 0.3f;	// max gap between body and a side wall
+	static const float wall_max_ny			= 0.3f;	// |normal.y| max, wall must be near vertical
+	static const float wallrun_max_facing	= 0.6f;	// |cos| between view and wall normal, max (roughly parallel)
+	static const float wallrun_min_speed	= 2.5f;	// m/s horizontal, needed to start
+	static const float wallrun_max_speed	= 7.0f;	// m/s along the wall, max
+	static const float wallrun_max_rise		= 1.5f;	// m/s, upward speed kept at the start, max
+	static const float wallrun_gravity		= 3.0f;	// m/s^2, reduced gravity while running
+	static const float wallrun_max_time		= 1.0f;	// s
+	static const float wallrun_roll			= 0.15f;	// rad, camera tilt away from the wall
+	static const float walljump_away		= 4.0f;	// m/s off the wall
+	static const float walljump_up			= 4.5f;	// m/s
+	static const float walljump_same_wall	= 0.7f;	// cos, the next wall jump needs a wall facing another way
 }
 
 void CActor::parkour_PathPoint(float t, Fvector& p) const
@@ -999,6 +1017,11 @@ bool CActor::parkour_Vault(const Fvector& P, const Fvector& F, float wall, float
 
 void CActor::parkour_UpdateMove(float dt)
 {
+	if (m_parkour_air_vel_set)
+	{
+		character_physics_support()->movement()->SetVelocity(m_parkour_air_vel);
+		m_parkour_air_vel_set = false;
+	}
 	if (!m_parkour_active)
 		return;
 	m_parkour_time += dt;
@@ -1066,6 +1089,117 @@ bool CActor::parkour_Slide(Fvector& vControlAccel, float dt)
 	vControlAccel.mul(m_parkour_slide_dir, speed * 10.f); // Calculate() uses |accel| / 10 as max velocity
 	m_vInertiaAccel.set(vControlAccel); // inertia continues smoothly from the slide when it ends
 	return true;
+}
+
+// Wall run / wall jump while airborne beside a static wall; the velocity is applied in parkour_UpdateMove
+void CActor::parkour_WallRun(u32 mstate_wf, float dt)
+{
+	using namespace parkour_tune;
+	CPHMovementControl* mc = character_physics_support()->movement();
+
+	if (!g_actor_parkour || !g_Alive() || (mstate_real & mcClimb) || mc->Environment() != CPHMovementControl::peInAir)
+	{
+		// landed or disabled: a new wall run and wall jumps off any wall are allowed again
+		m_parkour_wallrun = false;
+		m_parkour_wallrun_used = false;
+		m_parkour_walljump_n.set(0.f, 0.f, 0.f);
+		return;
+	}
+
+	Fvector F = cam_Active()->vDirection;
+	F.y = 0.f;
+	if (F.square_magnitude() < EPS)
+	{
+		m_parkour_wallrun = false;
+		return;
+	}
+	F.normalize();
+
+	// near-vertical static wall to the left or right at mid-body height
+	Fvector P;
+	mc->GetPosition(P);
+	const Fbox& box = mc->Box();
+	const float r = (box.x2 - box.x1) * 0.5f;
+	Fvector from;
+	from.set(P.x, P.y + (box.y2 - box.y1) * 0.5f, P.z);
+	const Fvector right = {F.z, 0.f, -F.x};
+	Fvector n = {0.f, 0.f, 0.f};
+	float side = 0.f;
+	collide::rq_result R;
+	for (int s = -1; s <= 1; s += 2)
+	{
+		Fvector dir;
+		dir.mul(right, float(s));
+		if (!Level().ObjectSpace.RayPick(from, dir, r + wall_reach, collide::rqtStatic, R, this))
+			continue;
+		const CDB::TRI* T = Level().ObjectSpace.GetStaticTris() + R.element;
+		const Fvector* V = Level().ObjectSpace.GetStaticVerts();
+		n.mknormal(V[T->verts[0]], V[T->verts[1]], V[T->verts[2]]);
+		if (n.dotproduct(dir) > 0.f)
+			n.invert();
+		if (_abs(n.y) > wall_max_ny)
+			continue;
+		n.y = 0.f;
+		n.normalize();
+		side = float(s);
+		break;
+	}
+	const bool new_wall = side != 0.f && n.dotproduct(m_parkour_walljump_n) < walljump_same_wall;
+
+	// wall jump on a fresh jump press: keep the speed along the wall, kick away and up
+	Fvector v = mc->GetVelocity();
+	v.y = 0.f;
+	if (new_wall && (mstate_wf & mcJump) && !m_bJumpKeyPressed)
+	{
+		v.mad(n, -v.dotproduct(n));
+		const float along = v.magnitude();
+		if (along > wallrun_max_speed)
+			v.mul(wallrun_max_speed / along);
+		v.mad(n, walljump_away);
+		v.y = walljump_up;
+		m_parkour_air_vel.set(v);
+		m_parkour_air_vel_set = true;
+		m_parkour_walljump_n.set(n);
+		m_parkour_wallrun = false;
+		m_parkour_wallrun_used = false; // may wall run on another wall
+		m_bJumpKeyPressed = TRUE;
+		return;
+	}
+	if (side != 0.f && (mstate_wf & mcJump))
+		m_bJumpKeyPressed = TRUE; // a key held from here does not wall jump later
+
+	// wall run: sprinting forward with the wall roughly parallel to the view
+	const bool can_run = new_wall && (mstate_real & mcSprint) && (mstate_wf & mcFwd) &&
+		_abs(F.dotproduct(n)) < wallrun_max_facing;
+	if (m_parkour_wallrun)
+	{
+		m_parkour_wallrun_time += dt;
+		if (!can_run || m_parkour_wallrun_time >= wallrun_max_time)
+		{
+			m_parkour_wallrun = false; // momentum is kept, full gravity resumes
+			return;
+		}
+	}
+	else
+	{
+		const float speed = v.magnitude();
+		if (m_parkour_wallrun_used || !can_run || !(mstate_real & (mcJump | mcFall)) || speed < wallrun_min_speed)
+			return;
+		m_parkour_wallrun_speed = _min(speed, wallrun_max_speed);
+		m_parkour_wallrun_vy0 = _max(0.f, _min(mc->GetVelocity().y, wallrun_max_rise));
+		m_parkour_wallrun_time = 0.f;
+		m_parkour_wallrun = true;
+		m_parkour_wallrun_used = true;
+	}
+
+	// along the wall in the view direction, slowly sinking
+	Fvector t = {n.z, 0.f, -n.x};
+	if (t.dotproduct(F) < 0.f)
+		t.invert();
+	m_parkour_air_vel.mul(t, m_parkour_wallrun_speed);
+	m_parkour_air_vel.y = m_parkour_wallrun_vy0 - wallrun_gravity * m_parkour_wallrun_time;
+	m_parkour_air_vel_set = true;
+	m_parkour_wallrun_roll = -side * wallrun_roll; // lean away: wall on the right -> negative (left) roll
 }
 
 bool CActor::CanMove()

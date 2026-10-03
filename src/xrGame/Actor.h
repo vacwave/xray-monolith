@@ -495,6 +495,16 @@ protected:
 	float m_parkour_slide_speed = 0.f; // horizontal speed at the start
 	Fvector m_parkour_slide_dir;
 	bool parkour_Slide(Fvector& vControlAccel, float dt);
+	bool m_parkour_wallrun = false;
+	bool m_parkour_wallrun_used = false; // one wall run per airtime (reset by landing or a wall jump)
+	float m_parkour_wallrun_time = 0.f;
+	float m_parkour_wallrun_speed = 0.f; // horizontal speed along the wall
+	float m_parkour_wallrun_vy0 = 0.f; // vertical speed at the start
+	float m_parkour_wallrun_roll = 0.f; // camera roll target while wall running
+	Fvector m_parkour_walljump_n = {0.f, 0.f, 0.f}; // normal of the last wall jumped off, zero after landing
+	bool m_parkour_air_vel_set = false;
+	Fvector m_parkour_air_vel; // velocity applied after Calculate (wall run / wall jump)
+	void parkour_WallRun(u32 mstate_wf, float dt);
 
 public:
 	float m_fWalkAccel;
