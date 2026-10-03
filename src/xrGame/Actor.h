@@ -485,8 +485,10 @@ protected:
 	float m_parkour_t1 = 0.f; // time at the corner
 	float m_parkour_t2 = 0.f; // total time
 	Fvector m_parkour_p0, m_parkour_p1, m_parkour_p2;
+	Fvector m_parkour_exit_vel; // velocity left when the move finishes
 	void parkour_PathPoint(float t, Fvector& p) const;
 	bool parkour_Mantle(u32 mstate_wf);
+	bool parkour_Vault(const Fvector& P, const Fvector& F, float wall, float r, float height);
 	void parkour_UpdateMove(float dt);
 
 public:

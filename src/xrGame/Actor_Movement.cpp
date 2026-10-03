@@ -821,6 +821,13 @@ namespace parkour_tune
 	static const float mantle_lift			= 0.05f;	// end height above the ledge
 	static const float mantle_rise_speed	= 4.0f;	// m/s, vertical segment
 	static const float mantle_fwd_speed		= 3.0f;	// m/s, forward segment
+	static const float vault_max_h			= 1.2f;	// obstacle top above feet, max
+	static const float vault_clear			= 0.2f;	// feet clearance over the obstacle top
+	static const float vault_depth			= 1.0f;	// landing distance past the near face (plus body radius)
+	static const float vault_max_drop		= 1.0f;	// landing ground below feet, max
+	static const float vault_max_rise		= 0.3f;	// landing ground above feet, max (higher = thick obstacle, mantle instead)
+	static const float vault_speed			= 5.0f;	// m/s along the path
+	static const float vault_exit_speed		= 3.0f;	// m/s forward velocity left on landing
 }
 
 void CActor::parkour_PathPoint(float t, Fvector& p) const
@@ -884,6 +891,17 @@ bool CActor::parkour_Mantle(u32 mstate_wf)
 		return false;
 	const float fwd = R.range + r + 0.05f; // horizontal distance to the end position
 
+	// sprinting: vault a thin obstacle with ground on the far side, otherwise mantle
+	if ((mstate_real & mcSprint) && parkour_Vault(P, F, R.range, r, height))
+	{
+		m_parkour_time = 0.f;
+		m_parkour_active = true;
+		mc->EnableCharacter();
+		mstate_real &= ~(mcJump | mcFall | mcSprint);
+		m_bJumpKeyPressed = TRUE;
+		return true;
+	}
+
 	// ledge top at the end position
 	Fvector end;
 	end.mad(P, F, fwd);
@@ -910,12 +928,64 @@ bool CActor::parkour_Mantle(u32 mstate_wf)
 	m_parkour_p2.set(end);
 	m_parkour_t1 = (end.y - P.y) / mantle_rise_speed;
 	m_parkour_t2 = m_parkour_t1 + fwd / mantle_fwd_speed;
+	m_parkour_exit_vel.set(0.f, 0.f, 0.f);
 	m_parkour_time = 0.f;
 	m_parkour_active = true;
 
 	mc->EnableCharacter();
 	mstate_real &= ~(mcJump | mcFall | mcSprint);
 	m_bJumpKeyPressed = TRUE; // no normal jump until the key is released
+	return true;
+}
+
+// Sets up a vault path over a thin obstacle whose near face is `wall` ahead of P; false if not vaultable
+bool CActor::parkour_Vault(const Fvector& P, const Fvector& F, float wall, float r, float height)
+{
+	using namespace parkour_tune;
+	const Fvector up = {0.f, 1.f, 0.f};
+	const Fvector down = {0.f, -1.f, 0.f};
+	collide::rq_result R;
+	Fvector from;
+
+	// obstacle top just behind its near face
+	from.mad(P, F, wall + 0.05f);
+	from.y = P.y + vault_max_h;
+	if (!Level().ObjectSpace.RayPick(from, down, vault_max_h - mantle_min_h, collide::rqtStatic, R, this))
+		return false;
+	const float top = from.y - R.range + vault_clear; // feet height while passing over
+
+	// landing ground on the far side: not on the obstacle itself and no deep drop
+	const float land = wall + r + vault_depth;
+	Fvector end;
+	end.mad(P, F, land);
+	from.set(end.x, top, end.z);
+	if (!Level().ObjectSpace.RayPick(from, down, top - P.y + vault_max_drop, collide::rqtStatic, R, this))
+		return false;
+	end.y = from.y - R.range;
+	if (end.y > P.y + vault_max_rise)
+		return false;
+	end.y += mantle_lift;
+
+	// room to stand at the landing, to rise and to pass over the obstacle
+	if (Level().ObjectSpace.RayPick(end, up, height, collide::rqtStatic, R, this))
+		return false;
+	from.set(P.x, P.y + height - 0.1f, P.z);
+	if (Level().ObjectSpace.RayPick(from, up, top - P.y + 0.1f, collide::rqtStatic, R, this))
+		return false;
+	from.set(P.x, top + 0.05f, P.z);
+	if (Level().ObjectSpace.RayPick(from, F, land + r, collide::rqtStatic, R, this))
+		return false;
+	from.y = top + height - 0.2f;
+	if (Level().ObjectSpace.RayPick(from, F, land + r, collide::rqtStatic, R, this))
+		return false;
+
+	m_parkour_p0.set(P);
+	m_parkour_p1.mad(P, F, _max(0.f, wall - r)); // body front reaches the face at the top
+	m_parkour_p1.y = top;
+	m_parkour_p2.set(end);
+	m_parkour_t1 = m_parkour_p0.distance_to(m_parkour_p1) / vault_speed;
+	m_parkour_t2 = m_parkour_t1 + m_parkour_p1.distance_to(m_parkour_p2) / vault_speed;
+	m_parkour_exit_vel.set(F).mul(vault_exit_speed);
 	return true;
 }
 
@@ -933,7 +1003,10 @@ void CActor::parkour_UpdateMove(float dt)
 	parkour_PathPoint(m_parkour_time, pos);
 	CPHMovementControl* mc = character_physics_support()->movement();
 	mc->SetPosition(pos);
-	mc->SetVelocity(0.f, 0.f, 0.f);
+	if (m_parkour_active)
+		mc->SetVelocity(0.f, 0.f, 0.f);
+	else
+		mc->SetVelocity(m_parkour_exit_vel); // move finished this frame
 }
 
 bool CActor::CanMove()
