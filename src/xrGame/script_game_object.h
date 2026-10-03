@@ -200,6 +200,8 @@ public:
 	int clsid() const;
 	void play_cycle(LPCSTR anim, bool mix_in);
 	void play_cycle(LPCSTR anim);
+	void play_cycle_script(const ::luabind::object& anim, bool mix_in);
+	void play_cycle_script(const ::luabind::object& anim);
 	Fvector Center(bool bHud = false);
 	Fmatrix Xform(bool bHud = false);
 	Fbox bounding_box(bool bHud);
