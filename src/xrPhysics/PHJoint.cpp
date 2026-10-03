@@ -384,7 +384,7 @@ void CPHJoint::CreateFullControl()
 	//axis 0
 	CalcAxis(0, axis, lo, hi, first_matrix, second_matrix, rotate);
 	if (!body1)axis.invert(); //SwapLimits(lo,hi);
-	dJointSetAMotorAxis(m_joint1, 0, 1, axis.x, axis.y, axis.z);
+	dJointSetAMotorAxis(m_joint1, 0, body1 ? 1 : 2, axis.x, axis.y, axis.z);
 	dJointSetAMotorParam(m_joint1, dParamLoStop, lo);
 	dJointSetAMotorParam(m_joint1, dParamHiStop, hi);
 
@@ -408,7 +408,7 @@ void CPHJoint::CreateFullControl()
 	//axis 2
 	CalcAxis(2, axis, lo, hi, first_matrix, second_matrix, rotate);
 	if (!body1)axis.invert(); //SwapLimits(lo,hi);
-	dJointSetAMotorAxis(m_joint1, 2, 2, axis.x, axis.y, axis.z);
+	dJointSetAMotorAxis(m_joint1, 2, body2 ? 2 : 1, axis.x, axis.y, axis.z);
 	dJointSetAMotorParam(m_joint1, dParamLoStop3, lo);
 	dJointSetAMotorParam(m_joint1, dParamHiStop3, hi);
 	if (!(axes[2].force < 0.f))
