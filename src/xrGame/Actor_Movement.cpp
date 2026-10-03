@@ -153,6 +153,8 @@ IC static void generate_orthonormal_basis1(const Fvector& dir, Fvector& updir, F
 
 void CActor::g_cl_ValidateMState(float dt, u32 mstate_wf)
 {
+	if (m_parkour_slide)
+		mstate_wf |= mcCrouch; // stay crouched until the slide ends
 	// Lookout
 	if (((mstate_wf & mcLLookout) && (mstate_wf & mcRLookout)) || ((mstate_real & mcLLookout) && (mstate_real & mcRLookout)))
 	{
@@ -486,6 +488,8 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
 	mOrient.rotateY(-r_model_yaw);
 	mOrient.transform_dir(vControlAccel);
 
+	if (parkour_Slide(vControlAccel, dt))
+		return;
 	// inertia is applied in world space so turning the camera does not instantly redirect momentum
 	ApplyMovementInertia(vControlAccel, dt);
 }
@@ -828,6 +832,10 @@ namespace parkour_tune
 	static const float vault_max_rise		= 0.3f;	// landing ground above feet, max (higher = thick obstacle, mantle instead)
 	static const float vault_speed			= 5.0f;	// m/s along the path
 	static const float vault_exit_speed		= 3.0f;	// m/s forward velocity left on landing
+	static const float slide_min_speed		= 2.5f;	// m/s horizontal, needed to start a slide
+	static const float slide_decel			= 4.0f;	// m/s^2
+	static const float slide_max_time		= 1.0f;	// s
+	static const float slide_steer			= 1.5f;	// per second, how fast input turns the slide
 }
 
 void CActor::parkour_PathPoint(float t, Fvector& p) const
@@ -1007,6 +1015,57 @@ void CActor::parkour_UpdateMove(float dt)
 		mc->SetVelocity(0.f, 0.f, 0.f);
 	else
 		mc->SetVelocity(m_parkour_exit_vel); // move finished this frame
+}
+
+// Sprint slide: returns true while sliding (vControlAccel replaced, inertia skipped)
+bool CActor::parkour_Slide(Fvector& vControlAccel, float dt)
+{
+	using namespace parkour_tune;
+	CPHMovementControl* mc = character_physics_support()->movement();
+	const bool on_ground = mc->Environment() == CPHMovementControl::peOnGround;
+
+	if (m_parkour_slide)
+		m_parkour_slide_time += dt;
+	else
+	{
+		// start on the crouch press while sprinting on the ground
+		if (!g_actor_parkour || !on_ground || !(mstate_old & mcSprint) || (mstate_old & mcCrouch) ||
+			!(mstate_real & mcCrouch) || (mstate_real & (mcJump | mcClimb)))
+			return false;
+		Fvector v = mc->GetVelocity();
+		v.y = 0.f;
+		m_parkour_slide_speed = v.magnitude();
+		if (m_parkour_slide_speed < slide_min_speed)
+			return false;
+		m_parkour_slide_dir.mul(v, 1.f / m_parkour_slide_speed);
+		m_parkour_slide_time = 0.f;
+		m_parkour_slide = true;
+	}
+
+	// end below crouch run speed, on timeout, jump, ladder, leaving the ground, standing up or when blocked
+	const float end_speed = m_fWalkAccel * m_fRunFactor * m_fCrouchFactor / 10.f;
+	const float speed = m_parkour_slide_speed - slide_decel * m_parkour_slide_time;
+	if (!g_actor_parkour || !g_Alive() || !CanMove() || !on_ground || !(mstate_real & mcCrouch) ||
+		(mstate_real & (mcJump | mcClimb)) || m_parkour_slide_time >= slide_max_time || speed <= end_speed ||
+		mc->GetVelocityActual() < end_speed)
+	{
+		m_parkour_slide = false;
+		return false;
+	}
+
+	// slight steering toward the move input
+	Fvector in = vControlAccel;
+	in.y = 0.f;
+	if (in.square_magnitude() > EPS)
+	{
+		in.normalize();
+		m_parkour_slide_dir.lerp(m_parkour_slide_dir, in, _min(1.f, slide_steer * dt));
+		m_parkour_slide_dir.normalize_safe();
+	}
+
+	vControlAccel.mul(m_parkour_slide_dir, speed * 10.f); // Calculate() uses |accel| / 10 as max velocity
+	m_vInertiaAccel.set(vControlAccel); // inertia continues smoothly from the slide when it ends
+	return true;
 }
 
 bool CActor::CanMove()

@@ -490,6 +490,11 @@ protected:
 	bool parkour_Mantle(u32 mstate_wf);
 	bool parkour_Vault(const Fvector& P, const Fvector& F, float wall, float r, float height);
 	void parkour_UpdateMove(float dt);
+	bool m_parkour_slide = false;
+	float m_parkour_slide_time = 0.f;
+	float m_parkour_slide_speed = 0.f; // horizontal speed at the start
+	Fvector m_parkour_slide_dir;
+	bool parkour_Slide(Fvector& vControlAccel, float dt);
 
 public:
 	float m_fWalkAccel;
