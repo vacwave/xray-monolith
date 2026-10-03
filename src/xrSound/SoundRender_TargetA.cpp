@@ -28,6 +28,8 @@ void CSoundRender_TargetA::SetSlot(ALuint NewSlot)
 BOOL CSoundRender_TargetA::_initialize()
 {
 	inherited::_initialize();
+	cache_min_dist = cache_max_dist = cache_rolloff = -1.f;
+	cache_relative = -1;
 	// initialize buffer
 	A_CHK(alGenBuffers (sdef_target_count, pBuffers));
 	alGenSources(1, &pSource);
@@ -100,6 +102,7 @@ void CSoundRender_TargetA::stop()
 		A_CHK(alSourceStop(pSource));
 		A_CHK(alSourcei (pSource, AL_BUFFER, NULL));
 		A_CHK(alSourcei (pSource, AL_SOURCE_RELATIVE, TRUE));
+		cache_relative = TRUE;
 	}
 	inherited::stop();
 }
@@ -163,10 +166,18 @@ void CSoundRender_TargetA::fill_parameters()
 
 	// 3D params
 	VERIFY2(m_pEmitter, SE->source()->file_name());
-	A_CHK(alSourcef (pSource, AL_REFERENCE_DISTANCE, m_pEmitter->p_source.min_distance));
+	if (m_pEmitter->p_source.min_distance != cache_min_dist)
+	{
+		cache_min_dist = m_pEmitter->p_source.min_distance;
+		A_CHK(alSourcef (pSource, AL_REFERENCE_DISTANCE, cache_min_dist));
+	}
 
 	VERIFY2(m_pEmitter, SE->source()->file_name());
-	A_CHK(alSourcef (pSource, AL_MAX_DISTANCE, m_pEmitter->p_source.max_distance));
+	if (m_pEmitter->p_source.max_distance != cache_max_dist)
+	{
+		cache_max_dist = m_pEmitter->p_source.max_distance;
+		A_CHK(alSourcef (pSource, AL_MAX_DISTANCE, cache_max_dist));
+	}
 
 	VERIFY2(m_pEmitter, SE->source()->file_name ());
 	A_CHK(alSource3f(pSource, AL_POSITION, m_pEmitter->p_source.position.x,m_pEmitter->p_source.position.y,-m_pEmitter->
@@ -176,9 +187,17 @@ void CSoundRender_TargetA::fill_parameters()
 	A_CHK(alSource3f(pSource, AL_VELOCITY, m_pEmitter->p_source.velocity.x, m_pEmitter->p_source.velocity.y, -m_pEmitter->p_source.velocity.z));
 
 	VERIFY2(m_pEmitter, SE->source()->file_name());
-	A_CHK(alSourcei (pSource, AL_SOURCE_RELATIVE, m_pEmitter->b2D));
+	if (m_pEmitter->b2D != cache_relative)
+	{
+		cache_relative = m_pEmitter->b2D;
+		A_CHK(alSourcei (pSource, AL_SOURCE_RELATIVE, cache_relative));
+	}
 
-	A_CHK(alSourcef (pSource, AL_ROLLOFF_FACTOR, psSoundRolloff));
+	if (psSoundRolloff != cache_rolloff)
+	{
+		cache_rolloff = psSoundRolloff;
+		A_CHK(alSourcef (pSource, AL_ROLLOFF_FACTOR, cache_rolloff));
+	}
 
 	VERIFY2(m_pEmitter, SE->source()->file_name());
 	float _gain = m_pEmitter->smooth_volume;

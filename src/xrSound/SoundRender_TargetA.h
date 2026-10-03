@@ -15,6 +15,10 @@ public:
 	ALuint pBuffers[sdef_target_count];
 	float cache_gain;
 	float cache_pitch;
+	float cache_min_dist;
+	float cache_max_dist;
+	float cache_rolloff;
+	BOOL cache_relative;
 	ALuint Slot;
 
 	ALuint buf_block;

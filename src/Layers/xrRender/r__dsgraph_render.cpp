@@ -659,10 +659,12 @@ void CDSGraphManager::r_dsgraph_capture_dynamic(CObject* O)
 
 				if(!(spatial->spatial.type & STYPE_RENDERABLE) && !(spatial->spatial.type & STYPE_PARTICLE) && !(spatial->spatial.type & STYPE_RENDERABLESHADOW))
 					continue;
-				if (!is_sector_visible(sector))
+				// single lookup; the sector map is only written by traverse()/clear() on this thread
+				auto snode = m_sector_frustums.find(sector);
+				if (!snode)
 					continue;
 
-				for (CFrustum& frustum : m_sector_frustums.find(sector)->val.first)
+				for (CFrustum& frustum : snode->val.first)
 				{
 					if (dbg)
 					{
