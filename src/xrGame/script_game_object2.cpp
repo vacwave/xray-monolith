@@ -148,6 +148,12 @@ void CScriptGameObject::set_item(MonsterSpace::EObjectAction object_action, CScr
 
 void CScriptGameObject::play_cycle(LPCSTR anim, bool mix_in)
 {
+	if (!anim)
+	{
+		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError, "CGameObject [%s] : play_cycle called with no animation",
+		                                object().cName().c_str());
+		return;
+	}
 	IKinematicsAnimated* sa = smart_cast<IKinematicsAnimated*>(object().Visual());
 	if (sa)
 	{
@@ -168,6 +174,25 @@ void CScriptGameObject::play_cycle(LPCSTR anim, bool mix_in)
 void CScriptGameObject::play_cycle(LPCSTR anim)
 {
 	play_cycle(anim, true);
+}
+
+// Script entry point: accept any Lua value so a nil/non-string animation (e.g. a misconfigured
+// ph_button logic section) logs a descriptive error instead of raising a luabind exception
+void CScriptGameObject::play_cycle_script(const ::luabind::object& anim, bool mix_in)
+{
+	if (anim.type() != LUA_TSTRING)
+	{
+		ai().script_engine().script_log(ScriptStorage::eLuaMessageTypeError,
+		                                "CGameObject [%s] : play_cycle expects an animation name, got %s",
+		                                object().cName().c_str(), lua_typename(anim.lua_state(), anim.type()));
+		return;
+	}
+	play_cycle(::luabind::object_cast<LPCSTR>(anim), mix_in);
+}
+
+void CScriptGameObject::play_cycle_script(const ::luabind::object& anim)
+{
+	play_cycle_script(anim, true);
 }
 
 void CScriptGameObject::Hit(CScriptHit* tpLuaHit)
