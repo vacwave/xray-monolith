@@ -31,6 +31,7 @@ static const float s_fJumpGroundTime = 0.1f; // для снятия флажка
 const float s_fFallTime = 0.2f;
 
 BOOL g_actor_overweight_rework = TRUE;
+BOOL g_actor_parkour = TRUE;
 
 //////////////////////////////////////////////////////////////////////////
 // Overweight rework tuning
@@ -301,6 +302,8 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
 			mstate_wf &= ~mcJump;
 		}
 	}
+	if (parkour_Mantle(mstate_wf))
+		return;
 	// update player accel
 	if (mstate_wf & mcFwd) vControlAccel.z += 1;
 	if (mstate_wf & mcBack) vControlAccel.z += -1;
@@ -805,6 +808,132 @@ bool CActor::CanJump()
 		&& !m_bJumpKeyPressed && !IsZoomAimingMode();
 
 	return can_Jump;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Parkour (g_actor_parkour)
+//////////////////////////////////////////////////////////////////////////
+namespace parkour_tune
+{
+	static const float mantle_min_h			= 0.5f;	// ledge height above feet, min
+	static const float mantle_max_h			= 1.9f;	// ledge height above feet, max
+	static const float mantle_reach			= 0.6f;	// max gap between body and wall
+	static const float mantle_lift			= 0.05f;	// end height above the ledge
+	static const float mantle_rise_speed	= 4.0f;	// m/s, vertical segment
+	static const float mantle_fwd_speed		= 3.0f;	// m/s, forward segment
+}
+
+void CActor::parkour_PathPoint(float t, Fvector& p) const
+{
+	if (t < m_parkour_t1)
+		p.lerp(m_parkour_p0, m_parkour_p1, t / m_parkour_t1);
+	else
+		p.lerp(m_parkour_p1, m_parkour_p2, _min(1.f, (t - m_parkour_t1) / (m_parkour_t2 - m_parkour_t1)));
+}
+
+// Returns true while a mantle is active (caller skips the normal controls)
+bool CActor::parkour_Mantle(u32 mstate_wf)
+{
+	using namespace parkour_tune;
+	CPHMovementControl* mc = character_physics_support()->movement();
+
+	if (m_parkour_active)
+	{
+		// abort if disabled, dead, on a ladder or moved externally (teleport, vehicle)
+		Fvector cur, expected;
+		mc->GetPosition(cur);
+		parkour_PathPoint(m_parkour_time, expected);
+		if (g_actor_parkour && g_Alive() && !(mstate_real & mcClimb) && cur.distance_to(expected) < 0.5f)
+			return true;
+		m_parkour_active = false;
+		return false;
+	}
+
+	if (!g_actor_parkour || !g_Alive() || !(mstate_wf & mcJump) || !(mstate_wf & mcFwd) ||
+		(mstate_real & (mcCrouch | mcClimb)) || IsZoomAimingMode() || mc->PHCapture())
+		return false;
+
+	// on ground: same conditions as a normal jump; in air: jump held after a jump or fall
+	if (mc->Environment() == CPHMovementControl::peOnGround)
+	{
+		if (!CanJump())
+			return false;
+	}
+	else if (mc->Environment() != CPHMovementControl::peInAir || !(mstate_real & (mcJump | mcFall)))
+		return false;
+
+	Fvector F = cam_Active()->vDirection;
+	F.y = 0.f;
+	if (F.square_magnitude() < EPS)
+		return false;
+	F.normalize();
+
+	Fvector P;
+	mc->GetPosition(P);
+	const Fbox& box = mc->Box();
+	const float r = (box.x2 - box.x1) * 0.5f;
+	const float height = box.y2 - box.y1;
+	const Fvector up = {0.f, 1.f, 0.f};
+	const Fvector down = {0.f, -1.f, 0.f};
+	collide::rq_result R;
+	Fvector from;
+
+	// wall in front, below the lowest ledge height
+	from.set(P.x, P.y + mantle_min_h - 0.1f, P.z);
+	if (!Level().ObjectSpace.RayPick(from, F, r + mantle_reach, collide::rqtStatic, R, this))
+		return false;
+	const float fwd = R.range + r + 0.05f; // horizontal distance to the end position
+
+	// ledge top at the end position
+	Fvector end;
+	end.mad(P, F, fwd);
+	from.set(end.x, P.y + mantle_max_h + 0.1f, end.z);
+	if (!Level().ObjectSpace.RayPick(from, down, mantle_max_h - mantle_min_h + 0.1f, collide::rqtStatic, R, this))
+		return false;
+	end.y = from.y - R.range + mantle_lift;
+
+	// room to stand at the end, to rise in place and to move forward over the ledge
+	if (Level().ObjectSpace.RayPick(end, up, height, collide::rqtStatic, R, this))
+		return false;
+	from.set(P.x, P.y + height - 0.1f, P.z);
+	if (Level().ObjectSpace.RayPick(from, up, end.y - P.y + 0.1f, collide::rqtStatic, R, this))
+		return false;
+	from.set(P.x, end.y + 0.25f, P.z);
+	if (Level().ObjectSpace.RayPick(from, F, fwd + r, collide::rqtStatic, R, this))
+		return false;
+	from.y = end.y + height - 0.2f;
+	if (Level().ObjectSpace.RayPick(from, F, fwd + r, collide::rqtStatic, R, this))
+		return false;
+
+	m_parkour_p0.set(P);
+	m_parkour_p1.set(P.x, end.y, P.z);
+	m_parkour_p2.set(end);
+	m_parkour_t1 = (end.y - P.y) / mantle_rise_speed;
+	m_parkour_t2 = m_parkour_t1 + fwd / mantle_fwd_speed;
+	m_parkour_time = 0.f;
+	m_parkour_active = true;
+
+	mc->EnableCharacter();
+	mstate_real &= ~(mcJump | mcFall | mcSprint);
+	m_bJumpKeyPressed = TRUE; // no normal jump until the key is released
+	return true;
+}
+
+void CActor::parkour_UpdateMove(float dt)
+{
+	if (!m_parkour_active)
+		return;
+	m_parkour_time += dt;
+	if (m_parkour_time >= m_parkour_t2)
+	{
+		m_parkour_time = m_parkour_t2;
+		m_parkour_active = false;
+	}
+	Fvector pos;
+	parkour_PathPoint(m_parkour_time, pos);
+	CPHMovementControl* mc = character_physics_support()->movement();
+	mc->SetPosition(pos);
+	mc->SetVelocity(0.f, 0.f, 0.f);
 }
 
 bool CActor::CanMove()

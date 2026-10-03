@@ -479,6 +479,16 @@ protected:
 	Fvector m_vInertiaAccel; // smoothed world-space control accel (overweight inertia), not saved
 	void ApplyMovementInertia(Fvector& vControlAccel, float dt);
 
+	// Parkour (g_actor_parkour): scripted move start -> corner -> end, player only, not saved
+	bool m_parkour_active = false;
+	float m_parkour_time = 0.f;
+	float m_parkour_t1 = 0.f; // time at the corner
+	float m_parkour_t2 = 0.f; // total time
+	Fvector m_parkour_p0, m_parkour_p1, m_parkour_p2;
+	void parkour_PathPoint(float t, Fvector& p) const;
+	bool parkour_Mantle(u32 mstate_wf);
+	void parkour_UpdateMove(float dt);
+
 public:
 	float m_fWalkAccel;
 	float m_fJumpSpeed;

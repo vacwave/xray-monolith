@@ -174,6 +174,7 @@ extern BOOL fun_allowed;
 extern BOOL g_smooth_steps;
 extern BOOL progressiveStaminaCost;
 extern BOOL g_actor_overweight_rework;
+extern BOOL g_actor_parkour;
 extern BOOL NPCsLookAtActor;
 extern float NPCsLookAtActorMinDistance;
 extern BOOL interruptFireOnAimToggle;
@@ -3253,6 +3254,7 @@ void CCC_RegisterCommands()
 
 	CMD4(CCC_Integer, "g_progressive_stamina_cost", &progressiveStaminaCost, 0, 1);
 	CMD4(CCC_Integer, "g_actor_overweight_rework", &g_actor_overweight_rework, 0, 1);
+	CMD4(CCC_Integer, "g_actor_parkour", &g_actor_parkour, 0, 1);
 	CMD4(CCC_Integer, "g_npcs_look_at_actor", &NPCsLookAtActor, 0, 1);
 	CMD4(CCC_Float, "g_npcs_look_at_actor_min_distance", &NPCsLookAtActorMinDistance, 1.f, 8.f);
 	CMD4(CCC_Integer, "g_interrupt_fire_on_aim_toggle", &interruptFireOnAimToggle, 0, 1);
