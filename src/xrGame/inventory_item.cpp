@@ -20,6 +20,7 @@
 #include "Level.h"
 #include "game_cl_base.h"
 #include "Actor.h"
+#include "../xrEngine/CameraBase.h"
 #include "string_table.h"
 #include "../Include/xrRender/Kinematics.h"
 #include "ai_object_location.h"
@@ -1267,6 +1268,15 @@ void CInventoryItem::activate_physic_shell()
 	};
 
 	UpdateXForm();
+
+	// launch along owner's facing (actor: camera heading) instead of the item's stale rotation
+	Fvector pos = object().Position();
+	CActor* A = smart_cast<CActor*>(E);
+	if (A)
+		object().XFORM().setHPB(A->cam_Active()->vDirection.getH(), 0.f, 0.f);
+	else
+		object().XFORM().set(E->XFORM());
+	object().Position().set(pos);
 
 	object().CPhysicsShellHolder::activate_physic_shell();
 }
