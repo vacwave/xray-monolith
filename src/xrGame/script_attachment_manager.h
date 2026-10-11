@@ -75,6 +75,7 @@ private:
 
 	u16 m_type;
 	float m_depth_scale;
+	float m_hud_fov;
 	script_attachment* m_parent_attachment;
 	CGameObject* m_parent_object;
 	bool m_parent_level;
@@ -190,6 +191,8 @@ public:
 	u16 GetType() { return m_type; }
 	void SetDepthScale(float k) { m_depth_scale = k > 0.f ? k : 1.f; }
 	float GetDepthScale() { return m_depth_scale; }
+	void SetHudFov(float f) { m_hud_fov = f > 0.f ? clampr(f, 0.1f, 1.f) : 0.f; }
+	float GetHudFov() { return m_hud_fov; }
 
 	u32 PlayMotion(LPCSTR name, bool mixin = true, float speed = 1.f);
 	u32 motion_length(const MotionID& M, const CMotionDef*& md, float speed);

@@ -981,17 +981,20 @@ void player_hud::render_hud(IDSGraphManager* DM)
 {
 	if (g_actor->GetAttachments()->size())
 	{
-		// Keep HudCam attachments at a constant on-screen size regardless of per-item hud_fov
-		float s = tanf(deg2rad(psHUD_FOV * 83.f) * 0.5f) / tanf(deg2rad(psHUD_FOV_def * 83.f) * 0.5f);
-		Fmatrix S, hudcam;
-		S.scale(s, s, 1.f);
-		hudcam.mul_43(m_hud_cam_transform, S);
+		float cur = tanf(deg2rad(psHUD_FOV * 83.f) * 0.5f);
 
 		for (auto& pair : *g_actor->GetAttachments())
 		{
 			script_attachment* att = pair.second;
 			if (att->GetType() != eSA_HudCam)
 				continue;
+
+			// Constant on-screen size for the reference hud_fov (script-set, else the console value) regardless of per-item hud_fov
+			float ref = att->GetHudFov() > 0.f ? att->GetHudFov() : psHUD_FOV_def;
+			float s = cur / tanf(deg2rad(ref * 83.f) * 0.5f);
+			Fmatrix S, hudcam;
+			S.scale(s, s, 1.f);
+			hudcam.mul_43(m_hud_cam_transform, S);
 
 			// Uniform scale by k about the render eye: same on-screen pose (incl. HUD-vs-view camera drift), only nearer
 			float k = att->GetDepthScale();

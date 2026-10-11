@@ -82,6 +82,7 @@ script_attachment::script_attachment(LPCSTR name, LPCSTR model_name)
 	m_anim_end = 0;
 	m_type = eSA_World;
 	m_depth_scale = 1.f;
+	m_hud_fov = 0.f;
 	m_last_upd_frame = 0;
 	m_current_motion = "idle";
 	m_model_name = "";
