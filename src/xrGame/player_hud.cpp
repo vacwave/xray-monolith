@@ -994,7 +994,11 @@ void player_hud::render_hud(IDSGraphManager* DM)
 			float s = cur / tanf(deg2rad(ref * 83.f) * 0.5f);
 			Fmatrix S, hudcam;
 			S.scale(s, s, 1.f);
-			hudcam.mul_43(m_hud_cam_transform, S);
+			// Parent position partly follows the render eye: damps drift from camera effectors that skip the HUD camera (jump/land/fall)
+			Fmatrix cam = m_hud_cam_transform;
+			if (att->GetEyeFollow() > 0.f)
+				cam.c.lerp(m_hud_cam_transform.c, Device.vCameraPosition, att->GetEyeFollow());
+			hudcam.mul_43(cam, S);
 
 			// Uniform scale by k about the render eye: same on-screen pose (incl. HUD-vs-view camera drift), only nearer
 			float k = att->GetDepthScale();

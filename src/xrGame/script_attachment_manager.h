@@ -76,6 +76,7 @@ private:
 	u16 m_type;
 	float m_depth_scale;
 	float m_hud_fov;
+	float m_eye_follow;
 	script_attachment* m_parent_attachment;
 	CGameObject* m_parent_object;
 	bool m_parent_level;
@@ -193,6 +194,8 @@ public:
 	float GetDepthScale() { return m_depth_scale; }
 	void SetHudFov(float f) { m_hud_fov = f > 0.f ? clampr(f, 0.1f, 1.f) : 0.f; }
 	float GetHudFov() { return m_hud_fov; }
+	void SetEyeFollow(float a) { m_eye_follow = a > 0.f ? clampr(a, 0.f, 1.f) : 0.f; }
+	float GetEyeFollow() { return m_eye_follow; }
 
 	u32 PlayMotion(LPCSTR name, bool mixin = true, float speed = 1.f);
 	u32 motion_length(const MotionID& M, const CMotionDef*& md, float speed);
