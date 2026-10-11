@@ -74,6 +74,7 @@ private:
 	u32 m_anim_end;
 
 	u16 m_type;
+	float m_depth_scale;
 	script_attachment* m_parent_attachment;
 	CGameObject* m_parent_object;
 	bool m_parent_level;
@@ -187,6 +188,8 @@ public:
 
     void SetType(u16 type);
 	u16 GetType() { return m_type; }
+	void SetDepthScale(float k) { m_depth_scale = k > 0.f ? k : 1.f; }
+	float GetDepthScale() { return m_depth_scale; }
 
 	u32 PlayMotion(LPCSTR name, bool mixin = true, float speed = 1.f);
 	u32 motion_length(const MotionID& M, const CMotionDef*& md, float speed);

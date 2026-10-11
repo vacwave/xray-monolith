@@ -990,8 +990,16 @@ void player_hud::render_hud(IDSGraphManager* DM)
 		for (auto& pair : *g_actor->GetAttachments())
 		{
 			script_attachment* att = pair.second;
-			if (att->GetType() == eSA_HudCam)
-				att->Render(nullptr, &hudcam, DM);
+			if (att->GetType() != eSA_HudCam)
+				continue;
+
+			// Uniform scale by k about the render eye: same on-screen pose (incl. HUD-vs-view camera drift), only nearer
+			float k = att->GetDepthScale();
+			Fmatrix D, scaled;
+			D.scale(k, k, k);
+			D.c.mul(Device.vCameraPosition, 1.f - k);
+			scaled.mul_43(D, hudcam);
+			att->Render(nullptr, &scaled, DM);
 		}
 	}
 

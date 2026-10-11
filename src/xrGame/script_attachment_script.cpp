@@ -84,6 +84,8 @@ void script_attachment::script_register(lua_State* L)
 		//Other
 		.def("set_type", &script_attachment::SetType)
 		.def("get_type", &script_attachment::GetType)
+		.def("set_depth_scale", &script_attachment::SetDepthScale)
+		.def("get_depth_scale", &script_attachment::GetDepthScale)
 		.def("set_model", &script_attachment::LoadModel)
 		.def("get_model", &script_attachment::GetModelScript)
 		.def("set_name", &script_attachment::SetName)
