@@ -39,6 +39,8 @@ compressor/mod/
 \#*\#
 *~
 
+__pycache__/
+
 # Claude Code local config (not pushed)
 CLAUDE.md
 .claude/

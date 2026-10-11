@@ -106,6 +106,7 @@ public:
 
 	void SetZoneDanger(float danger, ALife::EInfluenceType type);
 	float GetZoneDanger() const;
+	float GetZoneDanger(ALife::EInfluenceType type) const;
 
 public:
 	IC CActor& object() const
