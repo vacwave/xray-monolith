@@ -15,7 +15,8 @@ void script_attachment::script_register(lua_State* L)
 		[
 			value("Hud", (int)eSA_HUD),
 			value("World", (int)eSA_World),
-			value("CamAttached", (int)eSA_CamAttached)
+			value("CamAttached", (int)eSA_CamAttached),
+			value("HudCam", (int)eSA_HudCam)
 		],
 
 		class_<script_attachment>("ScriptAttachment")

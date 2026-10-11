@@ -11,6 +11,7 @@ enum script_attachment_type
 	eSA_HUD = 0,
 	eSA_World,
 	eSA_CamAttached,
+	eSA_HudCam,
 	eSA_undefined
 };
 

@@ -730,6 +730,7 @@ player_hud::player_hud()
 	m_attach_offset_2.identity();
 	m_transform.identity();
 	m_transform_2.identity();
+	m_hud_cam_transform.identity();
 	m_adjust_mode = false;
 	script_anim_part = u8(-1);
 	script_anim_offset_factor = 0.f;
@@ -973,8 +974,27 @@ void player_hud::render_item_ui()
 	}
 }
 
+extern float psHUD_FOV;
+extern float psHUD_FOV_def;
+
 void player_hud::render_hud(IDSGraphManager* DM)
 {
+	if (g_actor->GetAttachments()->size())
+	{
+		// Keep HudCam attachments at a constant on-screen size regardless of per-item hud_fov
+		float s = tanf(deg2rad(psHUD_FOV * 83.f) * 0.5f) / tanf(deg2rad(psHUD_FOV_def * 83.f) * 0.5f);
+		Fmatrix S, hudcam;
+		S.scale(s, s, 1.f);
+		hudcam.mul_43(m_hud_cam_transform, S);
+
+		for (auto& pair : *g_actor->GetAttachments())
+		{
+			script_attachment* att = pair.second;
+			if (att->GetType() == eSA_HudCam)
+				att->Render(nullptr, &hudcam, DM);
+		}
+	}
+
 	bool b_r0 = ((m_attached_items[0] && m_attached_items[0]->need_renderable()) || script_anim_part == 0 || script_anim_part == 2);
 	bool b_r1 = ((m_attached_items[1] && m_attached_items[1]->need_renderable()) || script_anim_part == 1 || script_anim_part == 2);
 
@@ -1094,6 +1114,7 @@ extern float psHUD_FOV;
 
 void player_hud::update(const Fmatrix& cam_trans)
 {
+	m_hud_cam_transform = cam_trans;
 	Fmatrix trans = cam_trans;
 	Fmatrix trans_b = cam_trans;
 	CWeapon* wep = smart_cast<CWeapon*>(Actor()->inventory().ActiveItem());

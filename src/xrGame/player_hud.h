@@ -426,6 +426,7 @@ public:
 
 	Fmatrix m_transform;
 	Fmatrix m_transform_2;
+	Fmatrix m_hud_cam_transform;
 
 	Fmatrix m_attach_offset;
 	Fmatrix m_attach_offset_2;

@@ -188,7 +188,7 @@ void script_attachment::Render(IKinematics* model, Fmatrix* mat, IDSGraphManager
 	}
 
 	IKinematicsAnimated* ka = renderable.visual->dcast_PKinematicsAnimated();
-	if (ka || GetType() == eSA_CamAttached)
+	if (ka || GetType() == eSA_CamAttached || GetType() == eSA_HudCam)
 	{
 		if (ka) ka->UpdateTracks();
 		m_kinematics->CalculateBones_Invalidate();
@@ -730,7 +730,7 @@ void script_attachment::SetType(u16 type)
     m_type = type;
     IRenderVisual* pVisual = renderable.visual->dcast_RenderVisual();
     if (pVisual)
-        pVisual->MarkIgnoreOptimization(m_type == eSA_HUD || m_type == eSA_CamAttached);
+        pVisual->MarkIgnoreOptimization(m_type == eSA_HUD || m_type == eSA_CamAttached || m_type == eSA_HudCam);
 }
 
 void script_attachment::LoadModel(LPCSTR model_name, bool keep_bc)
