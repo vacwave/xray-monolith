@@ -649,7 +649,7 @@ void R_dsgraph_structure::r_dsgraph_render_hud(bool NoPS)
 			// Change projection
 			Fmatrix camproj;
 			camproj.build_projection(
-				deg2rad(psCamAttachedFOV),
+				deg2rad(83.f),
 				Device.fASPECT, R_VIEWPORT_NEAR,
 				g_pGamePersistent->Environment().CurrentEnv->far_plane);
 
