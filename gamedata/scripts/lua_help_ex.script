@@ -470,6 +470,10 @@
     class render_device {
         // Switch the pause, with sound emitters and without hint on screen
         void pause_ex(bool state)
+
+        // Projection FOV in degrees used to draw CamAttached script attachments (default 83). Clamped to 5-170, <= 0 resets to 83. Global: restore it when done
+        void set_cam_attached_fov(float fov)
+        float get_cam_attached_fov()
     }
 
     class particles_object {
