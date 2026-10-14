@@ -368,6 +368,8 @@ public:
 	void load_default() { load("actor_hud_05", true); };
 	void update(const Fmatrix& trans);
 	void updateMovementLayerState();
+	void set_movement_layers_enabled(bool enabled);
+	bool movement_layers_enabled() const { return m_movement_layers_enabled; }
 	void StopScriptAnim();
 	void create_script_anim_item_model(LPCSTR section);
 	void delete_script_anim_item_model();
@@ -399,6 +401,7 @@ public:
 
 	//Movement animation layers: 0 = aim_walk, 1 = aim_crouch, 2 = crouch, 3 = walk, 4 = run, 5 = sprint
 	xr_vector<movement_layer*> m_movement_layers;
+	bool m_movement_layers_enabled; // script toggle; off blends the movement layers out
 	xr_vector<script_layer*> m_script_layers;
 
 	xr_vector<hand_motions*> m_hand_motions;

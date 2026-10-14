@@ -728,6 +728,7 @@ player_hud::player_hud()
 	m_item_pos.identity();
 	script_override_arms = false;
 	script_anim_item_model = nullptr;
+	m_movement_layers_enabled = true;
 
 	//Bone Callback Params
 	m_bone_callback_params.insert(mk_pair(r_finger0, xr_new<BoneCallbackParams>()));
@@ -1280,7 +1281,7 @@ void player_hud::update(const Fmatrix& cam_trans)
 		if (!anm || !anm->anm || (!anm->active && anm->blend_amount[0] == 0.f && anm->blend_amount[1] == 0.f))
 			continue;
 
-		if (anm->active && (need_blend[0] || need_blend[1]))
+		if (anm->active && m_movement_layers_enabled && (need_blend[0] || need_blend[1]))
 		{
 			if (need_blend[0])
 			{
@@ -1411,6 +1412,18 @@ void player_hud::updateMovementLayerState()
 			}
 		}
 	}
+}
+
+void player_hud::set_movement_layers_enabled(bool enabled)
+{
+	if (m_movement_layers_enabled == enabled)
+		return;
+
+	m_movement_layers_enabled = enabled;
+
+	// layers that faded out while disabled were stopped, restart the ones the current state needs
+	if (enabled)
+		updateMovementLayerState();
 }
 
 void player_hud::PlayBlendAnm(LPCSTR name, u8 part, float speed, float power, bool bLooped, bool no_restart, LPCSTR pivot_bone)

@@ -16,7 +16,9 @@ void player_hud::script_register(lua_State* L)
 		class_<player_hud>("player_hud")
 		.def(constructor<>())
 		.def("set_hands", &player_hud::load_script)
-		.def("reset_hands", &player_hud::reset_model_script),
+		.def("reset_hands", &player_hud::reset_model_script)
+		.def("set_movement_layers_enabled", &player_hud::set_movement_layers_enabled)
+		.def("movement_layers_enabled", &player_hud::movement_layers_enabled),
 
 		def("get_player_hud", &get_player_hud)
 	];
