@@ -228,11 +228,7 @@
         void set_hands(string section)
         void reset_hands()
 
-        // Movement layers ([hud_movement_layers]: idle breathing, walk/run/sprint bob) on the hands, on by default and per level.
-        // false blends them out over 0.4 s like the engine does, true blends them back in. Use it so a script animation (game.play_hud_motion)
-        // plays without the wobble, e.g. to line it up with a camera attached model.
-        void set_movement_layers_enabled(bool enabled)
-        bool movement_layers_enabled()
+        void set_movement_layers_enabled(bool enabled) // hands movement layers (idle breathing, walk/run/sprint bob from [hud_movement_layers]), false blends them out, default true, resets on level load
     }
 
     namespace ActorMenu {

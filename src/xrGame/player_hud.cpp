@@ -1281,7 +1281,7 @@ void player_hud::update(const Fmatrix& cam_trans)
 		if (!anm || !anm->anm || (!anm->active && anm->blend_amount[0] == 0.f && anm->blend_amount[1] == 0.f))
 			continue;
 
-		if (anm->active && m_movement_layers_enabled && (need_blend[0] || need_blend[1]))
+		if (anm->active && (need_blend[0] || need_blend[1]))
 		{
 			if (need_blend[0])
 			{
@@ -1374,7 +1374,7 @@ void player_hud::updateMovementLayerState()
 		anm->Stop(false);
 	}
 
-	bool need_blend = (script_anim_part != u8(-1) || (m_attached_items[0] && m_attached_items[0]->m_parent_hud_item->NeedBlendAnm()) || (m_attached_items[1] && m_attached_items[1]->m_parent_hud_item->NeedBlendAnm()));
+	bool need_blend = m_movement_layers_enabled && (script_anim_part != u8(-1) || (m_attached_items[0] && m_attached_items[0]->m_parent_hud_item->NeedBlendAnm()) || (m_attached_items[1] && m_attached_items[1]->m_parent_hud_item->NeedBlendAnm()));
 
 	if (need_blend)
 	{
@@ -1412,18 +1412,6 @@ void player_hud::updateMovementLayerState()
 			}
 		}
 	}
-}
-
-void player_hud::set_movement_layers_enabled(bool enabled)
-{
-	if (m_movement_layers_enabled == enabled)
-		return;
-
-	m_movement_layers_enabled = enabled;
-
-	// layers that faded out while disabled were stopped, restart the ones the current state needs
-	if (enabled)
-		updateMovementLayerState();
 }
 
 void player_hud::PlayBlendAnm(LPCSTR name, u8 part, float speed, float power, bool bLooped, bool no_restart, LPCSTR pivot_bone)
