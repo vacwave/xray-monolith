@@ -733,6 +733,7 @@ player_hud::player_hud()
 	m_adjust_mode = false;
 	script_anim_part = u8(-1);
 	script_anim_offset_factor = 0.f;
+	script_anim_lock_camera = false;
 	m_item_pos.identity();
 	script_override_arms = false;
 	script_anim_item_model = nullptr;
@@ -1096,6 +1097,9 @@ void player_hud::update(const Fmatrix& cam_trans)
 {
 	Fmatrix trans = cam_trans;
 	Fmatrix trans_b = cam_trans;
+	// lock_to_camera script motions follow the render camera, like CamAttached attachments
+	if (script_anim_lock_camera)
+		Actor()->Cameras().camera_Matrix(trans_b);
 	CWeapon* wep = smart_cast<CWeapon*>(Actor()->inventory().ActiveItem());
 
 	float& control_factor = Actor()->freelook_cam_control;
@@ -1191,22 +1195,24 @@ void player_hud::update(const Fmatrix& cam_trans)
 		trans = trans_b;
 		trans_2 = trans_b;
 	}
-	else if (script_anim_offset_factor != 0.f)
+	else if (script_anim_offset_factor != 0.f || script_anim_lock_camera)
 	{
+		float factor = script_anim_lock_camera ? 1.f : script_anim_offset_factor;
+
 		Fvector& hand_pos = script_anim_part == 0 ? m1pos : m2pos;
 		Fvector& hand_rot = script_anim_part == 0 ? m1rot : m2rot;
 
-		hand_pos.lerp(script_anim_part == 0 ? m1pos : m2pos, script_anim_offset[0], script_anim_offset_factor);
-		hand_rot.lerp(script_anim_part == 0 ? m1rot : m2rot, script_anim_offset[1], script_anim_offset_factor);
+		hand_pos.lerp(script_anim_part == 0 ? m1pos : m2pos, script_anim_offset[0], factor);
+		hand_rot.lerp(script_anim_part == 0 ? m1rot : m2rot, script_anim_offset[1], factor);
 
 		if (script_anim_part == 0)
 		{
-			trans_b.inertion(trans, script_anim_offset_factor);
+			trans_b.inertion(trans, factor);
 			trans = trans_b;
 		}
 		else
 		{
-			trans_b.inertion(trans_2, script_anim_offset_factor);
+			trans_b.inertion(trans_2, factor);
 			trans_2 = trans_b;
 		}
 	}
@@ -1229,6 +1235,11 @@ void player_hud::update(const Fmatrix& cam_trans)
 	m_model_2->UpdateTracks();
 	m_model_2->dcast_PKinematics()->CalculateBones_Invalidate();
 	m_model_2->dcast_PKinematics()->CalculateBones(TRUE);
+
+	// lock_to_camera: the animated arm(s) skip script and movement layers
+	bool lock[2];
+	lock[0] = script_anim_lock_camera && (script_anim_part == 0 || script_anim_part == 2);
+	lock[1] = script_anim_lock_camera && (script_anim_part == 1 || script_anim_part == 2);
 
 	for (script_layer* anm : m_script_layers)
 	{
@@ -1257,7 +1268,7 @@ void player_hud::update(const Fmatrix& cam_trans)
 
 		Fmatrix blend = anm->XFORM();
 
-		if (anm->m_part == 0 || anm->m_part == 2)
+		if ((anm->m_part == 0 || anm->m_part == 2) && !lock[0])
         {
 			IKinematics* K = m_model->dcast_PKinematics();
 			u16 bone_id = K ? K->LL_BoneID(anm->m_pivot_bone) : u16(-1);
@@ -1273,7 +1284,7 @@ void player_hud::update(const Fmatrix& cam_trans)
 				m_transform.mulB_43(blend);
         }
 
-		if (anm->m_part == 1 || anm->m_part == 2)
+		if ((anm->m_part == 1 || anm->m_part == 2) && !lock[1])
         {
 			IKinematics* K = m_model_2->dcast_PKinematics();
 			u16 bone_id = K ? K->LL_BoneID(anm->m_pivot_bone) : u16(-1);
@@ -1341,15 +1352,17 @@ void player_hud::update(const Fmatrix& cam_trans)
 		if (anm->blend_amount[0] == anm->blend_amount[1])
 		{
 			Fmatrix blend = anm->XFORM(0);
-			m_transform.mulB_43(blend);
-			m_transform_2.mulB_43(blend);
+			if (!lock[0])
+				m_transform.mulB_43(blend);
+			if (!lock[1])
+				m_transform_2.mulB_43(blend);
 		}
 		else
 		{
-			if (anm->blend_amount[0] > 0.f)
+			if (anm->blend_amount[0] > 0.f && !lock[0])
 				m_transform.mulB_43(anm->XFORM(0));
 
-			if (anm->blend_amount[1] > 0.f)
+			if (anm->blend_amount[1] > 0.f && !lock[1])
 				m_transform_2.mulB_43(anm->XFORM(1));
 		}
 	}
@@ -1556,6 +1569,7 @@ void player_hud::StopScriptAnim()
 	script_anim_part = u8(-1);
 	delete_script_anim_item_model();
 	script_anim_lead_gun = false;
+	script_anim_lock_camera = false;
 
 	updateMovementLayerState();
 
@@ -1673,6 +1687,7 @@ u32 player_hud::script_anim_play(u8 hand, LPCSTR section, LPCSTR anm_name, bool 
 
 	script_anim_offset[0] = offs;
 	script_anim_offset[1] = rrot;
+	script_anim_lock_camera = READ_IF_EXISTS(pSettings, r_bool, section, "lock_to_camera", false);
 	script_anim_part = hand;
 
 	player_hud_motion_container* pm = get_hand_motions(section);

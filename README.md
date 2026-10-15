@@ -239,6 +239,9 @@ How to compile exes:
 13. A short video demonstration of the entire process: https://youtu.be/MmZwyM2QO38
 
 ## Changelog
+**2026.10.15**
+* Script hand motions (`game.play_hud_motion`) can lock to the camera: with `lock_to_camera = true` in the motion's hud section, the animated arm(s) and the motion item follow the render camera (the same one `CamAttached` attachments use) and skip movement layers and `game.play_hud_anm` layers while it plays. Useful for motions where the hands touch the face or hand over to a `CamAttached` model. Off by default
+
 **2026.10.11**
 * Main and MT:
   * DLTX: `reload system ini` call will invalidate whole cache
