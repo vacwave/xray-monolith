@@ -268,6 +268,13 @@ void CCustomMonster::mk_orientation(Fvector& dir, Fmatrix& mR)
 	}
 }
 
+BOOL CCustomMonster::net_Relevant()
+{
+	// NET is seeded at the end of net_Spawn, so a save or level change started from inside
+	// net_Spawn (script callbacks, the crash save) must not export this object yet
+	return inherited::net_Relevant() && !NET.empty();
+}
+
 void CCustomMonster::net_Export(NET_Packet& P) // export to server
 {
 	R_ASSERT(Local());
