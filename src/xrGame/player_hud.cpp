@@ -725,6 +725,7 @@ player_hud::player_hud()
 	m_adjust_mode = false;
 	script_anim_part = u8(-1);
 	script_anim_offset_factor = 0.f;
+	script_anim_lock_camera = false;
 	m_item_pos.identity();
 	script_override_arms = false;
 	script_anim_item_model = nullptr;
@@ -1077,6 +1078,8 @@ void player_hud::update(const Fmatrix& cam_trans)
 {
 	Fmatrix trans = cam_trans;
 	Fmatrix trans_b = cam_trans;
+	if (script_anim_lock_camera) // lock_to_camera script motions follow render camera, like CamAttached attachments
+		Actor()->Cameras().camera_Matrix(trans_b);
 	CWeapon* wep = smart_cast<CWeapon*>(Actor()->inventory().ActiveItem());
 
 	float& control_factor = Actor()->freelook_cam_control;
@@ -1211,6 +1214,10 @@ void player_hud::update(const Fmatrix& cam_trans)
 	m_model_2->dcast_PKinematics()->CalculateBones_Invalidate();
 	m_model_2->dcast_PKinematics()->CalculateBones(TRUE);
 
+	bool skip_layers[2]; // lock_to_camera animated arm(s) skip script and movement layers
+	skip_layers[0] = script_anim_lock_camera && (script_anim_part == 0 || script_anim_part == 2);
+	skip_layers[1] = script_anim_lock_camera && (script_anim_part == 1 || script_anim_part == 2);
+
 	for (script_layer* anm : m_script_layers)
 	{
 		if (!anm || !anm->anm || (!anm->active && anm->blend_amount == 0.f))
@@ -1238,7 +1245,7 @@ void player_hud::update(const Fmatrix& cam_trans)
 
 		Fmatrix blend = anm->XFORM();
 
-		if (anm->m_part == 0 || anm->m_part == 2)
+		if ((anm->m_part == 0 || anm->m_part == 2) && !skip_layers[0])
         {
 			IKinematics* K = m_model->dcast_PKinematics();
 			u16 bone_id = K ? K->LL_BoneID(anm->m_pivot_bone) : u16(-1);
@@ -1254,7 +1261,7 @@ void player_hud::update(const Fmatrix& cam_trans)
 				m_transform.mulB_43(blend);
         }
 
-		if (anm->m_part == 1 || anm->m_part == 2)
+		if ((anm->m_part == 1 || anm->m_part == 2) && !skip_layers[1])
         {
 			IKinematics* K = m_model_2->dcast_PKinematics();
 			u16 bone_id = K ? K->LL_BoneID(anm->m_pivot_bone) : u16(-1);
@@ -1322,15 +1329,17 @@ void player_hud::update(const Fmatrix& cam_trans)
 		if (anm->blend_amount[0] == anm->blend_amount[1])
 		{
 			Fmatrix blend = anm->XFORM(0);
-			m_transform.mulB_43(blend);
-			m_transform_2.mulB_43(blend);
+			if (!skip_layers[0])
+				m_transform.mulB_43(blend);
+			if (!skip_layers[1])
+				m_transform_2.mulB_43(blend);
 		}
 		else
 		{
-			if (anm->blend_amount[0] > 0.f)
+			if (anm->blend_amount[0] > 0.f && !skip_layers[0])
 				m_transform.mulB_43(anm->XFORM(0));
 
-			if (anm->blend_amount[1] > 0.f)
+			if (anm->blend_amount[1] > 0.f && !skip_layers[1])
 				m_transform_2.mulB_43(anm->XFORM(1));
 		}
 	}
@@ -1537,6 +1546,7 @@ void player_hud::StopScriptAnim()
 	script_anim_part = u8(-1);
 	delete_script_anim_item_model();
 	script_anim_lead_gun = false;
+	script_anim_lock_camera = false;
 
 	updateMovementLayerState();
 
@@ -1654,6 +1664,9 @@ u32 player_hud::script_anim_play(u8 hand, LPCSTR section, LPCSTR anm_name, bool 
 
 	script_anim_offset[0] = offs;
 	script_anim_offset[1] = rrot;
+	script_anim_lock_camera = READ_IF_EXISTS(pSettings, r_bool, section, "lock_to_camera", false);
+	if (script_anim_lock_camera)
+		script_anim_offset_factor = 1.f;
 	script_anim_part = hand;
 
 	player_hud_motion_container* pm = get_hand_motions(section);
