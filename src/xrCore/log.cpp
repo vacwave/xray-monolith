@@ -256,6 +256,15 @@ void xrLogger::FlushLog()
 {
 	theLogger->bFlushRequested = true;
 	theLogger->UnpauseLogging();
+	// Wait until the log thread has written and flushed the pending records: the crash
+	// handlers call this right before TerminateProcess, and without a dialog in between
+	// (-silent_error_mode) the fatal error block would otherwise never reach the file.
+	// Bounded so it can never deadlock (log thread gone, or called from that thread).
+	if (!theLogger->bImmediateMode)
+	{
+		for (u32 i = 0; i < 200 && theLogger->bFlushRequested; ++i)
+			Sleep(10);
+	}
 }
 
 void xrLogger::SetImmediateMode(bool enable)

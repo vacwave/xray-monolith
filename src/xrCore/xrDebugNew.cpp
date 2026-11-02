@@ -239,6 +239,7 @@ void xrDebug::gather_info(const char* expression, const char* description, const
 
 void xrDebug::do_exit(const std::string& message)
 {
+	Msg("! [do_exit] %s", message.c_str());
 	xrLogger::FlushLog();
 	if (!strstr(GetCommandLine(), "-silent_error_mode"))
 		MessageBox(NULL, message.c_str(), "Error", MB_OK | MB_ICONERROR | MB_SYSTEMMODAL);
