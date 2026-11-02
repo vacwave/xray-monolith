@@ -992,7 +992,14 @@ function anomaly_restrictor_update()
 
 	-- Couple of anomalies per update, goal is to pass all anomalies in 1 second independent of frame time
 	for i = 1, anomaly_amount_per_update do
-		anomaly_restrictor_db_k, anomaly_restrictor_db_v = next(anomaly_restrictor_db, anomaly_restrictor_db_k)
+		-- anomaly_add_to_db can insert while this traversal is parked on a key from an earlier update
+		-- (e.g. right after a level change); the key may then be invalid for next(), so restart the pass
+		local next_ok, next_k, next_v = pcall(next, anomaly_restrictor_db, anomaly_restrictor_db_k)
+		if not next_ok then
+			anomaly_restrictor_db_k, anomaly_restrictor_db_v = nil, nil
+			break
+		end
+		anomaly_restrictor_db_k, anomaly_restrictor_db_v = next_k, next_v
 		if anomaly_restrictor_db_k and anomaly_restrictor_db_v then
 			anomaly_restrictor_db_count = anomaly_restrictor_db_count + 1
 
