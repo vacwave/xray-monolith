@@ -11,6 +11,13 @@ Tools:
 - `game_input(action, mode="tap", frames=60)`: press a game action (`kINVENTORY`,
   `kFWD`, ... through the player's key bindings; or a raw `DIK_W` key). Modes `tap`,
   `hold` (for `frames` frames, blocks until they have run), `press`, `release`.
+- `wait_frames(frames=60, timeout=None)`: block until the main thread has run `frames`
+  more frames (polls `status` only).
+- `save_game(name)`: console `save <name>`, then waits for
+  `<ANOMALY_DIR>\appdata\savedgames\<name>.scop` to be written.
+- `load_game(name)`: load a save from a level (`load <name>`) or from the main menu
+  (`start server(<name>/single/alife/load)`), wait for the level, report the actor position.
+- `list_saves(limit=20)`: saved games, newest first (file system only).
 - `crash_report()`: why the game died: the last crash in the newest log (`[error]` lines, Lua
   error and traceback, C++ stack, minidump); works when the game is not running.
 - `launch_game(clear_shader_cache=False, test_map=False, minimize=True)`: start the
