@@ -46,6 +46,8 @@ class World:
             return f"+{self.name if self.level else ''}".encode()
         if arg == game.MENU_READY:
             return b"+true"
+        if arg == game.UNPAUSE:
+            return b"+"
         if arg == game.ACTOR_POS:
             return b"+vector{x = 1, y = 2, z = 3}"
         if arg == "return mcp_helper.start_test_map()":

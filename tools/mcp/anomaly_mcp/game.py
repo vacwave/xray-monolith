@@ -24,6 +24,7 @@ EVAL_TIMEOUT = 10.0
 LEVEL_NAME = "return (db.actor ~= nil and device().precache_frame == 0) and level.name() or ''"
 MENU_READY = "return _G.main_menu ~= nil and _G.main_menu.get_main_menu() ~= nil"
 ACTOR_POS = "return db.actor:position()"
+UNPAUSE = "device():pause(false)"
 
 
 def _client() -> EngineClient:
@@ -77,7 +78,11 @@ def wait_for_level(client: EngineClient, frame0: int, target: str | None = None)
         name = _poll_eval(client, LEVEL_NAME)
         return name if name and (target is None or name == target) else None
 
-    return wait_until(ready, LEVEL_WAIT)
+    name = wait_until(ready, LEVEL_WAIT)
+    if name:
+        # a level change leaves the device paused; nobody unpauses it in an unattended run
+        client.request("eval", UNPAUSE, timeout=EVAL_TIMEOUT)
+    return name
 
 
 def start_test_map() -> str:
