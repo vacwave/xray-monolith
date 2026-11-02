@@ -20,7 +20,8 @@ LEVEL_WAIT = 120.0
 SHOT_WAIT = 5.0
 EVAL_TIMEOUT = 10.0
 
-LEVEL_NAME = "return db.actor ~= nil and level.name() or ''"
+# precache_frame > 0 while the loading screen is still up (the actor already exists then)
+LEVEL_NAME = "return (db.actor ~= nil and device().precache_frame == 0) and level.name() or ''"
 MENU_READY = "return _G.main_menu ~= nil and _G.main_menu.get_main_menu() ~= nil"
 ACTOR_POS = "return db.actor:position()"
 
