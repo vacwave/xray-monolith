@@ -178,6 +178,113 @@ function screenshot(relpath, w, h)
 	end)
 end
 
+-- Actor state and item spawning (main thread, through eval).
+local INV_MAX_LINES = 100 -- inventory sections listed by actor_state
+local GIVE_MAX = 50
+
+local function num(v)
+	return v and string.format("%.2f", v) or "?"
+end
+
+-- weapons, outfits and helmets wear too, though only some sections set use_condition
+local function has_cond(item, sec)
+	return IsWeapon(item) or IsOutfit(item) or IsHeadgear(item) or utils_item.is_degradable(item, sec)
+end
+
+local function item_desc(item)
+	if not item then return "none" end
+	local sec = item:section()
+	local ok, cond = pcall(function() return has_cond(item, sec) and item:condition() end)
+	if ok and cond then return string.format("%s (cond %.2f)", sec, cond) end
+	return sec
+end
+
+-- One multi-line text: level, position, vitals, money, equipment, inventory grouped by section.
+function actor_state()
+	return try(function()
+		local a = db.actor
+		if not a then return "error: no actor (not in a level)" end
+		local p, out = a:position(), {}
+		out[#out + 1] = string.format("level %s  pos %.2f %.2f %.2f  yaw %.1f", level.name(), p.x, p.y, p.z, math.deg(-device().cam_dir:getH()) % 360)
+		out[#out + 1] = string.format("alive %s  health %s  psy_health %s  radiation %s  bleeding %s",
+			tostring(a:alive()), num(a.health), num(a.psy_health), num(a.radiation), num(a.bleeding))
+		local function opt(f)
+			local ok, v = pcall(f)
+			return ok and v or nil
+		end
+		out[#out + 1] = string.format("satiety %s  thirst %s  sleep_deprivation %s  money %d  weight %s",
+			num(opt(function() return a:cast_Actor():conditions():GetSatiety() end)),
+			num(opt(function() return actor_status_thirst.get_water_deprivation() end)),
+			num(opt(function() return actor_status_sleep.get_sleep_deprivation() end)),
+			a:money(), num(opt(function() return a:get_total_weight() end)))
+		local slot = a:active_slot()
+		local active = a:active_item()
+		local mag = active and opt(function() return IsWeapon(active) and active:get_ammo_in_magazine() end)
+		out[#out + 1] = string.format("active slot %d: %s%s", slot, item_desc(active), mag and (" mag " .. mag) or "")
+		out[#out + 1] = string.format("outfit %s  helmet %s", item_desc(a:item_in_slot(7)), item_desc(a:item_in_slot(12)))
+		-- inventory grouped by section
+		local groups, order = {}, {}
+		a:iterate_inventory(function(_, item)
+			local sec = item:section()
+			local g = groups[sec]
+			if not g then
+				g = {n = 0}
+				groups[sec] = g
+				order[#order + 1] = sec
+			end
+			g.n = g.n + 1
+			if IsAmmo(item) then
+				g.rounds = (g.rounds or 0) + item:ammo_get_count()
+			elseif IsItem("multiuse", sec) then
+				g.uses = (g.uses or 0) + (item:get_remaining_uses() or 0)
+			elseif has_cond(item, sec) then
+				local c = item:condition()
+				g.lo = math.min(g.lo or c, c)
+				g.hi = math.max(g.hi or c, c)
+			end
+		end, a)
+		table.sort(order)
+		out[#out + 1] = string.format("inventory: %d sections", #order)
+		for i, sec in ipairs(order) do
+			if i > INV_MAX_LINES then
+				out[#out + 1] = string.format("  ...(+%d more sections)", #order - INV_MAX_LINES)
+				break
+			end
+			local g, extra = groups[sec], ""
+			if g.rounds then
+				extra = string.format(" (%d rounds)", g.rounds)
+			elseif g.uses then
+				extra = string.format(" (%d uses)", g.uses)
+			elseif g.lo then
+				extra = g.lo == g.hi and string.format(" (cond %.2f)", g.lo) or string.format(" (cond %.2f-%.2f)", g.lo, g.hi)
+			end
+			out[#out + 1] = string.format("  %s x%d%s", sec, g.n, extra)
+		end
+		return table.concat(out, "\n")
+	end)
+end
+
+-- Spawn `count` items of `section` into the actor's inventory (ammo: `count` full boxes).
+-- The server objects exist at once; the items show up in the inventory a few frames later.
+function give_item(section, count)
+	return try(function()
+		if not db.actor then return "error: no actor (not in a level)" end
+		section = tostring(section)
+		if not ini_sys:section_exist(section) then return "error: unknown section " .. section end
+		if not ini_sys:line_exist(section, "inv_weight") then return "error: " .. section .. " is not an inventory item" end
+		count = math.floor(tonumber(count) or 1)
+		if count < 1 or count > GIVE_MAX then return string.format("error: count must be 1..%d", GIVE_MAX) end
+		local ids = {}
+		for _ = 1, count do
+			local se = alife_create_item(section, db.actor)
+			if not se then break end
+			ids[#ids + 1] = se.id
+		end
+		if #ids == 0 then return "error: alife_create_item failed for " .. section .. " (see log)" end
+		return string.format("created %dx %s (ids %s)", #ids, section, table.concat(ids, ", "))
+	end)
+end
+
 -- Game input. level.press_action/hold_action/release_action take a DIK key code, so an action
 -- name ("kINVENTORY", "INVENTORY") goes through its current binding; "DIK_W" style key names and
 -- raw key codes are passed as they are.

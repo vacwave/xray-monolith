@@ -24,6 +24,10 @@ Tools:
   (x, z); with another `level` it changes level first.
 - `screenshot(width=1280, height=720)`: PNG in `<ANOMALY_DIR>\appdata\screenshots\`,
   returned as path text plus the image.
+- `actor_state()`: the player's state as text: level, position, yaw, health and other
+  vitals, money, active item, outfit/helmet, inventory grouped by section.
+- `give_item(section, count=1)`: spawn `count` (1..50) items of `section` into the
+  player's inventory (ammo: full boxes); returns the new object ids.
 
 The multi-step tools call the Lua helpers in `gamedata/scripts/mcp_helper.script`
 (through `eval`), so the matching db0 must be deployed.

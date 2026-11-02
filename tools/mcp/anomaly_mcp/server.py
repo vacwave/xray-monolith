@@ -272,6 +272,37 @@ def screenshot(width: int = 1280, height: int = 720) -> list[str | Image]:
 
 
 @mcp.tool()
+def actor_state() -> str:
+    """The player's state in one call (needs a loaded level).
+
+    Multi-line text: level name, position x y z and camera yaw (degrees, 0 = +z,
+    90 = +x, as db.actor:set_actor_direction uses it); alive,
+    health, psy_health, radiation, bleeding (0..1); satiety, thirst and
+    sleep_deprivation (0..1, higher = worse for the last two), money, carried weight;
+    the active slot and item (with condition and rounds in the magazine), outfit
+    and helmet; then the inventory grouped by section ("section xN" plus total
+    rounds for ammo, total uses for multi-use items, condition range for degradable
+    items), at most 100 sections. Errors come back as text starting with "error:"
+    (e.g. "error: no actor (not in a level)" at the main menu).
+    """
+    return _engine_call(game.actor_state)
+
+
+@mcp.tool()
+def give_item(section: str, count: int = 1) -> str:
+    """Spawn `count` (1..50) items of item section `section` into the player's inventory.
+
+    `section` is an item section from the game configs, e.g. "bandage", "medkit",
+    "wpn_ak74", "ammo_5.45x39_fmj" (ammo: `count` full boxes). Returns
+    "created Nx <section> (ids ...)" with the new server object ids; the items show up
+    in the inventory a few frames later (check with actor_state). Errors come back as
+    text starting with "error:": unknown section, not an inventory item, bad count, no
+    actor.
+    """
+    return _engine_call(game.give_item, section, count)
+
+
+@mcp.tool()
 def kill_game() -> str:
     """Stop the game: ask it to quit via the console, force-kill after 10 s. Returns a report."""
     try:

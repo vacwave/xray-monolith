@@ -195,3 +195,19 @@ def screenshot(width: int, height: int) -> tuple[str, Path | None]:
     image.save(png)
     dds.unlink()
     return f"{png} ({image.width}x{image.height}){note}", png
+
+
+GIVE_MAX = 50  # mcp_helper.give_item refuses more
+
+
+def actor_state() -> str:
+    """The player's state as text, from mcp_helper.actor_state."""
+    return _client().request("eval", "return mcp_helper.actor_state()", timeout=EVAL_TIMEOUT)
+
+
+def give_item(section: str, count: int = 1) -> str:
+    """Spawn `count` items of `section` into the actor's inventory via mcp_helper.give_item."""
+    count = int(count)
+    if not 1 <= count <= GIVE_MAX:
+        return f"error: count must be 1..{GIVE_MAX}"
+    return _client().request("eval", f"return mcp_helper.give_item({_lua_str(section)}, {count})", timeout=EVAL_TIMEOUT)
