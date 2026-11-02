@@ -256,6 +256,52 @@ def game_input(action: str, mode: str = "tap", frames: int = 60) -> str:
 
 
 @mcp.tool()
+def wait_frames(frames: int = 60, timeout: float | None = None) -> str:
+    """Block until the game's main thread has run `frames` more frames (e.g. to let physics, AI or
+    a script settle after an action).
+
+    Only polls game_status, so it never queues work on the main thread. `timeout` defaults to
+    frames / 10 + 2 seconds. Returns "waited <n> frames in <t> s", or, if the counter did not
+    get there in time (game paused or loading a level), how many frames it did run.
+    """
+    return _engine_call(game.wait_frames, frames, timeout)
+
+
+@mcp.tool()
+def save_game(name: str) -> str:
+    r"""Save the current game as <ANOMALY_DIR>\appdata\savedgames\<name>.scop (console "save <name>").
+
+    Needs a loaded level with a living actor. `name` must not contain / \ : * ? " < > | ^ ( ) [ ] %
+    (an existing save of that name is overwritten). Blocks until the file is written (up to 10 s).
+    Returns "Saved <path> (<size> bytes)." plus the console output, or a text starting with
+    "error:" (main menu, dead actor, invalid name, file not written).
+    """
+    return _engine_call(game.save_game, name)
+
+
+@mcp.tool()
+def load_game(name: str) -> str:
+    """Load the saved game `name` (as listed by list_saves, without .scop), from a level or the main menu.
+
+    The current game is dropped without saving. Blocks until the level is loaded and the actor
+    exists (up to 120 s; the game is unpaused afterwards). Returns "Loaded <name>: level <level>,
+    actor at <position>." plus the console output, or a text starting with "error:" (no such save,
+    version mismatch or corrupted save, load did not finish).
+    """
+    return _engine_call(game.load_game, name)
+
+
+@mcp.tool()
+def list_saves(limit: int = 20) -> str:
+    r"""List saved games in <ANOMALY_DIR>\appdata\savedgames, newest first (works with the game closed).
+
+    One line per save: "<name>  <YYYY-MM-DD HH:MM:SS>  <size> KiB" (modification time, .scop size),
+    at most `limit` lines, after a header with the count and folder.
+    """
+    return game.list_saves(limit)
+
+
+@mcp.tool()
 def screenshot(width: int = 1280, height: int = 720) -> list[str | Image]:
     r"""Take a screenshot of the game window (main menu or level) and return it.
 
@@ -269,6 +315,37 @@ def screenshot(width: int = 1280, height: int = 720) -> list[str | Image]:
         return [result]
     text, png = result
     return [text, Image(path=png)] if png else [text]
+
+
+@mcp.tool()
+def actor_state() -> str:
+    """The player's state in one call (needs a loaded level).
+
+    Multi-line text: level name, position x y z and camera yaw (degrees, 0 = +z,
+    90 = +x, as db.actor:set_actor_direction uses it); alive,
+    health, psy_health, radiation, bleeding (0..1); satiety, thirst and
+    sleep_deprivation (0..1, higher = worse for the last two), money, carried weight;
+    the active slot and item (with condition and rounds in the magazine), outfit
+    and helmet; then the inventory grouped by section ("section xN" plus total
+    rounds for ammo, total uses for multi-use items, condition range for degradable
+    items), at most 100 sections. Errors come back as text starting with "error:"
+    (e.g. "error: no actor (not in a level)" at the main menu).
+    """
+    return _engine_call(game.actor_state)
+
+
+@mcp.tool()
+def give_item(section: str, count: int = 1) -> str:
+    """Spawn `count` (1..50) items of item section `section` into the player's inventory.
+
+    `section` is an item section from the game configs, e.g. "bandage", "medkit",
+    "wpn_ak74", "ammo_5.45x39_fmj" (ammo: `count` full boxes). Returns
+    "created Nx <section> (ids ...)" with the new server object ids; the items show up
+    in the inventory a few frames later (check with actor_state). Errors come back as
+    text starting with "error:": unknown section, not an inventory item, bad count, no
+    actor.
+    """
+    return _engine_call(game.give_item, section, count)
 
 
 @mcp.tool()

@@ -141,11 +141,137 @@ def game_input(action: str, mode: str = "tap", frames: int = 60) -> str:
     if result.startswith("error") or mode != "hold":
         return result
     # the hold is released on the actor update `frames` frames later; wait for them to pass
-    target = frame0 + frames + 1
-    done = wait_until(lambda: client.status().get("frame", 0) >= target, frames / MIN_FPS + 2, HOLD_POLL)
-    if done is None:
+    if not wait_for_frame(client, frame0 + frames + 1, frames / MIN_FPS + 2):
         return f"{result}\nheld, but the game did not run {frames} frames in time (paused?); the key is released on the next actor update"
     return f"{result}\nheld for {frames} frames"
+
+
+def wait_for_frame(client: EngineClient, target: int, timeout: float) -> bool:
+    """Poll status (no main-thread request) until its frame counter reaches `target`; False on timeout."""
+    return wait_until(lambda: client.status().get("frame", 0) >= target, timeout, HOLD_POLL) is not None
+
+
+def wait_frames(frames: int = 60, timeout: float | None = None) -> str:
+    frames = max(1, int(frames))
+    timeout = frames / MIN_FPS + 2 if timeout is None else float(timeout)
+    client = _client()
+    frame0 = client.status().get("frame", 0)
+    start = time.monotonic()
+    if wait_for_frame(client, frame0 + frames, timeout):
+        return f"waited {frames} frames in {time.monotonic() - start:.2f} s"
+    ran = client.status().get("frame", 0) - frame0
+    return f"the game ran only {ran} of {frames} frames in {timeout:g} s (paused or loading?)"
+
+
+SAVE_EXT = ".scop"
+SAVE_WAIT = 10.0
+BAD_SAVE_CHARS = '/\\:*?"<>|^()[]%'  # valid_saved_game_name() in console_commands.cpp
+# console lines (from CCC_ALifeSave / CCC_ALifeLoadFrom) that mean the command did nothing
+SAVE_LOAD_ERRORS = ("! Cannot", "! Save failed", "! ALife", "! Specify", "cannot make saved game", "for single-mode only")
+PRE_LOAD = "_G.mcp_pre_load_actor = db.actor"
+# the old level's actor is gone (rawequal: no metamethods on a possibly destroyed object)
+LOAD_STARTED = "return db.actor == nil or not rawequal(db.actor, _G.mcp_pre_load_actor)"
+POST_LOAD = "_G.mcp_pre_load_actor = nil"
+
+
+def saves_dir() -> Path:
+    return config.anomaly_dir() / "appdata" / "savedgames"
+
+
+def _save_name_error(name: str) -> str | None:
+    if not name.strip():
+        return "error: empty save name"
+    if name != name.strip() or any(c in BAD_SAVE_CHARS or ord(c) < 32 for c in name):
+        return f"error: invalid save name {name!r} (no leading/trailing spaces, control characters or any of {BAD_SAVE_CHARS})"
+    return None
+
+
+def _console_error(output: str) -> bool:
+    return any(line.lstrip().startswith(SAVE_LOAD_ERRORS) for line in output.splitlines())
+
+
+def save_game(name: str) -> str:
+    if err := _save_name_error(name):
+        return err
+    client = _client()
+    if not client.status().get("level"):
+        return "error: no level loaded (main menu); nothing to save"
+    path = saves_dir() / f"{name}{SAVE_EXT}"
+    before = path.stat().st_mtime_ns if path.is_file() else None
+    output = client.request("console", f"save {name}", timeout=EVAL_TIMEOUT)
+    if _console_error(output):
+        return f"error: save {name} failed:\n{output}"
+    last = {}
+
+    def written():
+        # the engine writes the file on the next frame; wait for a new mtime and a size that stopped changing
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        if before is not None and st.st_mtime_ns <= before:
+            return None
+        done = st.st_size > 0 and last.get("size") == st.st_size
+        last["size"] = st.st_size
+        return st if done else None
+
+    st = wait_until(written, SAVE_WAIT, 0.2)
+    if st is None:
+        return f"error: no new {path} after {SAVE_WAIT:.0f} s (game paused?)\nconsole: {output or '(no output)'}"
+    return f"Saved {path} ({st.st_size} bytes).\nconsole: {output or '(no output)'}"
+
+
+def load_game(name: str) -> str:
+    if err := _save_name_error(name):
+        return err
+    path = saves_dir() / f"{name}{SAVE_EXT}"
+    if not path.is_file():
+        return f"error: no saved game {path}"
+    client = _client()
+    status = client.status()
+    valid = client.request("eval", f"return valid_saved_game({_lua_str(name)})", timeout=EVAL_TIMEOUT)
+    if valid != "true":
+        return f"error: {path} is not a loadable saved game (version mismatch or corrupted)"
+    frame0 = status.get("frame", 0)
+    if status.get("level"):
+        client.request("eval", PRE_LOAD, timeout=EVAL_TIMEOUT)
+        cmds = [f"load {name}"]
+    else:
+        # no ALife at the main menu: start a server from the save, like ui_load_dialog.script
+        cmds = ["disconnect", f"start server({name}/single/alife/load) client(localhost)"]
+    outputs = []
+    for cmd in cmds:
+        try:
+            outputs.append(client.request("console", cmd, timeout=EVAL_TIMEOUT))
+        except EngineTimeout:
+            outputs.append("")  # the load can swallow the reply; wait and see
+    output = "\n".join(o for o in outputs if o)
+    if _console_error(output):
+        return f"error: load {name} failed:\n{output}"
+    if status.get("level"):
+        started = wait_until(lambda: _poll_eval(client, LOAD_STARTED) == "true", LEVEL_WAIT)
+        client.request("eval", POST_LOAD, timeout=LEVEL_WAIT)
+        if started is None:
+            return f"error: load {name} did not start within {LEVEL_WAIT:.0f} s\nconsole: {output or '(no output)'}"
+    level = wait_for_level(client, frame0)
+    if level is None:
+        return f"error: load {name} did not finish within {LEVEL_WAIT:.0f} s; check game_status and log_tail"
+    pos = client.request("eval", ACTOR_POS, timeout=EVAL_TIMEOUT)
+    return f"Loaded {name}: level {level}, actor at {pos}.\nconsole: {output or '(no output)'}"
+
+
+def list_saves(limit: int = 20) -> str:
+    folder = saves_dir()
+    files = sorted(folder.glob(f"*{SAVE_EXT}"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not files:
+        return f"No saved games in {folder}."
+    shown = files[: max(1, int(limit))]
+    lines = [f"{len(shown)} of {len(files)} saved games in {folder}, newest first:"]
+    for p in shown:
+        st = p.stat()
+        when = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        lines.append(f"{p.stem}  {when}  {st.st_size / 1024:.0f} KiB")
+    return "\n".join(lines)
 
 
 def screenshot_dir() -> Path:
@@ -195,3 +321,19 @@ def screenshot(width: int, height: int) -> tuple[str, Path | None]:
     image.save(png)
     dds.unlink()
     return f"{png} ({image.width}x{image.height}){note}", png
+
+
+GIVE_MAX = 50  # mcp_helper.give_item refuses more
+
+
+def actor_state() -> str:
+    """The player's state as text, from mcp_helper.actor_state."""
+    return _client().request("eval", "return mcp_helper.actor_state()", timeout=EVAL_TIMEOUT)
+
+
+def give_item(section: str, count: int = 1) -> str:
+    """Spawn `count` items of `section` into the actor's inventory via mcp_helper.give_item."""
+    count = int(count)
+    if not 1 <= count <= GIVE_MAX:
+        return f"error: count must be 1..{GIVE_MAX}"
+    return _client().request("eval", f"return mcp_helper.give_item({_lua_str(section)}, {count})", timeout=EVAL_TIMEOUT)

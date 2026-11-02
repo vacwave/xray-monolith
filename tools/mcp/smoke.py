@@ -1,6 +1,7 @@
-"""Smoke test against the live game: uv run python smoke.py [--test-map] (game must be running).
+"""Smoke test against the live game: uv run python smoke.py [--test-map] [--saves] (game must be running).
 
 --test-map also loads the test map, teleports and takes a screenshot.
+--saves saves as mcp_smoke, lists the saves, loads it back and waits 30 frames.
 """
 
 import re
@@ -41,6 +42,18 @@ def test_map_checks() -> list[bool]:
     return results
 
 
+def save_checks() -> list[bool]:
+    value = server.save_game("mcp_smoke")
+    results = [check('save_game("mcp_smoke")', value, value.startswith("Saved"))]
+    value = server.list_saves(5)
+    results.append(check("list_saves(5)", value, "\nmcp_smoke  " in value))
+    value = server.load_game("mcp_smoke")
+    results.append(check('load_game("mcp_smoke")', value, value.startswith("Loaded mcp_smoke")))
+    value = server.wait_frames(30)
+    results.append(check("wait_frames(30)", value, value.startswith("waited 30 frames")))
+    return results
+
+
 def main() -> int:
     status = server.game_status()
     results = [
@@ -56,6 +69,8 @@ def main() -> int:
     results.append(check("log_tail(20)", value, bool(value) and not value.startswith("[")))
     if "--test-map" in sys.argv[1:]:
         results += test_map_checks()
+    if "--saves" in sys.argv[1:]:
+        results += save_checks()
     failed = results.count(False)
     print(f"=== {len(results) - failed}/{len(results)} passed")
     return 1 if failed else 0

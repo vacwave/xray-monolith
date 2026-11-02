@@ -11,6 +11,13 @@ Tools:
 - `game_input(action, mode="tap", frames=60)`: press a game action (`kINVENTORY`,
   `kFWD`, ... through the player's key bindings; or a raw `DIK_W` key). Modes `tap`,
   `hold` (for `frames` frames, blocks until they have run), `press`, `release`.
+- `wait_frames(frames=60, timeout=None)`: block until the main thread has run `frames`
+  more frames (polls `status` only).
+- `save_game(name)`: console `save <name>`, then waits for
+  `<ANOMALY_DIR>\appdata\savedgames\<name>.scop` to be written.
+- `load_game(name)`: load a save from a level (`load <name>`) or from the main menu
+  (`start server(<name>/single/alife/load)`), wait for the level, report the actor position.
+- `list_saves(limit=20)`: saved games, newest first (file system only).
 - `crash_report()`: why the game died: the last crash in the newest log (`[error]` lines, Lua
   error and traceback, C++ stack, minidump); works when the game is not running.
 - `launch_game(clear_shader_cache=False, test_map=False, minimize=True)`: start the
@@ -24,6 +31,10 @@ Tools:
   (x, z); with another `level` it changes level first.
 - `screenshot(width=1280, height=720)`: PNG in `<ANOMALY_DIR>\appdata\screenshots\`,
   returned as path text plus the image.
+- `actor_state()`: the player's state as text: level, position, yaw, health and other
+  vitals, money, active item, outfit/helmet, inventory grouped by section.
+- `give_item(section, count=1)`: spawn `count` (1..50) items of `section` into the
+  player's inventory (ammo: full boxes); returns the new object ids.
 
 The multi-step tools call the Lua helpers in `gamedata/scripts/mcp_helper.script`
 (through `eval`), so the matching db0 must be deployed.
