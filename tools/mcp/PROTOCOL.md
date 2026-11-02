@@ -51,8 +51,13 @@ truncated to 1024 bytes in the ring buffer. The engine log is not guaranteed
 UTF-8; the bridge decodes with `errors="replace"`.
 
 ### `console` reply
-`+` with empty text once the command has executed on the main thread.
-Console output is not captured in v1; read it with `log`.
+`+` followed by the log lines emitted while the command ran on the main thread,
+joined with `\n` (no trailing newline; empty text if nothing was logged). The
+engine captures them through its log callback, which runs on the logger thread,
+so after `Console->Execute` it flushes the log (`xrLogger::FlushLog`, bounded
+wait of about 10 ms, 2 s at most) before replying. Lines logged by other
+threads in that window are included too. Capture is capped at 64 KiB; lines are
+truncated to 1024 bytes like in the ring buffer.
 
 ### `eval` reply
 The engine calls the Lua function `mcp_helper.eval(code)` (from

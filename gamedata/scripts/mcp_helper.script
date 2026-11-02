@@ -177,3 +177,72 @@ function screenshot(relpath, w, h)
 		return "ok"
 	end)
 end
+
+-- Game input. level.press_action/hold_action/release_action take a DIK key code, so an action
+-- name ("kINVENTORY", "INVENTORY") goes through its current binding; "DIK_W" style key names and
+-- raw key codes are passed as they are.
+local holds = {} -- dik -> frames left to hold; released by on_actor_update
+
+local function to_dik(name)
+	if type(name) == "number" then return name end
+	local s = tostring(name)
+	if s:sub(1, 4) == "DIK_" then
+		local ok, dik = pcall(function() return DIK_keys[s] end)
+		if ok and type(dik) == "number" then return dik end
+		return nil, "unknown key " .. s
+	end
+	for _, candidate in ipairs({s, "k" .. s, "k" .. s:upper()}) do
+		local ok, action = pcall(function() return key_bindings[candidate] end)
+		if ok and type(action) == "number" then
+			local dik = bind_to_dik(action)
+			if not dik or dik == 0 then return nil, "action " .. candidate .. " has no key bound" end
+			return dik
+		end
+	end
+	return nil, "unknown action " .. s .. " (key_bindings name like kINVENTORY, or DIK_ key name)"
+end
+
+local function on_actor_update()
+	for dik, left in pairs(holds) do
+		level.hold_action(dik)
+		if left <= 1 then
+			holds[dik] = nil
+			level.release_action(dik)
+		else
+			holds[dik] = left - 1
+		end
+	end
+end
+
+-- Called by axr_main on game start (main thread), like every script that defines on_game_start.
+function on_game_start()
+	RegisterScriptCallback("actor_on_update", on_actor_update)
+end
+
+-- mode: "press", "release", "tap" (press now, hold one actor update, release) or
+-- "hold" (press now, hold for `frames` actor updates, release). Returns "<mode> <name> dik=<n>".
+function input(name, mode, frames)
+	return try(function()
+		if not level.present() then return "error: no level loaded" end
+		local dik, err = to_dik(name)
+		if not dik then return "error: " .. err end
+		mode = mode or "tap"
+		if mode == "press" then
+			level.press_action(dik)
+		elseif mode == "release" then
+			holds[dik] = nil
+			level.release_action(dik)
+		elseif mode == "tap" or mode == "hold" then
+			level.press_action(dik)
+			local n = mode == "tap" and 1 or math.max(1, math.floor(tonumber(frames) or 60))
+			if db.actor then
+				holds[dik] = n
+			else
+				level.release_action(dik) -- no actor updates to release it later
+			end
+		else
+			return "error: unknown mode " .. tostring(mode) .. " (press, release, tap, hold)"
+		end
+		return string.format("%s %s dik=%d", mode, tostring(name), dik)
+	end)
+end

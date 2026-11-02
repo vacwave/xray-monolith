@@ -123,6 +123,31 @@ def teleport(x: float, y: float, z: float, level: str | None = None) -> str:
     return "\n".join(lines)
 
 
+INPUT_MODES = ("tap", "hold", "press", "release")
+HOLD_POLL = 0.1
+MIN_FPS = 10.0  # worst case assumed when waiting for a hold to run its frames
+
+
+def game_input(action: str, mode: str = "tap", frames: int = 60) -> str:
+    """Press a game action (or DIK key) via mcp_helper.input; a hold waits until its frames have run."""
+    if mode not in INPUT_MODES:
+        return f"error: unknown mode {mode!r} (one of {', '.join(INPUT_MODES)})"
+    frames = max(1, int(frames))
+    client = _client()
+    frame0 = client.status().get("frame", 0)
+    result = client.request(
+        "eval", f"return mcp_helper.input({_lua_str(action)}, {_lua_str(mode)}, {frames})", timeout=EVAL_TIMEOUT
+    )
+    if result.startswith("error") or mode != "hold":
+        return result
+    # the hold is released on the actor update `frames` frames later; wait for them to pass
+    target = frame0 + frames + 1
+    done = wait_until(lambda: client.status().get("frame", 0) >= target, frames / MIN_FPS + 2, HOLD_POLL)
+    if done is None:
+        return f"{result}\nheld, but the game did not run {frames} frames in time (paused?); the key is released on the next actor update"
+    return f"{result}\nheld for {frames} frames"
+
+
 def screenshot_dir() -> Path:
     return config.anomaly_dir() / "appdata" / "screenshots"
 

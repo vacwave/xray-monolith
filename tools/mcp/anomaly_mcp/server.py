@@ -93,15 +93,16 @@ def lua_eval(code: str, timeout: float = 10) -> str:
 
 @mcp.tool()
 def console(cmd: str, timeout: float = 10) -> str:
-    """Execute an engine console command (e.g. "cfg_save", "g_god 1") on the main thread.
+    """Execute an engine console command (e.g. "cfg_save", "g_god 1", "help") on the main thread.
 
-    Returns "ok" once it has executed, or an error text. Console output is not
-    returned; read it with log_tail. Debug-only commands work because the game
-    is launched with -dbg.
+    Returns what the command printed to the log (e.g. the current value for a
+    variable name without an argument, "! Unknown command: x"), or "ok (no output)".
+    Lines logged by other threads during the call may be mixed in. Errors come back
+    as text starting with "Error:". Debug-only commands work because the game is
+    launched with -dbg.
     """
     try:
-        _client().request("console", cmd, timeout=timeout)
-        return "ok"
+        return _client().request("console", cmd, timeout=timeout) or "ok (no output)"
     except EngineError as e:
         return f"Error: {e}"
     except EngineNotRunning:
@@ -231,6 +232,27 @@ def teleport(x: float, y: float, z: float, level: str | None = None) -> str:
     levels that can be jumped to; the test map fake_start is not one of them).
     """
     return _engine_call(game.teleport, x, y, z, level)
+
+
+@mcp.tool()
+def game_input(action: str, mode: str = "tap", frames: int = 60) -> str:
+    """Send a key/action to the game as if the player pressed it (needs a loaded level).
+
+    `action` is a key_bindings name, with or without the k prefix: movement kFWD,
+    kBACK, kL_STRAFE, kR_STRAFE, kJUMP, kCROUCH, kACCEL (sprint); kUSE (interact /
+    pick up), kWPN_FIRE, kWPN_ZOOM, kWPN_RELOAD, kWPN_NEXT, kWPN_1..kWPN_6, kDROP;
+    kTORCH, kNIGHT_VISION, kDETECTOR; UI kINVENTORY, kACTIVE_JOBS (PDA), kQUIT (Esc:
+    closes the top dialog or opens the main menu), kPAUSE, kQUICK_SAVE, kQUICK_LOAD,
+    kCONSOLE, kSCREENSHOT. It goes through the player's current key binding, so an
+    unbound action is an error. A raw key works as "DIK_W", "DIK_ESCAPE", ...
+    `mode`: "tap" (default: press, released on the next actor update, like a quick
+    key tap; use for toggles and UI), "hold" (keep the key down for `frames` frames,
+    e.g. kFWD for 60 frames walks about a second; blocks until the frames have run),
+    "press" / "release" (raw, for your own timing; a pressed key stays down until
+    released). Returns "<mode> <action> dik=<key code>" or an error text starting
+    with "error:". Note: with the game paused nothing is processed until it is unpaused.
+    """
+    return _engine_call(game.game_input, action, mode, frames)
 
 
 @mcp.tool()
