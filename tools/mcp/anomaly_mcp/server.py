@@ -8,7 +8,7 @@ from collections import deque
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import config, game, process
+from . import config, crashlog, game, process
 from .engine_client import EngineClient, EngineError, EngineNotRunning, EngineTimeout
 
 mcp = MCPServer(
@@ -136,9 +136,25 @@ def log_tail(n: int = 50) -> str:
 
 
 @mcp.tool()
-def launch_game(clear_shader_cache: bool = False, test_map: bool = False, minimize: bool = True) -> str:
-    r"""Start the game (<ANOMALY_DIR>\bin\<ANOMALY_EXE> -smap2048 -dbg) and wait for its endpoint.
+def crash_report() -> str:
+    """Explain why the game died: the last crash recorded in the newest game log.
 
+    First line: whether the game process is running and the log file path. Then,
+    if the log has a FATAL ERROR: its [error] lines (expression, function, file,
+    line, description), the Lua error message, the last Lua traceback, up to 10
+    lines of the C++ stack and the minidump line if any. With no crash in the log
+    it says so and, when the game is not running, shows the last 10 log lines (a
+    silent exit). Reads the file, so it works when the game is dead.
+    """
+    return crashlog.crash_report()
+
+
+@mcp.tool()
+def launch_game(clear_shader_cache: bool = False, test_map: bool = False, minimize: bool = True) -> str:
+    r"""Start the game (<ANOMALY_DIR>\bin\<ANOMALY_EXE> -smap2048 -dbg -silent_error_mode) and wait for its endpoint.
+
+    -silent_error_mode makes the engine write crashes to the log without any dialog, so an
+    unattended run never blocks on a message box; see crash_report.
     Refuses if it is already running. clear_shader_cache=True deletes
     appdata\shaders_cache first (needed after rendering/shader changes).
     Blocks until the endpoint answers status (about 90 s at most), then runs

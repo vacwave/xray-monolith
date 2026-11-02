@@ -12,7 +12,7 @@ import psutil
 from . import config, game
 from .engine_client import EngineClient, EngineError, EngineNotRunning, EngineTimeout
 
-LAUNCH_ARGS = ["-smap2048", "-dbg"]  # same as build.ps1 -Launch
+LAUNCH_ARGS = ["-smap2048", "-dbg", "-silent_error_mode"]  # build.ps1 -Launch args + crashes go to the log, no dialog
 LAUNCH_WAIT = 90.0
 LAUNCH_CONSOLE = ["g_always_active on", "keypress_on_start off"]
 WINDOW_TITLE = "S.T.A.L.K.E.R.: Anomaly"

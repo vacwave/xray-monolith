@@ -6,8 +6,10 @@ endpoint; the wire format is in [PROTOCOL.md](PROTOCOL.md).
 
 Tools:
 - `game_status`, `lua_eval`, `console`, `log_tail`, `kill_game`
+- `crash_report()`: why the game died: the last crash in the newest log (`[error]` lines, Lua
+  error and traceback, C++ stack, minidump); works when the game is not running.
 - `launch_game(clear_shader_cache=False, test_map=False, minimize=True)`: start the
-  game, set `g_always_active on` and `keypress_on_start off`; with `test_map` also
+  game with `-smap2048 -dbg -silent_error_mode` (crashes go to the log, no dialog), set `g_always_active on` and `keypress_on_start off`; with `test_map` also
   load the debug test map; minimizes the window unless `minimize=False`.
 - `game_window(action)`: `minimize`, `restore` or `focus` the game window (it keeps
   running and rendering while minimized).
