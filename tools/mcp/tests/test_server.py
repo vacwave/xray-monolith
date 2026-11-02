@@ -9,6 +9,7 @@ from anomaly_mcp import process, server
 @pytest.fixture(autouse=True)
 def no_game_process(monkeypatch):
     monkeypatch.setattr(process, "find_game", lambda: None)
+    monkeypatch.setattr(process, "find_window", lambda pid: None)  # never touch real windows
 
 
 def test_game_status_ok(engine):
@@ -139,7 +140,7 @@ def test_launch_starts_and_waits(engine, tmp_path, monkeypatch):
     monkeypatch.setattr(process.subprocess, "Popen", FakePopen)
     report = server.launch_game(clear_shader_cache=True)
     assert not cache.exists()
-    assert started["args"] == [str(tmp_path / "bin" / "Fake.exe"), "-smap2048", "-dbg"]
+    assert started["args"] == [str(tmp_path / "bin" / "Fake.exe"), "-smap2048", "-dbg", "-silent_error_mode"]
     assert started["cwd"] == tmp_path / "bin"
     assert started["kwargs"]["stdout"] == process.subprocess.DEVNULL
     assert "Endpoint answered" in report

@@ -90,3 +90,90 @@ function eval(code)
 	if ok then return res end
 	return "-" .. tostring(res)
 end
+
+-- Helpers the bridge calls through eval (e.g. "return mcp_helper.teleport(x, y, z)").
+-- Each returns a string and never throws: failures come back as "error: <message>".
+
+local INVALID_LVID = 4294967295 -- u32(-1) from level.vertex_id when no AI node is under the point
+
+local function try(f, ...)
+	local ok, res = pcall(f, ...)
+	if ok then return res end
+	return "error: " .. tostring(res)
+end
+
+-- What F2 in the main menu does: new game on the debug test map (level fake_start).
+function start_test_map()
+	return try(function()
+		exec_console_cmd("keypress_on_start off")
+		local cfg = axr_main.config
+		cfg:w_value("character_creation", "new_game_test", true)
+		cfg:w_value("character_creation", "new_game_difficulty", 1)
+		cfg:w_value("character_creation", "new_game_economy", 1)
+		cfg:w_value("character_creation", "new_game_faction", "stalker")
+		cfg:w_value("character_creation", "new_game_loadout", "device_pda_1")
+		cfg:save()
+		if alife() ~= nil then exec_console_cmd("disconnect") end
+		device():pause(false)
+		exec_console_cmd("start server(all/single/alife/new) client(localhost)")
+		exec_console_cmd("main_menu off")
+		return "started"
+	end)
+end
+
+-- Same-level teleport, snapped to the AI node under (x, z). Returns "x y z level_name".
+function teleport(x, y, z)
+	return try(function()
+		if not db.actor then return "error: no actor (not in a level)" end
+		local lvid = level.vertex_id(vector():set(x, y, z))
+		if lvid == INVALID_LVID then
+			return string.format("error: no AI node near %s,%s,%s on level %s", tostring(x), tostring(y), tostring(z), level.name())
+		end
+		local p = level.vertex_position(lvid)
+		db.actor:set_actor_position(p)
+		return string.format("%.2f %.2f %.2f %s", p.x, p.y, p.z, level.name())
+	end)
+end
+
+-- Cross-level part of a teleport, like _g.JumpToLevel but without the fade animation.
+-- Returns "changing" (the level change is already under way) or error text.
+function jump_to_level(name)
+	return try(function()
+		if not db.actor then return "error: no actor (not in a level)" end
+		if level.name() == name then return "error: already on level " .. name end
+		local sim, gg = alife(), game_graph()
+		local function go(cvertex, gvid)
+			ChangeLevel(cvertex:level_point(), cvertex:level_vertex_id(), gvid, VEC_ZERO, false)
+			return "changing"
+		end
+		-- smart terrains first, like JumpToLevel
+		for _, smart in pairs(db.smart_terrain_by_id) do
+			local cvertex = smart and gg:vertex(smart.m_game_vertex_id)
+			if cvertex and sim:level_name(cvertex:level_id()) == name then
+				return go(cvertex, smart.m_game_vertex_id)
+			end
+		end
+		-- then the first game vertex on that level; collect the known names for the error
+		local known, seen = {}, {}
+		for gvid = 0, 4860 do
+			if not gg:valid_vertex_id(gvid) then break end
+			local cvertex = gg:vertex(gvid)
+			local lvl = sim:level_name(cvertex:level_id())
+			if lvl == name then return go(cvertex, gvid) end
+			if lvl and not seen[lvl] then
+				seen[lvl] = true
+				known[#known + 1] = lvl
+			end
+		end
+		table.sort(known)
+		return "error: unknown level " .. tostring(name) .. "; known levels: " .. table.concat(known, ", ")
+	end)
+end
+
+-- Uncompressed DDS; relpath is resolved against $game_textures$, w/h are clamped to the window.
+function screenshot(relpath, w, h)
+	return try(function()
+		level.take_screenshot(relpath, vector2():set(w, h), 0)
+		return "ok"
+	end)
+end
