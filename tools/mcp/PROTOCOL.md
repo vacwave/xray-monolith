@@ -1,4 +1,4 @@
-# Anomaly MCP engine protocol (v1)
+# Anomaly MCP engine protocol (v0.0x series)
 
 Contract between the engine endpoint (`src/xrGame/mcp_server.cpp`, built with
 `MCP_SERVER`) and the Python bridge (`tools/mcp/`). Both sides implement exactly

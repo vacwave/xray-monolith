@@ -9,6 +9,7 @@ from anomaly_mcp import process, server
 @pytest.fixture(autouse=True)
 def no_game_process(monkeypatch):
     monkeypatch.setattr(process, "find_game", lambda: None)
+    monkeypatch.setattr(process, "find_window", lambda pid: None)  # never touch real windows
 
 
 def test_game_status_ok(engine):

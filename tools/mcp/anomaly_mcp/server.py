@@ -6,9 +6,9 @@ block other tool calls.
 
 from collections import deque
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Image, MCPServer
 
-from . import config, process
+from . import config, game, process
 from .engine_client import EngineClient, EngineError, EngineNotRunning, EngineTimeout
 
 mcp = MCPServer(
@@ -136,18 +136,99 @@ def log_tail(n: int = 50) -> str:
 
 
 @mcp.tool()
-def launch_game(clear_shader_cache: bool = False) -> str:
-    """Start the game (<ANOMALY_DIR>\bin\<ANOMALY_EXE> -smap2048 -dbg) and wait for its endpoint.
+def launch_game(clear_shader_cache: bool = False, test_map: bool = False, minimize: bool = True) -> str:
+    r"""Start the game (<ANOMALY_DIR>\bin\<ANOMALY_EXE> -smap2048 -dbg) and wait for its endpoint.
 
     Refuses if it is already running. clear_shader_cache=True deletes
     appdata\shaders_cache first (needed after rendering/shader changes).
-    Blocks until the endpoint answers status (about 90 s at most) and returns a
-    text report; the game is then at the main menu.
+    Blocks until the endpoint answers status (about 90 s at most), then runs
+    "g_always_active on" (the game keeps running and rendering while unfocused or
+    minimized) and "keypress_on_start off" (no "press any key" after a load).
+    The game is then at the main menu.
+    test_map=True then also does what start_test_map does (up to ~3 more minutes)
+    and reports the level name and actor position.
+    minimize=True (default) minimizes the game window at the end (see game_window), since
+    the bridge usually runs unattended; pass minimize=False when a human needs to watch the screen.
+    Returns a text report.
     """
     try:
-        return process.launch_game(clear_shader_cache)
+        return process.launch_game(clear_shader_cache, test_map, minimize)
     except Exception as e:
         return f"Launch failed: {e}"
+
+
+@mcp.tool()
+def game_window(action: str) -> str:
+    """Minimize, restore or focus the game window. action: "minimize", "restore" or "focus".
+
+    With g_always_active on (set by launch_game) the game keeps running and
+    rendering while minimized, so screenshots still work. "focus" restores the
+    window and asks Windows to bring it to the foreground (Windows may refuse).
+    Returns a short text, also when the game is not running or has no window.
+    """
+    try:
+        return process.game_window(action)
+    except Exception as e:
+        return f"Window action failed: {e}"
+
+
+def _engine_call(fn, *args):
+    """fn(*args), with the engine exceptions turned into the usual error texts."""
+    try:
+        return fn(*args)
+    except EngineNotRunning:
+        return _not_running()
+    except EngineTimeout as e:
+        return (
+            f"Timed out: {e}. The request is still queued and will run when the engine "
+            "gets to it (e.g. after a level load); check game_status."
+        )
+    except EngineError as e:
+        return f"Lua error: {e}"
+
+
+@mcp.tool()
+def start_test_map() -> str:
+    """Load the debug test map (level fake_start), like pressing F2 in the main menu.
+
+    Works from the main menu (waits up to 60 s for it to be ready) or from a level
+    (that game is dropped without saving). Turns off "press any key to continue".
+    Blocks until the level is loaded and the actor exists (up to 120 s), then
+    returns the level name and actor position.
+    """
+    return _engine_call(game.start_test_map)
+
+
+@mcp.tool()
+def teleport(x: float, y: float, z: float, level: str | None = None) -> str:
+    """Move the actor to world position x, y, z, snapped to the nearest AI node.
+
+    Snapping uses the AI node under (x, z) (y may be well above or below the floor),
+    so the actor never ends up inside a wall. Without `level` (or with the current
+    level's name) it moves on the current level. With another level name it first
+    changes level (no fade, up to 120 s for the load), then snaps to x, y, z there.
+    Returns "x y z level_name" of the final position, prefixed by a "Changed level"
+    line after a level change. Errors come back as text starting with "error:",
+    e.g. no AI node at that spot, or an unknown level (the message lists the
+    levels that can be jumped to; the test map fake_start is not one of them).
+    """
+    return _engine_call(game.teleport, x, y, z, level)
+
+
+@mcp.tool()
+def screenshot(width: int = 1280, height: int = 720) -> list[str | Image]:
+    r"""Take a screenshot of the game window (main menu or level) and return it.
+
+    Returns the PNG path (<ANOMALY_DIR>\appdata\screenshots\mcp_<timestamp>.png)
+    with its size, plus the image itself. width/height are clamped to the window
+    size by the engine. Fails with a text message if no file appears within 5 s
+    (screenshots are disabled when HDR10 is on).
+    """
+    result = _engine_call(game.screenshot, width, height)
+    if isinstance(result, str):
+        return [result]
+    text, png = result
+    return [text, Image(path=png)] if png else [text]
 
 
 @mcp.tool()
