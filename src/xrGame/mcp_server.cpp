@@ -7,7 +7,8 @@
 //	                   The only place that touches Console, Lua and g_pGameLevel.
 //	- listener thread: mcp_listener_thread. Touches only sockets, the log ring
 //	                   (g_log_lock), the request/reply queues (g_queue_lock) and atomics.
-//	- logger thread:   mcp_log_callback. Only appends to the log ring under g_log_lock.
+//	- logger thread:   mcp_log_callback. Only appends to the log ring and the console
+//	                   capture buffer under g_log_lock.
 ////////////////////////////////////////////////////////////////////////////
 
 #include "pch_script.h"
@@ -32,6 +33,7 @@ namespace
 	const u32 MCP_LOG_LINES = 2000;
 	const u32 MCP_LOG_LINE_MAX = 1024;
 	const u32 MCP_LOG_DEFAULT = 50;
+	const u32 MCP_CAPTURE_MAX = 64 * 1024;
 	// CConsole::ExecuteCommand _alloca's the command three times; keep it to the console input size
 	const u32 MCP_CONSOLE_MAX = CConsole::CONSOLE_BUF_SIZE - 1;
 
@@ -79,6 +81,9 @@ namespace
 	u32					g_log_len[MCP_LOG_LINES];
 	u32					g_log_head = 0;		// next slot to write
 	u32					g_log_count = 0;
+	// console output capture, also under g_log_lock: lines logged while a console command runs
+	bool				g_capture = false;
+	xr_string			g_capture_text;
 
 	// request/reply queues, guarded by g_queue_lock (listener thread <-> main thread)
 	xrCriticalSection		g_queue_lock;
@@ -104,6 +109,31 @@ namespace
 		g_log_head = (g_log_head + 1) % MCP_LOG_LINES;
 		if (g_log_count < MCP_LOG_LINES)
 			++g_log_count;
+
+		if (g_capture && g_capture_text.size() + len + 1 <= MCP_CAPTURE_MAX)
+		{
+			g_capture_text.append(line, len);
+			g_capture_text += '\n';
+		}
+	}
+
+	// main thread. Runs a console command and returns what it logged as the reply text.
+	void mcp_console(const xr_string& cmd, xr_string& reply)
+	{
+		{
+			xrCriticalSectionGuard guard(&g_log_lock);
+			g_capture_text.clear();
+			g_capture = true;
+		}
+		Console->Execute(cmd.c_str());
+		// the log callback runs on the logger thread; wait (bounded) until it has seen every line the command logged
+		xrLogger::FlushLog();
+		xrCriticalSectionGuard guard(&g_log_lock);
+		g_capture = false;
+		if (!g_capture_text.empty())
+			g_capture_text.pop_back();	// trailing newline
+		reply = "+" + g_capture_text;
+		g_capture_text.clear();
 	}
 
 	// listener thread. Appends the last n lines (oldest first, '\n' separated) to text.
@@ -412,10 +442,7 @@ namespace
 				mcp_reply reply;
 				reply.client_id = r.client_id;
 				if (r.op == eMcpConsole)
-				{
-					Console->Execute(r.arg.c_str());
-					reply.payload = "+";
-				}
+					mcp_console(r.arg, reply.payload);
 				else
 					mcp_eval(r.arg, reply.payload);
 

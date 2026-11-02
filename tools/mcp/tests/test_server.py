@@ -63,8 +63,10 @@ def test_tools_not_running(dead_port):
 
 
 def test_console(engine):
-    assert server.console("cfg_save") == "ok"
+    assert server.console("cfg_save") == "ok (no output)"
     assert engine.requests[-1] == ("console", "cfg_save")
+    engine.handler = lambda op, arg: b"+- g_god 0\n! second line"
+    assert server.console("g_god") == "- g_god 0\n! second line"
     engine.handler = lambda op, arg: b"-console not available"
     assert server.console("cfg_save") == "Error: console not available"
 

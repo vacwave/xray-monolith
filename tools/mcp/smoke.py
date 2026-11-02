@@ -30,6 +30,14 @@ def test_map_checks() -> list[bool]:
         results.append(check(name, value, not value.startswith(("error", "Lua error", "Timed out", "Game is not"))))
     value = server.screenshot()
     results.append(check("screenshot()", value, len(value) == 2 and str(value[0]).endswith(")")))
+    before = server.lua_eval("return db.actor:position()")
+    value = server.game_input("kFWD", "hold", 60)
+    after = server.lua_eval("return db.actor:position()")
+    results.append(check('game_input("kFWD", "hold", 60)', f"{value}\n{before} -> {after}", value.startswith("hold") and before != after))
+    value = server.game_input("kINVENTORY")
+    shown = server.lua_eval("return ui_inventory.GUI ~= nil and ui_inventory.GUI:IsShown()")
+    server.game_input("kQUIT")
+    results.append(check('game_input("kINVENTORY")', f"{value}; inventory shown: {shown}", value.startswith("tap") and shown == "true"))
     return results
 
 
@@ -41,7 +49,9 @@ def main() -> int:
     value = server.lua_eval("return 1+1")
     results.append(check('lua_eval("return 1+1")', value, value == "2"))
     value = server.console("cfg_save")
-    results.append(check('console("cfg_save")', value, value == "ok"))
+    results.append(check('console("cfg_save")', value, "saved" in value))
+    value = server.console("no_such_command_xyz")
+    results.append(check('console("no_such_command_xyz")', value, value.startswith("! Unknown command")))
     value = server.log_tail(20)
     results.append(check("log_tail(20)", value, bool(value) and not value.startswith("[")))
     if "--test-map" in sys.argv[1:]:

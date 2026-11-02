@@ -147,6 +147,52 @@ def test_launch_game_test_map(world, tmp_path, monkeypatch):
     assert report.endswith("Test map loaded: level fake_start, actor at vector{x = 1, y = 2, z = 3}.")
 
 
+@pytest.fixture
+def inputs(world, engine):
+    seen = []
+
+    def handler(op, arg):
+        m = re.fullmatch(r'return mcp_helper\.input\("(.*)", "(.*)", (\d+)\)', arg)
+        if m:
+            seen.append(m.groups())
+            return f"+{m.group(2)} {m.group(1)} dik=23".encode()
+        return world.handler(op, arg)
+
+    engine.handler = handler
+    return seen
+
+
+def test_game_input_tap_and_press(world, inputs):
+    assert server.game_input("kINVENTORY") == "tap kINVENTORY dik=23"
+    assert inputs == [("kINVENTORY", "tap", "60")]
+    assert server.game_input("DIK_W", "press") == "press DIK_W dik=23"
+    assert server.game_input("kFWD", "fly").startswith("error: unknown mode 'fly'")
+    assert world.frame <= 104  # one status per call, no waiting
+
+
+def test_game_input_hold_waits_for_frames(world, inputs, monkeypatch):
+    monkeypatch.setattr(game, "HOLD_POLL", 0.001)
+    frame0 = world.frame
+    assert server.game_input("kFWD", "hold", 5) == "hold kFWD dik=23\nheld for 5 frames"
+    assert inputs == [("kFWD", "hold", "5")]
+    assert world.frame >= frame0 + 6
+
+
+def test_game_input_hold_timeout(world, inputs, monkeypatch):
+    monkeypatch.setattr(game, "wait_until", lambda pred, timeout, interval=None: None)  # frames never run
+    assert server.game_input("kFWD", "hold", 5).endswith("released on the next actor update")
+
+
+def test_game_input_lua_error(world, engine):
+    def handler(op, arg):
+        if op == "eval":
+            return b"+error: unknown action kNOPE (key_bindings name like kINVENTORY, or DIK_ key name)"
+        return world.handler(op, arg)
+
+    engine.handler = handler
+    assert server.game_input("kNOPE").startswith("error: unknown action kNOPE")
+
+
 def test_screenshot(engine, tmp_path, monkeypatch):
     monkeypatch.setenv("ANOMALY_DIR", str(tmp_path))
     seen = {}
