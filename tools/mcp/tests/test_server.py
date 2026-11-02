@@ -140,7 +140,7 @@ def test_launch_starts_and_waits(engine, tmp_path, monkeypatch):
     monkeypatch.setattr(process.subprocess, "Popen", FakePopen)
     report = server.launch_game(clear_shader_cache=True)
     assert not cache.exists()
-    assert started["args"] == [str(tmp_path / "bin" / "Fake.exe"), "-smap2048", "-dbg", "-silent_error_mode"]
+    assert started["args"] == [str(tmp_path / "bin" / "Fake.exe"), "-smap2048", "-dbg", "-silent_error_mode", "-minimized", "-nosplashwindow"]
     assert started["cwd"] == tmp_path / "bin"
     assert started["kwargs"]["stdout"] == process.subprocess.DEVNULL
     assert "Endpoint answered" in report

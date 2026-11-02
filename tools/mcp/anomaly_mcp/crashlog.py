@@ -7,10 +7,14 @@ from . import process
 STACK_RE = re.compile(r"\.(cpp|hpp|h|c)\s*\(\d+\)\s*:\s*\S")  # "D:\...\xrDebugNew.cpp (500): xrDebug::fatal"
 
 
-def crash_report() -> str:
+def crash_report(previous: bool = False) -> str:
     path = process.newest_log_file()
     if path is None:
         return "No log file found; nothing to report."
+    if previous:
+        path = process.previous_log_path(path)
+        if not path.is_file():
+            return f"No archived previous log at {path} (launch_game archives the log of the run before it)."
     running = process.find_game()
     head = f"Game {'running (pid %d)' % running.pid if running else 'not running'}; log: {path}"
     with open(path, encoding="utf-8", errors="replace") as f:

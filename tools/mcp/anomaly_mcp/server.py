@@ -136,7 +136,7 @@ def log_tail(n: int = 50) -> str:
 
 
 @mcp.tool()
-def crash_report() -> str:
+def crash_report(previous: bool = False) -> str:
     """Explain why the game died: the last crash recorded in the newest game log.
 
     First line: whether the game process is running and the log file path. Then,
@@ -145,8 +145,10 @@ def crash_report() -> str:
     lines of the C++ stack and the minidump line if any. With no crash in the log
     it says so and, when the game is not running, shows the last 10 log lines (a
     silent exit). Reads the file, so it works when the game is dead.
+    previous=True reads the archived log of the run before the last launch_game
+    (the engine overwrites its log on every start).
     """
-    return crashlog.crash_report()
+    return crashlog.crash_report(previous)
 
 
 @mcp.tool()

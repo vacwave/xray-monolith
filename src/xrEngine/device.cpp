@@ -654,7 +654,10 @@ void CRenderDevice::Run()
 	seqAppStart.Process(rp_AppStart);
 
 	//m_pRender->ClearTarget();
-	SetForegroundWindow(m_hWnd);
+	if (strstr(Core.Params, "-minimized"))
+		ShowWindow(m_hWnd, SW_MINIMIZE);
+	else
+		SetForegroundWindow(m_hWnd);
 	message_loop();
 
 	seqAppEnd.Process(rp_AppEnd);

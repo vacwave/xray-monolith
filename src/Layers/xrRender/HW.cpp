@@ -666,12 +666,18 @@ void CHW::updateWindowProps(HWND m_hWnd)
 #ifndef _EDITOR
 	if (!g_dedicated_server)
 	{
-		ShowCursor(FALSE);
-		SetForegroundWindow(m_hWnd);
-		RECT winRect;
-		GetClientRect(m_hWnd, &winRect);
-		MapWindowPoints(m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
-		ClipCursor(&winRect);
+		// -minimized: unattended runs (MCP) start with the window minimized and leave the cursor alone
+		if (strstr(Core.Params, "-minimized"))
+			ShowWindow(m_hWnd, SW_MINIMIZE);
+		else
+		{
+			ShowCursor(FALSE);
+			SetForegroundWindow(m_hWnd);
+			RECT winRect;
+			GetClientRect(m_hWnd, &winRect);
+			MapWindowPoints(m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
+			ClipCursor(&winRect);
+		}
 	}
 #endif
 }

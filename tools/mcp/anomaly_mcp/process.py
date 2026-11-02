@@ -12,7 +12,8 @@ import psutil
 from . import config, game
 from .engine_client import EngineClient, EngineError, EngineNotRunning, EngineTimeout
 
-LAUNCH_ARGS = ["-smap2048", "-dbg", "-silent_error_mode"]  # build.ps1 -Launch args + crashes go to the log, no dialog
+LAUNCH_ARGS = ["-smap2048", "-dbg", "-silent_error_mode"]
+MINIMIZED_ARGS = ["-minimized", "-nosplashwindow"]  # window starts minimized, splash dialog shrunk to zero size  # build.ps1 -Launch args + crashes go to the log, no dialog
 LAUNCH_WAIT = 90.0
 LAUNCH_CONSOLE = ["g_always_active on", "keypress_on_start off"]
 WINDOW_TITLE = "S.T.A.L.K.E.R.: Anomaly"
@@ -73,6 +74,21 @@ def window_action(pid: int, action: str) -> str:
     return "Window restored; Windows refused to bring it to the foreground."
 
 
+def keep_minimized(pid: int, seconds: float) -> None:
+    """For `seconds`, minimize the game window whenever it is visible and not minimized.
+
+    The engine shows its window early and forces it to the foreground again when the
+    renderer initializes, so a single ShowWindow right after launch is not enough.
+    """
+    user32 = _user32()
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        hwnd = find_window(pid)
+        if hwnd is not None and not user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, SW_MINIMIZE)
+        time.sleep(0.2)
+
+
 def game_window(action: str) -> str:
     proc = find_game()
     if proc is None:
@@ -90,6 +106,10 @@ def launch_game(clear_shader_cache: bool = False, test_map: bool = False, minimi
         return f"Cannot launch: {exe} does not exist."
 
     lines = []
+    previous = newest_log_file()
+    if previous is not None:
+        # the engine overwrites its log on start; keep the previous run for crash_report(previous=True)
+        shutil.copyfile(previous, previous_log_path(previous))
     if clear_shader_cache:
         cache = config.anomaly_dir() / "appdata" / "shaders_cache"
         if cache.exists():
@@ -99,15 +119,16 @@ def launch_game(clear_shader_cache: bool = False, test_map: bool = False, minimi
             lines.append(f"No shader cache at {cache}.")
 
     # Detached, with no inherited stdio: our stdout is the MCP stream.
+    args = [*LAUNCH_ARGS, *MINIMIZED_ARGS] if minimize else list(LAUNCH_ARGS)
     popen = subprocess.Popen(
-        [str(exe), *LAUNCH_ARGS],
+        [str(exe), *args],
         cwd=bin_dir,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
     )
-    lines.append(f"Started {exe} {' '.join(LAUNCH_ARGS)} (pid {popen.pid}).")
+    lines.append(f"Started {exe} {' '.join(args)} (pid {popen.pid}).")
 
     client = _client()
     start = time.monotonic()
@@ -120,12 +141,17 @@ def launch_game(clear_shader_cache: bool = False, test_map: bool = False, minimi
             status = client.status()
             break
         except (EngineNotRunning, EngineTimeout, EngineError):
-            time.sleep(1.0)
+            if minimize:
+                keep_minimized(popen.pid, 1.0)
+            else:
+                time.sleep(1.0)
     else:
         lines.append(f"Process is running but the endpoint did not answer within {LAUNCH_WAIT:.0f} s.")
         return "\n".join(lines)
     lines.append(f"Endpoint answered after {time.monotonic() - start:.0f} s: {status}.")
 
+    if minimize:
+        keep_minimized(popen.pid, 3.0)  # the renderer re-foregrounds the window right after the endpoint is up
     try:
         # Keep running and rendering while unfocused/minimized; no "press any key" after loads.
         for cmd in LAUNCH_CONSOLE:
@@ -167,7 +193,14 @@ def kill_game() -> str:
     return f"{config.exe_name()} (pid {pid}) did not quit within 10 s; killed it."
 
 
+PREVIOUS_SUFFIX = ".prev.log"
+
+
+def previous_log_path(log: Path) -> Path:
+    return log.with_name(log.stem + PREVIOUS_SUFFIX)
+
+
 def newest_log_file() -> Path | None:
     logs = config.anomaly_dir() / "appdata" / "logs"
-    files = [p for p in logs.glob("*.log") if p.is_file()]
+    files = [p for p in logs.glob("*.log") if p.is_file() and not p.name.endswith(PREVIOUS_SUFFIX)]
     return max(files, key=lambda p: p.stat().st_mtime, default=None)
