@@ -349,6 +349,10 @@ void xrLogger::InternalPrintRecord()
 
 	{
 		xrCriticalSectionGuard g(&logDataGuard);
+		// In immediate mode the log thread and the caller both drain the queue,
+		// so the record seen by InternalPrintAllRecords may already be gone.
+		if (logData->empty())
+			return;
 		theRecord = logData->front();
 		logData->pop();
 	}
@@ -421,15 +425,6 @@ void xrLogger::InternalPrintAllRecords()
 
 void xrLogger::LogThreadEntry()
 {
-	auto FlushLogIfRequestedLambda = [this]()
-		{
-			if (bFlushRequested)
-			{
-				InternalFlushLog();
-				bFlushRequested = false;
-			}
-		};
-
 	while (true)
 	{
 		if (!bIsAlive)
@@ -437,13 +432,17 @@ void xrLogger::LogThreadEntry()
 			CloseHandle(hLogThread);
 			return;
 		}
-		
+
 		WaitForSingleObject(hLogThread, INFINITE);
 		{
 			PROF_EVENT("Log Frame");
 			InternalPrintAllRecords();
 			PauseLogging();
-			FlushLogIfRequestedLambda();
+			// Flush after every batch, not only on request: when the process dies
+			// without passing through the crash handlers (exit(), TerminateProcess)
+			// the CRT buffer would otherwise take the last lines with it.
+			InternalFlushLog();
+			bFlushRequested = false;
 		}
 	}
 }

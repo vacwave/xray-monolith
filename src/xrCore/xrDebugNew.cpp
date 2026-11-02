@@ -6,6 +6,7 @@
 
 #include <sal.h>
 #include <dxerr.h>
+#include <exception>
 
 #pragma warning(push)
 #pragma warning(disable:4995)
@@ -764,6 +765,9 @@ void save_mini_dump (_EXCEPTION_POINTERS* pExceptionInfo)
     {
         szResult = "DBGHELP.DLL not found";
     }
+
+    if (szResult && shared_str_initialized)
+        Msg("* [minidump] %s", szResult);
 }
 #endif //-USE_OWN_MINI_DUMP
 
@@ -800,15 +804,17 @@ void format_message(LPSTR buffer, const u32& buffer_size)
 
 #ifdef NO_BUG_TRAP
 //AVO: simplify function
-LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
+// Everything in here allocates or walks the stack, so it may fault again when
+// the process state is corrupt. UnhandledFilter runs it under __try after the
+// minidump is already on disk.
+static void unhandled_log_details(_EXCEPTION_POINTERS* pExceptionInfo, LPSTR error_message, u32 error_message_size)
 {
-    xrLogger::SetImmediateMode(true);
-	string256 error_message;
-	format_message(error_message, sizeof(error_message));
-
-	CONTEXT save = *pExceptionInfo->ContextRecord;
-	//    BuildStackTrace(pExceptionInfo);
-	*pExceptionInfo->ContextRecord = save;
+	if (pExceptionInfo->ExceptionRecord && shared_str_initialized)
+	{
+		Msg("! Unhandled exception 0x%08X at address 0x%p",
+			pExceptionInfo->ExceptionRecord->ExceptionCode,
+			pExceptionInfo->ExceptionRecord->ExceptionAddress);
+	}
 
     if (Debug.get_crashhandler())
         Debug.get_crashhandler()();
@@ -840,7 +846,7 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
 		if (shared_str_initialized)
 			Msg("\n%s", error_message);
 
-		xr_strcat(error_message, sizeof(error_message), "\r\n");
+		xr_strcat(error_message, error_message_size, "\r\n");
 #ifdef DEBUG
         if (!IsDebuggerPresent())
             os_clipboard::update_clipboard(buffer);
@@ -851,13 +857,36 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
 	{
 		Msg("at address 0x%p", pExceptionInfo->ExceptionRecord->ExceptionAddress);
 	}
+}
+
+LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
+{
+    xrLogger::SetImmediateMode(true);
+	string256 error_message;
+	format_message(error_message, sizeof(error_message));
+
+	CONTEXT save = *pExceptionInfo->ContextRecord;
+	//    BuildStackTrace(pExceptionInfo);
+	*pExceptionInfo->ContextRecord = save;
+
+# ifdef USE_OWN_MINI_DUMP
+	// Dump first: it needs no heap and no stack walk, so it survives a process
+	// state that makes the logging below fault a second time.
+	save_mini_dump(pExceptionInfo);
+# endif // USE_OWN_MINI_DUMP
+
+	__try
+	{
+		unhandled_log_details(pExceptionInfo, error_message, sizeof(error_message));
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		if (shared_str_initialized)
+			Msg("! Unhandled exception: faulted again while logging details");
+	}
 	//return EXCEPTION_CONTINUE_EXECUTION;
 
     xrLogger::FlushLog();
-
-# ifdef USE_OWN_MINI_DUMP
-	save_mini_dump(pExceptionInfo);
-# endif // USE_OWN_MINI_DUMP
 
     if (IsDebuggerPresent())
         DebugBreak();
@@ -1150,6 +1179,37 @@ static void termination_handler(int signal)
 	handler_base("termination with exit code 3");
 }
 
+// std::terminate: an uncaught C++ exception or a throw through a noexcept frame.
+// Without this, the CRT aborts and only "application is aborting" reaches the log.
+static void std_terminate_handler()
+{
+	string1024 reason;
+	xr_strcpy(reason, "unexpected program termination (std::terminate)");
+
+	std::exception_ptr in_flight = std::current_exception();
+	if (in_flight)
+	{
+		try
+		{
+			std::rethrow_exception(in_flight);
+		}
+		catch (const std::exception& e)
+		{
+			xr_sprintf(reason, "std::terminate: uncaught exception: %.800s", e.what());
+		}
+		catch (LPCSTR s) // Lua errors are rethrown as plain strings
+		{
+			xr_sprintf(reason, "std::terminate: uncaught exception: %.800s", s ? s : "");
+		}
+		catch (...)
+		{
+			xr_strcpy(reason, "std::terminate: uncaught exception of unknown type");
+		}
+	}
+
+	handler_base(reason);
+}
+
 void debug_on_thread_spawn()
 {
 #ifdef USE_BUG_TRAP
@@ -1157,6 +1217,8 @@ void debug_on_thread_spawn()
 #else // USE_BUG_TRAP
 	//std::set_terminate (_terminate);
 #endif // USE_BUG_TRAP
+
+	std::set_terminate(std_terminate_handler); // per thread in MSVC, hence here
 
 	_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
 	signal(SIGABRT, abort_handler);
