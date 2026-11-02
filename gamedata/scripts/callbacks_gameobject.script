@@ -919,6 +919,12 @@ _G.COnLuaBindFatalError = function(offender)
 	end
 	on_luabind_fatal_error_triggered = true
 
+	-- Unattended runs (-silent_error_mode): no dialog, the error is already in the log
+	if string.find(command_line() or "", "-silent_error_mode", 1, true) then
+		printf("! [luabind fatal error] %s (silent mode, no dialog)", tostring(offender))
+		return
+	end
+
 	SendScriptCallback("on_luabind_fatal_error", offender)
 	exec_console_cmd("save " .. (user_name() or "") .. " - tempsave")
 

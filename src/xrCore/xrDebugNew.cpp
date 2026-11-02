@@ -240,7 +240,8 @@ void xrDebug::gather_info(const char* expression, const char* description, const
 void xrDebug::do_exit(const std::string& message)
 {
 	xrLogger::FlushLog();
-	MessageBox(NULL, message.c_str(), "Error", MB_OK | MB_ICONERROR | MB_SYSTEMMODAL);
+	if (!strstr(GetCommandLine(), "-silent_error_mode"))
+		MessageBox(NULL, message.c_str(), "Error", MB_OK | MB_ICONERROR | MB_SYSTEMMODAL);
 	TerminateProcess(GetCurrentProcess(), 1);
 }
 
@@ -278,14 +279,17 @@ void xrDebug::backend(const char* expression, const char* description, const cha
     if (IsDebuggerPresent())
         DebugBreak();
 
-	ShowCursor(true);
-	ShowWindow(GetActiveWindow(), SW_FORCEMINIMIZE);
-	MessageBox(
-		NULL,
-		assertion_info,
-		"Fatal Error",
-		MB_OK | MB_ICONERROR | MB_SYSTEMMODAL
-	);
+	if (!strstr(GetCommandLine(), "-silent_error_mode"))
+	{
+		ShowCursor(true);
+		ShowWindow(GetActiveWindow(), SW_FORCEMINIMIZE);
+		MessageBox(
+			NULL,
+			assertion_info,
+			"Fatal Error",
+			MB_OK | MB_ICONERROR | MB_SYSTEMMODAL
+		);
+	}
 
 	CS.Leave();
 
@@ -891,14 +895,17 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
     if (IsDebuggerPresent())
         DebugBreak();
 
-	ShowCursor(true);
-	ShowWindow(GetActiveWindow(), SW_FORCEMINIMIZE);
-	MessageBox(
-		GetTopWindow(NULL),
-		"Unhandled exception occured. See log for details",
-		"Fatal Error",
-		MB_OK | MB_ICONERROR | MB_SYSTEMMODAL
-	);
+	if (!strstr(GetCommandLine(), "-silent_error_mode"))
+	{
+		ShowCursor(true);
+		ShowWindow(GetActiveWindow(), SW_FORCEMINIMIZE);
+		MessageBox(
+			GetTopWindow(NULL),
+			"Unhandled exception occured. See log for details",
+			"Fatal Error",
+			MB_OK | MB_ICONERROR | MB_SYSTEMMODAL
+		);
+	}
 	//    TerminateProcess(GetCurrentProcess(), 1);
 
 	return (EXCEPTION_CONTINUE_SEARCH);
