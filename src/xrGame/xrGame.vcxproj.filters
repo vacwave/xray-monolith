@@ -5313,6 +5313,9 @@
     <ClInclude Include="DynamicHeightMap.h">
       <Filter>Core\Client\Effects\Core</Filter>
     </ClInclude>
+    <ClInclude Include="mcp_server.h">
+      <Filter>Core\Client\Game Persistent</Filter>
+    </ClInclude>
     <ClInclude Include="GamePersistent.h">
       <Filter>Core\Client\Game Persistent</Filter>
     </ClInclude>
@@ -8905,6 +8908,9 @@
     </ClCompile>
     <ClCompile Include="DynamicHeightMap.cpp">
       <Filter>Core\Client\Effects\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="mcp_server.cpp">
+      <Filter>Core\Client\Game Persistent</Filter>
     </ClCompile>
     <ClCompile Include="GamePersistent.cpp">
       <Filter>Core\Client\Game Persistent</Filter>

@@ -30,6 +30,9 @@
 #include "UI/UIGameTutorial.h"
 
 #include "../xrEngine/xr_input.h"
+#ifdef MCP_SERVER
+#	include "mcp_server.h"
+#endif
 
 #ifndef MASTER_GOLD
 #	include "custommonster.h"
@@ -162,11 +165,18 @@ void CGamePersistent::OnAppStart()
 	m_pUI_core = xr_new<ui_core>();
 	m_pMainMenu = xr_new<CMainMenu>();
 	m_pWallmarksManager = xr_new<ScriptWallmarksManager>();
+#ifdef MCP_SERVER
+	mcp_server_start();
+#endif
 }
 
 
 void CGamePersistent::OnAppEnd()
 {
+#ifdef MCP_SERVER
+	mcp_server_stop();
+#endif
+
 	if (m_pMainMenu->IsActive())
 		m_pMainMenu->Activate(false);
 
