@@ -188,8 +188,13 @@ void CScriptEngine::unload()
 
 int CScriptEngine::lua_panic(lua_State* L)
 {
+	// LuaJIT calls exit() as soon as this returns. The async logger would lose
+	// everything queued here, so log synchronously and leave through the regular
+	// fatal path (flushed log, error dialog) instead of exiting silently.
+	xrLogger::SetImmediateMode(true);
 	ai().script_engine().print_stack();
 	print_output(L, "PANIC", LUA_ERRRUN);
+	Debug.fatal(DEBUG_INFO, "LUA PANIC: %.800s", lua_isstring(L, -1) ? lua_tostring(L, -1) : "<no message>");
 	return (0);
 }
 

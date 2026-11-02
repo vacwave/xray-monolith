@@ -111,13 +111,13 @@ BOOL CTheoraStream::ParseHeaders()
 		{
 			if (ret < 0)
 			{
-				fprintf(stderr, "Error parsing Theora stream headers; corrupt stream?\n");
-				exit(1);
+				Msg("! [theora] Error parsing stream headers (packet out failed); corrupt stream?");
+				return FALSE;
 			}
 			if (theora_decode_header(&t_info, &t_comment, &o_packet))
 			{
-				printf("Error parsing Theora stream headers; corrupt stream?\n");
-				exit(1);
+				Msg("! [theora] Error parsing stream headers (decode header failed); corrupt stream?");
+				return FALSE;
 			}
 			header_count++;
 			if (header_count == 3)break;
@@ -249,6 +249,8 @@ BOOL CTheoraStream::Load(const char* fname)
 
 	// parse headers
 	BOOL res = ParseHeaders();
+	if (!res)
+		Msg("! [theora] Failed to parse stream headers in '%s'", fname);
 	// seek to start
 	Reset();
 	return res;
