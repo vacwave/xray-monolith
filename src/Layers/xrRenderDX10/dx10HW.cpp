@@ -798,7 +798,7 @@ void CHW::Reset(HWND hwnd)
     cd.Windowed = bWindowed;
 #endif
 
-    if (!bWindowed)
+    if (!bWindowed && !strstr(Core.Params, "-minimized"))
     {
         ShowWindow(hwnd, SW_SHOWNORMAL);
         SetForegroundWindow(hwnd);
@@ -1247,6 +1247,13 @@ void CHW::updateWindowProps(HWND m_hWnd)
 	else
 	{
         SetWindowLong(m_hWnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+    }
+
+    // -minimized: unattended runs (MCP) start with the window minimized and leave the cursor alone
+    if (strstr(Core.Params, "-minimized"))
+    {
+        ShowWindow(m_hWnd, SW_MINIMIZE);
+        return;
     }
 
     ShowCursor(FALSE);
