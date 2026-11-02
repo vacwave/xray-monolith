@@ -28,6 +28,7 @@
 
 #define SPAWN_ANTIFREEZE								// spread spawn of game objects thoughout multiple frames to prevent lags (by alpet, MT implementation by demonized)
 #define NON_FATAL_VERIFY								// don't crash game when VERIFY fails
+#define MCP_SERVER										// MCP endpoint for external tools on 127.0.0.1:28015 (see tools/mcp/PROTOCOL.md)
 //#define USE_GSC_MEM_ALLOC								// when this is undefined memory allocation for luajit is handled by luajit allocator
 //-CORE
 

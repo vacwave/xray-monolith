@@ -1,0 +1,92 @@
+-- MCP helper: runs Lua chunks sent by the MCP bridge and serializes the results.
+-- The engine (C++) calls mcp_helper.eval(code) on the main thread and returns the string verbatim.
+-- Reply is "+<values, one per line>" on success or "-<message>" on error.
+
+local MAX_DEPTH, MAX_ENTRIES, MAX_BYTES = 3, 200, 65536
+
+local fmt
+
+local function key_less(a, b)
+	local ta, tb = type(a), type(b)
+	if ta == "number" and tb == "number" then return a < b end
+	if ta == "number" then return true end
+	if tb == "number" then return false end
+	if ta == "string" and tb == "string" then return a < b end
+	return tostring(a) < tostring(b)
+end
+
+local function userdata_str(v)
+	local ok, x = pcall(function() return v.x end)
+	if ok and type(x) == "number" then
+		return string.format("vector{x = %s, y = %s, z = %s}", tostring(x), tostring(v.y), tostring(v.z))
+	end
+	local parts = {tostring(v)}
+	for _, f in ipairs({"name", "id", "section"}) do
+		local ok2, fn = pcall(function() return v[f] end)
+		if ok2 and fn ~= nil then
+			local ok3, r = pcall(fn, v)
+			if ok3 and r ~= nil then parts[#parts + 1] = f .. "=" .. tostring(r) end
+		end
+	end
+	return table.concat(parts, " ")
+end
+
+local function table_str(t, depth, seen, ctx)
+	if seen[t] then return "<cycle>" end
+	if depth > MAX_DEPTH then return "{...}" end
+	seen[t] = true
+	local keys, n = {}, 0
+	for k in pairs(t) do n = n + 1; keys[n] = k end
+	table.sort(keys, key_less)
+	local out = {}
+	for i = 1, math.min(n, MAX_ENTRIES) do
+		if ctx.bytes > MAX_BYTES then break end
+		local k = keys[i]
+		local ks = type(k) == "string" and (k:match("^[%a_][%w_]*$") and k or "[" .. string.format("%q", k) .. "]") or ("[" .. tostring(k) .. "]")
+		local s = ks .. " = " .. fmt(t[k], depth + 1, seen, ctx, true)
+		ctx.bytes = ctx.bytes + #s
+		out[#out + 1] = s
+	end
+	if n > MAX_ENTRIES then out[#out + 1] = "...(+" .. (n - MAX_ENTRIES) .. " more)" end
+	seen[t] = nil
+	return "{" .. table.concat(out, ", ") .. "}"
+end
+
+fmt = function(v, depth, seen, ctx, quote)
+	local ok, s = pcall(function()
+		local tv = type(v)
+		if tv == "string" then return quote and string.format("%q", v) or v end
+		if tv == "table" then return table_str(v, depth, seen, ctx) end
+		if tv == "userdata" then return userdata_str(v) end
+		return tostring(v)
+	end)
+	return ok and s or ("<error: " .. tostring(s) .. ">")
+end
+
+function serialize(...)
+	local ctx, lines = {bytes = 0}, {}
+	for i = 1, select("#", ...) do
+		local s = fmt((select(i, ...)), 1, {}, ctx, false)
+		ctx.bytes = ctx.bytes + #s
+		lines[i] = s
+	end
+	local res = table.concat(lines, "\n")
+	if #res > MAX_BYTES then res = res:sub(1, MAX_BYTES) .. "...(truncated)" end
+	return res
+end
+
+local function pack_ok(ok, ...)
+	if not ok then return false, (...) end
+	return true, "+" .. serialize(...)
+end
+
+function eval(code)
+	local fn, err = loadstring(code, "=mcp")
+	if not fn then return "-" .. tostring(err) end
+	local ok, res = pack_ok(xpcall(fn, function(e)
+		printf("[mcp] %s", debug.traceback(tostring(e), 2))
+		return e
+	end))
+	if ok then return res end
+	return "-" .. tostring(res)
+end
