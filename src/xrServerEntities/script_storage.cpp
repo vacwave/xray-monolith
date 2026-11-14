@@ -1136,7 +1136,16 @@ bool CScriptStorage::object(LPCSTR identifier, int type)
             return true;
         }
         lua_pop(lua(), 1);
-   	}    
+
+        // rawget covered string keys; only number keys (tostring = digits, '-', inf) can still match
+        const char c = *identifier;
+        if (!((c >= '0' && c <= '9') || c == '-' || c == 'i'))
+        {
+            lua_pop(lua(), 1);
+            VERIFY(lua_gettop(lua()) == start - 1);
+            return (false);
+        }
+    }    
 
     //Original behavior
 	lua_pushnil(lua());
