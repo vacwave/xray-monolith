@@ -555,7 +555,10 @@ void CLocatorAPI::ProcessOne(LPCSTR path, const _finddata_t& entry)
 	else
 	{
 		if (strext(N) && (0 == strncmp(strext(N), ".db", 3) || 0 == strncmp(strext(N), ".xdb", 4)))
+		{
+			m_archives_seen++;
 			ProcessArchive(N);
+		}
 		else
 			Register(N, 0xffffffff, 0, 0, entry.size, entry.size, (u32)entry.time_write);
 	}
@@ -609,6 +612,7 @@ bool CLocatorAPI::Recurse(const char* path)
 	intptr_t handle = _findfirst(scanPath, &findData);
 	if (handle == -1)
 		return false;
+	const u32 archives_before = m_archives_seen;
 	rec_files.reserve(256);
 	size_t oldSize = rec_files.size();
 	intptr_t done = handle;
@@ -642,6 +646,9 @@ bool CLocatorAPI::Recurse(const char* path)
 	// insert self
 	if (path && path[0] != 0)
 		Register(path, 0xffffffff, 0, 0, 0, 0, 0);
+	// a rescan would re-register the same entries, except archives (ProcessArchive skips known ones)
+	if (m_init_scanned && !bNoRecurse && m_archives_seen == archives_before)
+		m_init_scanned->insert(path);
 	return true;
 }
 
@@ -779,6 +786,8 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 		const char *lp_add, *lp_def, *lp_capt;
 		string16 b_v;
 		string4096 temp;
+		xr_set<xr_string> init_scanned;
+		m_init_scanned = &init_scanned;
 
 		while (!pFSltx->eof())
 		{
@@ -828,7 +837,8 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 
 			FS_Path* P = new FS_Path((p_it != pathes.end()) ? p_it->second->m_Path : root, lp_add, lp_def, lp_capt, fl);
 			bNoRecurse = !(fl & FS_Path::flRecurse);
-			Recurse(P->m_Path);
+			if (!init_scanned.count(P->m_Path))
+				Recurse(P->m_Path);
 			auto I = pathes.insert(std::make_pair(xr_strdup(id), P));
 #ifndef DEBUG
 			m_Flags.set(flCacheFiles, FALSE);
@@ -836,6 +846,7 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 
 			//CHECK_OR_EXIT		(I.second,"The file 'fsgame.ltx' is corrupted (it contains duplicated lines).\nPlease reinstall the game or fix the problem manually.");
 		}
+		m_init_scanned = nullptr;
 		r_close(pFSltx);
 		R_ASSERT(path_exist("$app_data_root$"));
 	};
