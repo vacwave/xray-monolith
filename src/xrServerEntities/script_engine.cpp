@@ -601,6 +601,28 @@ bool CScriptEngine::function_object(LPCSTR function_to_call, ::luabind::object& 
 		}
 	}
 
+    // Fast path: walk the namespace once and take the value from it, instead of a second walk through luabind
+    // proxies. Same table as name_space() below as long as _G._G is the globals table.
+    int top = lua_gettop(lua());
+    lua_pushstring(lua(), "_G");
+    lua_rawget(lua(), LUA_GLOBALSINDEX);
+    bool globals_ok = lua_rawequal(lua(), -1, LUA_GLOBALSINDEX);
+    lua_pop(lua(), 1);
+    if (globals_ok && type != LUA_TNIL && namespace_loaded(name_space, false))
+    {
+        lua_pushstring(lua(), function);
+        lua_rawget(lua(), -2);
+        if (lua_type(lua(), -1) == type)
+        {
+            ::luabind::object value(lua());
+            value.set();
+            lua_settop(lua(), top);
+            object = value;
+            return (true);
+        }
+    }
+    lua_settop(lua(), top);
+
 	if (!this->object(name_space, function, type))
 		return (false);
 
