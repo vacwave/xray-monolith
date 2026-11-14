@@ -924,11 +924,14 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 				continue;
 			}
 
-			std::regex pattern;
+			// built once, constructing std::regex per line is slow
+			static const std::regex local_function_pattern(R"((^local)([\t ]+)(function)([\t ]+)([_a-zA-Z].*)([\t ]*)(\(.*$))");
+			static const std::regex local_pattern(R"((^local)([\t ]+)(.*))");
+			static const std::regex comment_pattern(R"((.*)--.*)");
+			static const std::regex comment_split_pattern(R"((.*)(--.*))");
 
 			//local function x(a,b,c)
-			pattern = std::regex(R"((^local)([\t ]+)(function)([\t ]+)([_a-zA-Z].*)([\t ]*)(\(.*$))");
-			if (unlocalRegex(unlocals, s, pattern, 5, "$3$4$5$6$7")) {
+			if (unlocalRegex(unlocals, s, local_function_pattern, 5, "$3$4$5$6$7")) {
 				unlocalPerformed = true;
 				continue;
 			}
@@ -937,18 +940,16 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 			//local a
 			//local a,b,c = ... (if one of a,b,c is in unlocalizers list - all of them will be unlocalized)
 			//local x; local y; - unsupported yet
-			pattern = std::regex(R"((^local)([\t ]+)(.*))");
-			if (std::regex_match(s, pattern)) {
+			if (std::regex_match(s, local_pattern)) {
 				std::smatch match;
-				std::regex_search(s, match, pattern);
+				std::regex_search(s, match, local_pattern);
 				xr_string m = std::string(match[3]).c_str();
 
 				// strip comments
-				std::regex r = std::regex(R"((.*)--.*)");
-				if (std::regex_match(m, r)) {
+				if (std::regex_match(m, comment_pattern)) {
 					//Msg("found comments\n");
 					std::smatch noncomments;
-					std::regex_search(m, noncomments, r);
+					std::regex_search(m, noncomments, comment_pattern);
 					m = std::string(noncomments[1]).c_str();
 				}
 
@@ -961,15 +962,14 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 					if (unlocals.find(v) != unlocals.end()) {
 						unlocalPerformed = true;
 						Msg("found variable %s to unlocal", v.c_str());
-						s = std::regex_replace(s, pattern, "$3");
+						s = std::regex_replace(s, local_pattern, "$3");
 						if (!hasValue) {
 
 							// strip comments
-							std::regex r = std::regex(R"((.*)(--.*))");
-							if (std::regex_match(s, r)) {
+							if (std::regex_match(s, comment_split_pattern)) {
 								//Msg("found comments\n");
 								std::smatch noncomments;
-								std::regex_search(s, noncomments, r);
+								std::regex_search(s, noncomments, comment_split_pattern);
 								s = xr_string((std::string(noncomments[1]) + "= nil " + std::string(noncomments[2])).c_str());
 							} else {
 								s += " = nil";
