@@ -73,6 +73,10 @@ private:
 	files_set m_files;
 	BOOL bNoRecurse;
 
+	// _initialize only: folders already scanned recursively without archives inside, to skip rescanning them
+	xr_set<xr_string>* m_init_scanned = nullptr;
+	u32 m_archives_seen = 0;
+
 	xrCriticalSection m_auth_lock;
 	u64 m_auth_code;
 
