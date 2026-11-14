@@ -33,7 +33,17 @@ namespace luabind { namespace detail
 		if ( e )
 		{
 			int base = lua_gettop(L) - nargs;
-			lua_pushcfunction(L, e);
+			// reuse one closure per Lua state (kept in the registry) instead of allocating one per call
+			lua_pushlightuserdata(L, (void*)e);
+			lua_rawget(L, LUA_REGISTRYINDEX);
+			if (!lua_iscfunction(L, -1))
+			{
+				lua_pop(L, 1);
+				lua_pushcfunction(L, e);
+				lua_pushlightuserdata(L, (void*)e);
+				lua_pushvalue(L, -2);
+				lua_rawset(L, LUA_REGISTRYINDEX);
+			}
 			lua_insert(L, base);  // push pcall_callback under chunk and args
 			en = base;
   		}
