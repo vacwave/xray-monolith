@@ -555,6 +555,8 @@ extern u32 g_screenmode;
 
 void CMainMenu::OnDeviceCreate()
 {
+	if (Device.IsSilent())
+		return;
 	RECT winRect;
 	GetClientRect(Device.m_hWnd, &winRect);
 	MapWindowPoints(Device.m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);

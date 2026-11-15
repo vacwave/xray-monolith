@@ -533,6 +533,7 @@ void CRenderDevice::on_idle()
 		}
 
 		End();
+		dwRenderedFrames++;
 	}
 	Statistic->RenderTOTAL_Real.End();
 	Statistic->RenderTOTAL_Real.FrameEnd();
@@ -647,7 +648,8 @@ void CRenderDevice::Run()
 	seqAppStart.Process(rp_AppStart);
 
 	//m_pRender->ClearTarget();
-	SetForegroundWindow(m_hWnd);
+	if (!IsSilent())
+		SetForegroundWindow(m_hWnd);
 	message_loop();
 
 	seqAppEnd.Process(rp_AppEnd);
@@ -794,6 +796,56 @@ void CRenderDevice::Pause(BOOL bOn, BOOL bTimer, BOOL bSound, LPCSTR reason)
 bool CRenderDevice::Paused()
 {
 	return g_pauseMngr().Paused();
+}
+
+bool CRenderDevice::IsSilent() const
+{
+	return Core.ParamsData.test(ECoreParams::mcp_port) && !Core.ParamsData.test(ECoreParams::showwindow);
+}
+
+void CRenderDevice::SetWindowStyle(LONG_PTR style)
+{
+	if (IsSilent())
+		style |= GetWindowLongPtr(m_hWnd, GWL_STYLE) & (WS_VISIBLE | WS_MINIMIZE);
+	SetWindowLongPtr(m_hWnd, GWL_STYLE, style);
+}
+
+void CRenderDevice::SetWindowRect(HWND after, int x, int y, int w, int h, UINT flags)
+{
+	if (!IsSilent())
+	{
+		SetWindowPos(m_hWnd, after, x, y, w, h, flags);
+		return;
+	}
+
+	// Only move the restored rect; the window stays minimized and inactive
+	WINDOWPLACEMENT wp = { sizeof(wp) };
+	GetWindowPlacement(m_hWnd, &wp);
+	SetRect(&wp.rcNormalPosition, x, y, x + w, y + h);
+	wp.showCmd = SW_SHOWMINNOACTIVE;
+	SetWindowPlacement(m_hWnd, &wp);
+	SetWindowPos(m_hWnd, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void CRenderDevice::UpdateClientRect()
+{
+	// A minimized window has an empty client rect: use the render size and never clip the user's cursor
+	if (IsSilent())
+	{
+		RECT winRect;
+		if (IsIconic(m_hWnd) || !GetClientRect(m_hWnd, &winRect))
+			SetRect(&winRect, 0, 0, dwWidth, dwHeight);
+		clientWidth = winRect.right;
+		clientHeight = winRect.bottom;
+		return;
+	}
+
+	RECT winRect;
+	GetClientRect(m_hWnd, &winRect);
+	clientWidth = winRect.right;
+	clientHeight = winRect.bottom;
+	MapWindowPoints(m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
+	ClipCursor(&winRect);
 }
 
 void CRenderDevice::OnWM_Activate(WPARAM wParam, LPARAM lParam)

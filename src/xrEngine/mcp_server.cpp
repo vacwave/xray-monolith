@@ -340,13 +340,18 @@ namespace
 
 		register_method("engine.info", [](LPCSTR, xr_string& out)
 		{
+			// The level name is empty (null c_str) while the level is loading
+			shared_str level = g_pGameLevel ? g_pGameLevel->name() : shared_str();
 			json info = {
 				{ "protocol_version", protocol_version },
 				{ "version", engine_version.c_str() },
 				{ "mt", true },
 				{ "frame", Device.dwFrame },
 				{ "active", Device.b_is_Active != FALSE },
-				{ "level", g_pGameLevel ? json(g_pGameLevel->name().c_str()) : json(nullptr) },
+				{ "rendered", Device.dwRenderedFrames },
+				{ "iconic", Device.m_hWnd && IsIconic(Device.m_hWnd) },
+				{ "silent", Device.IsSilent() },
+				{ "level", level.size() ? json(level.c_str()) : json(nullptr) },
 			};
 			out = dump(info).c_str();
 			return true;

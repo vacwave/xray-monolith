@@ -75,6 +75,13 @@ PROTECT_API void CRenderDevice::Initialize()
 		                        /*rc.left, rc.top, */CW_USEDEFAULT, CW_USEDEFAULT,
 		                        (rc.right - rc.left), (rc.bottom - rc.top), 0L,
 		                        0, hInstance, 0L);
+
+		// Taskbar entry only: shown minimized, never activated (so no WM_ACTIVATE sets b_is_Active)
+		if (IsSilent())
+		{
+			ShowWindow(m_hWnd, SW_SHOWMINNOACTIVE);
+			b_is_Active = TRUE;
+		}
 	}
 
 	// Save window properties

@@ -254,6 +254,7 @@ public:
 	xr_delegate<void()> ModelDefferClear;
 
 	bool isRendering;
+	u32 dwRenderedFrames = 0; // frames that went through seqRender + Present
 
 	// LuaGC
 	int LuaGCCount;
@@ -349,6 +350,12 @@ public:
 	void Reset(bool precache = true);
 
 	bool ChangeOutputMonitor(HMONITOR hTargetMon);
+
+	// -mcp_port without -showwindow: the window stays minimized and never takes focus
+	bool IsSilent() const;
+	void SetWindowStyle(LONG_PTR style);
+	void SetWindowRect(HWND after, int x, int y, int w, int h, UINT flags);
+	void UpdateClientRect();
 
 	void Initialize(void);
 	void ShutDown(void);

@@ -15,7 +15,8 @@
 - Gotcha: xrEngine builds with exceptions off → nlohmann auto-uses abort-on-throw; only use non-throwing APIs (`parse(s,nullptr,false)`, `find`, `is_*` checks, `dump(..., error_handler_t::replace)`).
 - nlohmann/json v3.12.0 vendored at `src/3rd party/nlohmann/json.hpp` (+ LICENSE.MIT); include only in .cpp files.
 - `-mcp_port 0` = ephemeral port (sscanf %d, 0..65535 valid). After listen, actual port (getsockname) is written as `<port>\n` to `<app_data_root>\mcp_port` via `mcp_port.tmp` + MoveFileEx; deleted in `mcp::stop()`. Stale file remains after a crash or failed bind.
-- `engine.info` also returns `frame` (Device.dwFrame) and `active` (Device.b_is_Active) for liveness/focus checks.
+- `engine.info` also returns `frame` (Device.dwFrame), `active` (Device.b_is_Active), `rendered` (Device.dwRenderedFrames), `iconic` (IsIconic main window), `silent` (Device.IsSilent()).
+- MCP runs are silent by default: no splash, main window minimized, never takes focus, still renders; `-showwindow` restores normal window/focus/splash (see engine.md).
 - Multi-instance: each instance `-fsltx C:\Anomaly\fsgame.ltx -mcp_port 0 -appdata <dir>`; MCP mode never pauses on focus loss.
 - Log streaming: `mcp::capture_log()` (called in WinMain_impl right after `Core._initialize` when `-mcp_port`) registers `on_log` via `xrLogger::AddLogCallback`; removed at the top of `mcp::stop()`. Missed: the ~11 lines logged inside `Core._initialize` (CPU, FS init, xrCore build); seq 1 is "Game started: ...".
 - Every line gets seq (u64, from 1) and goes into a 10000-line ring (`log_ring_size`, `log_lock`); event `{"event":"log","data":{"seq","line"}}` only while a client is connected. Lock order: log_lock → out_lock.
@@ -23,3 +24,4 @@
 - `log.tail`: `{"n":K}` last K lines or `{"since":S}` lines seq > S still held; result `{"lines":[{"seq","line"}],"first_seq","last_seq"}`; first_seq = oldest held (last_seq+1 if empty), last_seq = newest assigned (0 if none). S < first_seq-1 means lines were lost. Missing/invalid params → -32603.
 - Backpressure: outbox is a deque; `queue_event` drops the oldest queued event beyond `max_queued_events` (10000); responses never dropped. Net thread sends outside out_lock, so a slow client never blocks the logger. Client recovers gaps via log.tail.
 - Reconnect recipe (verified): connect, read events, call `log.tail {"since":<last seen or 0>}`, union by seq → gapless. "* [MCP] Client connected" is the first streamed line of a connection.
+- Fixed: `engine.info` crashed while a level was loading (`g_pGameLevel->name()` is empty, so json(null c_str)); it now returns level null until the name is set.

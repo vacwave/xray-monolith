@@ -97,6 +97,7 @@ enum class ECoreParams : u8
 	lua_studio,
 	clear_cs_constants,
 	mcp_port,
+	showwindow,
 
     //.peak volumetrics
     volumetric1,

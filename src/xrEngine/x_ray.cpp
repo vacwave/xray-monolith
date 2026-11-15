@@ -1069,44 +1069,47 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
     g_dedicated_server = true;
 #endif // DEDICATED_SERVER
 
-	// Title window
-    logoWindow = CreateDialog(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_STARTUP), 0, logDlgProc);
+	// Title window; MCP runs show no splash unless -showwindow
+	if (!strstr(lpCmdLine, "-mcp_port") || strstr(lpCmdLine, "-showwindow"))
+	{
+	    logoWindow = CreateDialog(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_STARTUP), 0, logDlgProc);
    
-	HWND logoPicture = GetDlgItem(logoWindow, IDC_STATIC_LOGO);
-	RECT logoRect;
-	GetWindowRect(logoPicture, &logoRect);
-	int splashW = logoRect.right - logoRect.left;
-	int splashH = logoRect.bottom - logoRect.top;
+		HWND logoPicture = GetDlgItem(logoWindow, IDC_STATIC_LOGO);
+		RECT logoRect;
+		GetWindowRect(logoPicture, &logoRect);
+		int splashW = logoRect.right - logoRect.left;
+		int splashH = logoRect.bottom - logoRect.top;
 
-	u32 screenW, screenH;
-	int monX, monY;
-	GetMonitorResolution(screenW, screenH);
-	GetMonitorPosition(monX, monY);
-	int x = monX + (screenW - splashW) / 2;
-	int y = monY + (screenH - splashH) / 2;
+		u32 screenW, screenH;
+		int monX, monY;
+		GetMonitorResolution(screenW, screenH);
+		GetMonitorPosition(monX, monY);
+		int x = monX + (screenW - splashW) / 2;
+		int y = monY + (screenH - splashH) / 2;
 
-    // verdatim: set the size of the splash window to be zero when the flag "-nosplashwindow" is given
-    if (strstr(xr_strdup(GetCommandLine()), "-nosplashwindow")) {
-        splashW = int(0);
-        splashH = int(0);
-    }
+	    // verdatim: set the size of the splash window to be zero when the flag "-nosplashwindow" is given
+	    if (strstr(xr_strdup(GetCommandLine()), "-nosplashwindow")) {
+	        splashW = int(0);
+	        splashH = int(0);
+	    }
 
 
-	SetWindowPos(
-		logoWindow,
-#ifndef DEBUG
-        HWND_TOP,
-#else
-        HWND_NOTOPMOST,
-#endif // NDEBUG
-		x,
-		y,
-		splashW,
-		splashH,
-		SWP_SHOWWINDOW
-	);
+		SetWindowPos(
+			logoWindow,
+	#ifndef DEBUG
+	        HWND_TOP,
+	#else
+	        HWND_NOTOPMOST,
+	#endif // NDEBUG
+			x,
+			y,
+			splashW,
+			splashH,
+			SWP_SHOWWINDOW
+		);
 	
-	UpdateWindow(logoWindow);
+		UpdateWindow(logoWindow);
+	}
 
 	// AVI
 	g_bIntroFinished = TRUE;
