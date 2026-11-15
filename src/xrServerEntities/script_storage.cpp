@@ -306,10 +306,15 @@ CScriptStorage::CScriptStorage()
 #endif //-USE_LUA_STUDIO
 }
 
+void mcp_lua_profiler_close(lua_State* L);
+
 CScriptStorage::~CScriptStorage()
 {
 	if (m_virtual_machine)
+	{
+		mcp_lua_profiler_close(m_virtual_machine);
 		lua_close(m_virtual_machine);
+	}
 }
 
 extern int luaopen_lua_extensions(lua_State* L, bool IsDebug = false);
@@ -391,7 +396,10 @@ BOOL lua_use_functor_cache = FALSE;
 void CScriptStorage::reinit()
 {
 	if (m_virtual_machine)
+	{
+		mcp_lua_profiler_close(m_virtual_machine);
 		lua_close(m_virtual_machine);
+	}
 	
 #ifdef USE_GSC_MEM_ALLOC
     m_virtual_machine = lua_newstate(lua_alloc, NULL);

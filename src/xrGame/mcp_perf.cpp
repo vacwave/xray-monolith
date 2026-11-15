@@ -5,6 +5,9 @@
 #include <luabind/detail/pcall.hpp>
 
 // xrGame side of the MCP perf window: Lua heap size and the luabind pcall/resume timing hook
+void mcp_lua_profiler_hook(lua_State* L, int fn, bool enter);
+void mcp_register_lua_profiler();
+
 namespace
 {
 	s64 lua_heap_bytes()
@@ -19,7 +22,7 @@ namespace
 
 	void set_lua_hook(bool on)
 	{
-		luabind::detail::pcall_hook = on ? mcp_perf::lua_hook : nullptr;
+		luabind::detail::pcall_hook = on ? mcp_lua_profiler_hook : nullptr;
 	}
 }
 
@@ -27,4 +30,5 @@ void mcp_register_perf()
 {
 	mcp_perf::lua_heap_bytes = lua_heap_bytes;
 	mcp_perf::set_lua_hook = set_lua_hook;
+	mcp_register_lua_profiler();
 }

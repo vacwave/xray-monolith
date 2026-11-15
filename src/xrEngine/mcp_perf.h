@@ -16,7 +16,14 @@ namespace mcp_perf
 	ENGINE_API void frame_begin_impl();
 	ENGINE_API void frame_cancel_impl();
 	ENGINE_API void mark_impl(phase p);
-	ENGINE_API void lua_hook(bool enter);
+	// true for the outermost entry/leave of this thread; on the outermost leave ticks = its duration (QPC)
+	ENGINE_API bool lua_hook(bool enter, s64& ticks);
+	// Whether Lua running on this thread now counts as main-thread Lua (not a worker task)
+	ENGINE_API bool lua_on_main();
+	// A window frame is open (false before the first frame, during loading and after the window)
+	ENGINE_API bool in_frame();
+	ENGINE_API s64 ticks_now();
+	ENGINE_API double ticks_ms(double ticks);
 	ENGINE_API void gc_hook(bool enter, bool worker);
 	ENGINE_API void task_hook(task t, bool enter);
 	ENGINE_API void section_hook(section s, bool enter);
@@ -55,6 +62,16 @@ namespace mcp_perf
 	// Set by xrGame: Lua heap in bytes (-1 if no state) and the luabind pcall hook switch
 	ENGINE_API extern s64 (*lua_heap_bytes)();
 	ENGINE_API extern void (*set_lua_hook)(bool on);
+
+	// Lua profiler (xrGame) run by a perf window started with "lua_profile"; called on the main thread with no Lua running
+	struct lua_profiler
+	{
+		bool (*start)(LPCSTR mode, int top, xr_string& err);
+		void (*frame)(float frame_ms); // a window frame closed
+		void (*stop)();
+		void (*report)(double avg_frame_ms, u32 frames, xr_string& out); // JSON object text, after stop
+	};
+	ENGINE_API extern lua_profiler lua_prof;
 
 	void register_methods();
 }

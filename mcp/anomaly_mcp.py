@@ -1812,9 +1812,9 @@ async def game_screenshot(instance: str | None = None, max_width: int = 1024, fo
 
 # ---------------------------------------------------------------- game_perf
 
-def perf_window(inst, seconds):
+def perf_window(inst, seconds, **extra):
     """perf.start, wait, then poll perf.report until the engine closes the window (first frame after `seconds`)."""
-    inst.call("perf.start", {"seconds": seconds}, timeout=15)
+    inst.call("perf.start", {"seconds": seconds, **extra}, timeout=15)
     deadline = time.monotonic() + seconds + 30
     time.sleep(seconds)
     while True:
@@ -1846,6 +1846,59 @@ async def game_perf(instance: str | None = None, seconds: float = 5) -> dict:
     if not 0.1 <= seconds <= 120:
         raise ValueError("seconds must be 0.1..120")
     return await run(perf_window, inst, seconds)
+
+
+# ---------------------------------------------------------------- game_lua_profile
+
+LUA_PROFILE_MODES = ("time", "calls", "alloc")
+
+
+def lua_profile(inst, seconds, top, mode):
+    rep = perf_window(inst, seconds, lua_profile=mode, top=top)
+    m, t, mem = rep.get("main", {}), rep.get("tasks", {}), rep.get("memory", {})
+    fm = rep.get("frame_ms", {})
+    return {
+        "instance": inst.id,
+        "window": {"frames": rep.get("frames"), "seconds": rep.get("seconds"), "fps": rep.get("fps"),
+                   "frame_ms": {k: fm.get(k) for k in ("avg", "p50", "p99", "max")},
+                   "hitches": rep.get("hitches"), "capped": rep.get("cap", {}).get("capped")},
+        "game_perf_lua": {"main_lua_ms": m.get("lua_ms"), "main_lua_pct": m.get("lua_pct"),
+                          "main_entries": m.get("lua_entries"), "worker_lua_ms": t.get("lua_ms")},
+        "gc": {"main_gc_ms": m.get("gc_ms"), "main_gc_steps": m.get("gc_steps"), "tasks_gc_ms": t.get("gc_ms"),
+               "tasks_gc_steps": t.get("gc_steps"), "lua_heap_mb": mem.get("lua_heap_mb"),
+               "lua_growth_kb_per_frame": mem.get("lua_growth_kb_per_frame")},
+        "profile": rep.get("lua_profile"),
+    }
+
+
+@tool
+async def game_lua_profile(instance: str | None = None, seconds: float = 5, top: int = 30,
+                           mode: str = "time") -> dict:
+    """Profile the game's Lua over `seconds` (0.1..120): WHICH function / script / callback / entry point costs time.
+
+    All ms are per frame; pct = % of that thread's Lua time, frame_pct = % of the average frame. profile.threads.main
+    and .worker (worker = GameThread tasks; only present if any ran) each have:
+    - entries (EXACT): outermost engine->Lua calls (luabind functor/binder method/script thread resume) by the
+      called function: ms, calls_per_frame, max_ms (worst single call). E.g. bind_stalker.script actor update.
+    - functions (SAMPLED): self_ms (own code + the C/engine functions it calls), total_ms (inclusive), samples,
+      gc_pct (share of self samples inside GC = allocation pressure). functions_by_total = call-tree view.
+    - files: self time per script. callbacks: RegisterScriptCallback dispatch (axr_main make_callback) per callback
+      name with its listener functions (inclusive ms), e.g. actor_on_update -> my_mod.script:12 (on_update).
+    - vmstate_pct of samples (jit/interp/c/gc/compiler); sampler_ms = profiler's own time (excluded from lua_ms).
+    Sampling: LuaJIT timer ~1-2 ms, only ticks inside a luabind entry count; scaled to the exact Lua time, so short
+    windows / cheap functions are noisy (check samples). worst_frames: the 5 slowest frames with their top exact
+    entries and sampled functions (hitch attribution). game_perf_lua is game_perf's Lua time for the same window
+    (includes the sampler's overhead); gc = explicit GC steps and Lua heap. Fn ids are script:linedefined.
+    mode: "time" (default, ~1-3 % overhead), "calls" (+ exact calls_per_frame per function via a call hook, JIT
+    off for the window: slow, times inflated), "alloc" (jit.allocprof allocation KB/frame per function and file,
+    byte-sampled, JIT off; no time sampling). The JIT is restored after the window. Survives level changes
+    (lua_state_closes counts re-arms). Not covered: Lua run by raw lua_pcall (script loading, lua_exec)."""
+    inst = get(instance)
+    if not 0.1 <= seconds <= 120:
+        raise ValueError("seconds must be 0.1..120")
+    if mode not in LUA_PROFILE_MODES:
+        raise ValueError(f"mode must be one of {LUA_PROFILE_MODES}")
+    return await run(lua_profile, inst, seconds, max(1, min(int(top), 200)), mode)
 
 
 def main():

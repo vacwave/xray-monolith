@@ -16,6 +16,7 @@ namespace mcp_perf
 bool active = false;
 s64 (*lua_heap_bytes)() = nullptr;
 void (*set_lua_hook)(bool on) = nullptr;
+lua_profiler lua_prof = {};
 
 namespace
 {
@@ -74,6 +75,7 @@ namespace
 
 	bool has_report = false;
 	xr_string report;
+	bool profiling = false; // lua_prof started for this window
 
 	void reset()
 	{
@@ -161,6 +163,8 @@ namespace
 		limited_frames += frame_limited;
 		menu_frames += frame_menu;
 		alloc_sum += u32(Memory.stat_calls - alloc_prev);
+		if (profiling)
+			lua_prof.frame(frames_ms.back());
 	}
 
 	inline double r(double v, double scale = 100.0) { return std::round(v * scale) / scale; }
@@ -248,6 +252,13 @@ namespace
 				{ "lua_heap_mb", heap }, { "lua_growth_kb_per_frame", r(heap_growth / 1024.0 / nf) },
 				{ "engine_alloc_calls_per_frame", r(alloc_sum / nf, 10.0) } } },
 		};
+		if (profiling)
+		{
+			xr_string prof;
+			lua_prof.report(avg, u32(n), prof);
+			json pj = json::parse(prof.c_str(), nullptr, false);
+			res["lua_profile"] = pj.is_discarded() ? json("profiler report is not valid JSON") : pj;
+		}
 		report = res.dump(-1, ' ', false, json::error_handler_t::replace).c_str();
 		has_report = true;
 	}
@@ -258,7 +269,10 @@ namespace
 		active = false;
 		if (set_lua_hook)
 			set_lua_hook(false);
+		if (profiling)
+			lua_prof.stop();
 		build_report();
+		profiling = false;
 		frames_ms.clear();
 		frames_ms.shrink_to_fit();
 	}
@@ -305,17 +319,24 @@ void mark_impl(phase p)
 	lua_at_mark = l;
 }
 
-void lua_hook(bool enter)
+bool lua_on_main() { return on_main(); }
+bool in_frame() { return pending; }
+s64 ticks_now() { return now(); }
+double ticks_ms(double ticks) { return ms(ticks); }
+
+bool lua_hook(bool enter, s64& ticks)
 {
 	if (enter)
 	{
-		if (tls.depth++ == 0)
-			tls.lua_t0 = now();
-		return;
+		if (tls.depth++)
+			return false;
+		tls.lua_t0 = now();
+		return true;
 	}
 	if (--tls.depth)
-		return;
+		return false;
 	s64 d = now() - tls.lua_t0;
+	ticks = d;
 	if (on_main())
 	{
 		main_lua += d;
@@ -326,6 +347,7 @@ void lua_hook(bool enter)
 		w_lua += d;
 		w_entries++;
 	}
+	return true;
 }
 
 void gc_hook(bool enter, bool worker)
@@ -387,19 +409,37 @@ void register_methods()
 			out = "seconds must be 0.1..120";
 			return false;
 		}
+		// "lua_profile": "time" | "calls" | "alloc" also runs the xrGame Lua profiler; "top": rows per list
+		auto lp = p.is_object() ? p.find("lua_profile") : p.end();
+		xr_string mode = lp != p.end() && lp->is_string() ? lp->get<std::string>().c_str() : "";
+		auto tp = p.is_object() ? p.find("top") : p.end();
+		int top = tp != p.end() && tp->is_number_integer() ? tp->get<int>() : 30;
+		if (!mode.empty() && !lua_prof.start)
+		{
+			out = "Lua profiler not available";
+			return false;
+		}
 		LARGE_INTEGER f;
 		QueryPerformanceFrequency(&f);
 		qpf = f.QuadPart;
 		main_tid = GetCurrentThreadId();
+		// Runs in seqFrame: no Lua is on the stack and no worker task is in flight
+		if (profiling)
+		{
+			lua_prof.stop();
+			profiling = false;
+		}
+		if (!mode.empty() && !lua_prof.start(mode.c_str(), std::clamp(top, 1, 200), out))
+			return false;
+		profiling = !mode.empty();
 		reset();
 		window_s = float(s);
 		has_report = false;
 		report.clear();
-		// Runs in seqFrame: no Lua is on the stack and no worker task is in flight
 		if (!active && set_lua_hook)
 			set_lua_hook(true);
 		active = true;
-		out = make_string("{\"started\":true,\"seconds\":%g}", s).c_str();
+		out = make_string("{\"started\":true,\"seconds\":%g,\"lua_profile\":%s}", s, profiling ? "true" : "false").c_str();
 		return true;
 	});
 

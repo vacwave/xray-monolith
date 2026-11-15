@@ -31,7 +31,8 @@ namespace luabind { namespace detail
 	LUABIND_API int pcall(lua_State *L, int nargs, int nresults);
 	LUABIND_API int resume_impl(lua_State *L, int nargs, int nresults);
 
-	// Timing hook (mcp_perf): called with true before and false after each pcall/resume; null when off
-	typedef void (*pcall_hook_fun)(bool enter);
+	// Timing hook (mcp_perf): called with true before and false after each pcall/resume; null when off.
+	// fn = stack index of the called function on enter (0 for resume / on leave)
+	typedef void (*pcall_hook_fun)(lua_State* L, int fn, bool enter);
 	LUABIND_API extern pcall_hook_fun pcall_hook;
 }}

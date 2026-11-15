@@ -9,4 +9,4 @@
 - World queries (MCP world.objects/world.object, game_objects/game_object: nearby objects, kinds, bearing, los, offline alife, crosshair target) → `xrGame/mcp_world.cpp` → `world.md`
 - Build, output, 3rd party, gamedata packing → `src/Common.props`, `engine-vs2022.sln`, `compressor/` → `build.md`
 - Python MCP supervisor (instances, slots/caps, launch, log buffer, tools, crash records, hang monitor, dumps/WER, game_teleport) → `mcp/anomaly_mcp.py`, `mcp/setup_wer.ps1`, `mcp/README.md`, `.mcp.json` → `supervisor.md`
-- Perf measurement (game_perf, perf.start/perf.report, frame phases, Lua/GC timing hooks, instrumentation points for the Lua profiler) → `xrEngine/mcp_perf.*`, `xrGame/mcp_perf.cpp`, `luabind/src/pcall.cpp` (`pcall_hook`), marks in `device.cpp` on_idle → `perf.md`
+- Perf measurement + Lua profiler (game_perf, game_lua_profile, perf.start/perf.report, frame phases, Lua/GC timing hooks) → `xrEngine/mcp_perf.*`, `xrGame/mcp_perf.cpp`, `xrGame/mcp_lua_profiler.cpp`, `luabind/src/pcall.cpp` (`pcall_hook`), `luajit-2/src/lj_profile.c` (gate), marks in `device.cpp` on_idle → `perf.md`
