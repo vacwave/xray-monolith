@@ -3,6 +3,9 @@
 
 #include "dxUIShader.h"
 #include "dxRenderDeviceRender.h"
+#ifdef USE_DX11
+#include "../xrRenderPC_R4/r4_render_scale.h"
+#endif
 
 dxUIRender UIRenderImpl;
 
@@ -147,6 +150,9 @@ void dxUIRender::FlushLineList()
 void dxUIRender::SetScissor(Irect* rect)
 {
 #if (RENDER == R_R3) || (RENDER == R_R4)
+#ifdef USE_DX11
+	rect = r4_render_scale::menu_scissor(rect); // UI scissor is in output pixels, menu targets may be render-size
+#endif
 	RCache.set_Scissor(rect);
 	StateManager.OverrideScissoring(rect ? true : false, TRUE);
 #else	//	(RENDER == R_R3) || (RENDER == R_R4)

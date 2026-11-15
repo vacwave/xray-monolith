@@ -387,6 +387,9 @@
     <ClInclude Include="r4_rendertarget.h">
       <Filter>Core_Target</Filter>
     </ClInclude>
+    <ClInclude Include="r4_render_scale.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
     <ClInclude Include="r4_rendertarget_wallmarks.h">
       <Filter>Core_Target</Filter>
     </ClInclude>
@@ -827,6 +830,9 @@
     </ClCompile>
     <ClCompile Include="r4_loader.cpp">
       <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="r4_render_scale.cpp">
+      <Filter>Core_Target</Filter>
     </ClCompile>
     <ClCompile Include="r4_R_rain.cpp">
       <Filter>Core</Filter>

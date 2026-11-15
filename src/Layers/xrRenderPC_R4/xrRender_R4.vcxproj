@@ -570,6 +570,7 @@
     <ClInclude Include="r2_types.h" />
     <ClInclude Include="r4.h" />
     <ClInclude Include="r4_dlss.h" />
+    <ClInclude Include="r4_render_scale.h" />
     <ClInclude Include="r4_rendertarget.h" />
     <ClInclude Include="r4_rendertarget_wallmarks.h" />
     <ClInclude Include="R_Backend_LOD.h" />
@@ -771,6 +772,7 @@
     <ClCompile Include="r4.cpp" />
     <ClCompile Include="r4_dlss.cpp" />
     <ClCompile Include="r4_loader.cpp" />
+    <ClCompile Include="r4_render_scale.cpp" />
     <ClCompile Include="r4_rendertarget.cpp" />
     <ClCompile Include="r4_rendertarget_accum_direct.cpp" />
     <ClCompile Include="r4_rendertarget_accum_omnipart_geom.cpp" />

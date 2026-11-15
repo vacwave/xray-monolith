@@ -56,6 +56,7 @@ class ENGINE_API CRenderDeviceData
 public:
 	u32 dwWidth;
 	u32 dwHeight;
+	u32 dwOutputWidth, dwOutputHeight; // swap-chain size, set by R4 (0 otherwise); dwWidth/dwHeight are the render size while R4 renders the scene
 	u32 clientWidth;
 	u32 clientHeight;
 

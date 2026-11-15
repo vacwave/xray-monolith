@@ -19,6 +19,7 @@
 #include "../../xrCore/ShaderSourceCRC.h"
 
 #include "D3DX10Core.h"
+#include "r4_render_scale.h"
 
 CRender RImplementation;
 
@@ -530,7 +531,7 @@ void CRender::create()
 
 	m_bMakeAsyncSS = false;
 
-	Target = xr_new<CRenderTarget>(); // Main target
+	Target = r4_render_scale::create_target(); // Main target
 
 	Models = xr_new<CModelPool>();
 	PSLibrary.OnCreate();
@@ -541,7 +542,7 @@ void CRender::create()
 	GMBase.initialize();
 	FluidManager.Initialize(70, 70, 70);
 	//	FluidManager.Initialize( 100, 100, 100 );
-	FluidManager.SetScreenSize(Device.dwWidth, Device.dwHeight);
+	FluidManager.SetScreenSize(r4_render_scale::render_width(), r4_render_scale::render_height());
 
 	Device.ModelDefferClear = xr_make_delegate(Models, &CModelPool::DeleteQueuedDeffer);
 	dlss::create(HW.pDevice, Device.dwWidth, Device.dwHeight);
@@ -556,6 +557,7 @@ void CRender::destroy()
 
 	HWOCC.occq_destroy();
 	xr_delete(Models);
+	r4_render_scale::destroy_target();
 	xr_delete(Target);
 	PSLibrary.OnDestroy();
 	Device.seqFrame.Remove(this);
@@ -573,6 +575,7 @@ void CRender::reset_begin()
 	}
 	//-AVO
 
+	r4_render_scale::destroy_target();
 	xr_delete(Target);
 	HWOCC.occq_destroy();
 }
@@ -581,7 +584,7 @@ void CRender::reset_end()
 {
 	HWOCC.occq_create(occq_size);
 
-	Target = xr_new<CRenderTarget>();
+	Target = r4_render_scale::create_target();
 
 	//AVO: let's reload details while changed details options on vid_restart
 	if (b_loaded && ((dm_current_size != dm_size) || (ps_r__Detail_density != ps_current_detail_density) || (
@@ -592,7 +595,7 @@ void CRender::reset_end()
 	}
 	//-AVO
 
-	FluidManager.SetScreenSize(Device.dwWidth, Device.dwHeight);
+	FluidManager.SetScreenSize(r4_render_scale::render_width(), r4_render_scale::render_height());
 	dlss::resize(Device.dwWidth, Device.dwHeight);
 
 	// Set this flag true to skip the first render frame,

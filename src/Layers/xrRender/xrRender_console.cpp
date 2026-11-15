@@ -5,6 +5,9 @@
 #include	"dxRenderDeviceRender.h"
 
 #include "../../build_config_defines.h"
+#ifdef USE_DX11
+#include "../xrRenderPC_R4/r4_render_scale.h"
+#endif
 
 u32 ps_Preset = 2;
 xr_token qpreset_token [ ] = {
@@ -1581,6 +1584,9 @@ void xrRender_initconsole()
 	CMD4(CCC_Integer, "r4_atlas_width", &ps_r4_atlas_width, 256, 8192);
 	CMD4(CCC_Integer, "r4_atlas_height", &ps_r4_atlas_height, 256, 8192);
 	CMD3(CCC_Token, "r4_atlas_msaa", &ps_r4_atlas_msaa, ui_3d_icons_msaa_token);
+#ifdef USE_DX11
+	r4_render_scale::register_console_commands();
+#endif
 
 	//Shader param stuff
 	Fvector4 tw2_min = { -100.f, -100.f, -100.f, -100.f };

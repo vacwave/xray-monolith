@@ -60,14 +60,25 @@ float get_cam_attached_fov(const CRenderDevice* self)
 	return psCamAttachedFOV;
 }
 
+// Scripts run on the game thread while R4 renders the scene at render size: report the output size
+static u32 get_output_width(const CRenderDevice* self)
+{
+	return self->dwOutputWidth ? self->dwOutputWidth : self->dwWidth;
+}
+
+static u32 get_output_height(const CRenderDevice* self)
+{
+	return self->dwOutputHeight ? self->dwOutputHeight : self->dwHeight;
+}
+
 #pragma optimize("s",on)
 void CScriptRenderDevice::script_register(lua_State* L)
 {
 	module(L)
 	[
 		class_<CRenderDevice>("render_device")
-		.def_readonly("width", &CRenderDevice::dwWidth)
-		.def_readonly("height", &CRenderDevice::dwHeight)
+		.property("width", &get_output_width)
+		.property("height", &get_output_height)
 		.def_readonly("time_delta", &CRenderDevice::dwTimeDelta)
 		.def_readonly("f_time_delta", &CRenderDevice::fTimeDelta)
 		.def_readonly("cam_pos", &CRenderDevice::vCameraPosition)

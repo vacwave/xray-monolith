@@ -3,6 +3,7 @@
 #include "../../xrEngine/environment.h"
 
 #include "../xrRender/dxEnvironmentRender.h"
+#include "r4_render_scale.h"
 
 #define STENCIL_CULL 0
 
@@ -751,6 +752,8 @@ void CRenderTarget::phase_combine()
 	/* if (!RImplementation.o.fp16_blend)*/
 	if (ps_r2_anomaly_flags.test(R2_AN_FLAG_FLARES) && ps_r2_heatvision == 0) //--DSR-- HeatVision
 		g_pGamePersistent->Environment().RenderFlares(); // lens-flares
+
+	r4_render_scale::end_scene(); // back to output size: phase_pp upscales rt_Color to the backbuffer
 
 	//	PP-if required
 	if (PP_Complex)

@@ -9,6 +9,7 @@
 #include "../xrRender/QueryHelper.h"
 
 #include	"../xrRender/dxRenderDeviceRender.h"
+#include "r4_render_scale.h"
 namespace
 {
 bool ui_3d_icon_atlas_active = false;
@@ -27,20 +28,21 @@ void CRender::render_menu()
 
 	// Main Render
 	{
-		Target->u_setrt(Target->rt_Generic_0, 0, 0, HW.pBaseZB); // LDR RT
+		r4_render_scale::set_menu_rt(Target->rt_Generic_0); // LDR RT
 		g_pGamePersistent->OnRenderPPUI_main(); // PP-UI
 	}
 
 	// Distort
 	{
 		FLOAT ColorRGBA[4] = {127.0f / 255.0f, 127.0f / 255.0f, 0.0f, 127.0f / 255.0f};
-		Target->u_setrt(Target->rt_Generic_1, 0, 0, HW.pBaseZB); // Now RT is a distortion mask
+		r4_render_scale::set_menu_rt(Target->rt_Generic_1); // Now RT is a distortion mask
 		HW.pContext->ClearRenderTargetView(Target->rt_Generic_1->pRT, ColorRGBA);
 		g_pGamePersistent->OnRenderPPUI_PP(); // PP-UI
 	}
 
 	// Actual Display
 	Target->u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
+	r4_render_scale::end_menu(); // viewport back to output size after render-size menu targets
 	RCache.set_Shader(Target->s_menu);
 	RCache.set_Geometry(Target->g_menu);
 
@@ -118,6 +120,7 @@ void CRender::Render()
 	ViewBase.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
     HOM.MT_RENDER();
 
+	r4_render_scale::begin_scene(); // scene runs at render size until phase_pp
 	Target->phase_scene_prepare();
 
 
