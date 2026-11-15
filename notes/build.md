@@ -9,3 +9,4 @@
 - Smoke run: Start-Process C:\Anomaly\bin\AnomalyDX11AVX.exe -WorkingDirectory C:\Anomaly; CloseMainWindow() shuts down cleanly; log C:\Anomaly\appdata\logs\xray_<user>.log.
 - Engine is one static exe (xrCore etc. linked in): only AnomalyDX11AVX.exe + .pdb change in bin_dbg.
 - Blocked duplicate instance (presence mutex) exits within seconds with code 0; detect by quick exit, not code.
+- Parallel smoke runs: each dev copies C:\Anomaly\bin to its own C:\Anomaly\bin_<tag> with its exe+pdb and passes `game_launch(exe=...)`; never run/overwrite C:\Anomaly\bin\AnomalyDX11AVX.exe then.

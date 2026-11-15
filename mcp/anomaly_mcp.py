@@ -1152,6 +1152,272 @@ async def log_tail(instance: str | None = None, n: int = 100, grep: str | None =
             "lines": lines, "omitted": note}
 
 
+# ---------------------------------------------------------------- game_teleport
+# New game = the stock faction-select path: ui_mm_faction_select reads axr_main.config [character_creation] on the
+# fake_start load and ChangeLevel()s to new_game_map (a new_game_start_locations.ltx section) on the first update.
+# Everything else is lua.exec: ChangeLevel to a start location / smart terrain graph vertex, set_actor_position.
+
+TP_PRELUDE = r'''
+local FAC, LVL, POS, LOC = @FAC@, @LVL@, @POS@, @LOC@
+local ini_map = ini_file("plugins\\new_game_start_locations.ltx")
+local ini_itm = ini_file("items\\settings\\new_game_loadouts.ltx")
+local maps = ini_file("game_maps_single.ltx")
+local levels, facs, locs = {}, {}, {}
+for i = 0, maps:line_count("level_maps_single") - 1 do
+  local _, id = maps:r_line("level_maps_single", i, "", "")
+  if id ~= "fake_start" then levels[#levels + 1] = id end
+end
+ini_map:section_for_each(function(sec)
+  local f = sec:match("^(.+)_start_locations$")
+  if not f then return end
+  if ini_itm:section_exist(f .. "_loadout") then facs[#facs + 1] = f end
+  for i = 0, ini_map:line_count(sec) - 1 do
+    local _, id, v = ini_map:r_line(sec, i, "", "")
+    local l = v:match("^([^,]+)")
+    if l and ini_map:section_exist(id) then locs[#locs + 1] = {f, id, l, v:find(",true") ~= nil} end
+  end
+end)
+table.sort(levels); table.sort(facs)
+local function has(t, x) for _, v in ipairs(t) do if v == x then return true end end end
+local function fmt(p) return string.format("%.2f,%.2f,%.2f", p.x, p.y, p.z) end
+local function pick_loc(lvl, fac) -- the faction's own start (story start first), else any faction's start on lvl
+  local own, any
+  for _, e in ipairs(locs) do
+    if e[3] == lvl or (lvl == nil and e[1] == fac) then
+      if e[1] == fac then
+        if not own or (e[4] and not own[4]) then own = e end
+      elseif not any then any = e end
+    end
+  end
+  return own or any
+end
+local function community() return (character_community(db.actor):gsub("^actor_", "")) end
+'''
+
+TP_INFO = r'''
+local e
+if FAC and not has(facs, FAC) then e = "unknown faction '" .. FAC .. "'; valid: " .. table.concat(facs, ", ") end
+if LVL and not has(levels, LVL) then e = "unknown level '" .. LVL .. "'; valid: " .. table.concat(levels, ", ") end
+local ingame = level.present() and db.actor ~= nil
+local loc = pick_loc(LVL, FAC or "stalker")
+return e or "", ingame and "game" or "menu", ingame and level.name() or "", ingame and community() or "",
+  loc and loc[2] or "", loc and loc[3] or ""
+'''
+
+TP_NEWGAME = r'''
+local kit = {}
+for i = 0, ini_itm:line_count(FAC .. "_loadout") - 1 do -- the menu's preselected kit (PDA etc. come from [shared])
+  local _, sec, v = ini_itm:r_line(FAC .. "_loadout", i, "", "")
+  local t = str_explode(v, ",")
+  if t[1] == "false" and ini_sys:section_exist(sec) and (not t[4] or tonumber(t[4]) >= 1) then
+    for _ = 1, tonumber(t[2]) or 1 do kit[#kit + 1] = sec end
+  end
+end
+local money = ini_itm:r_float_ex(FAC .. "_money", "money")
+local c, cc = axr_main.config, "character_creation"
+c:w_value(cc, "new_game_difficulty", 1)
+c:w_value(cc, "new_game_economy", 1)
+c:w_value(cc, "new_game_economy_treasure", 1)
+c:w_value(cc, "new_game_story_mode", FAC ~= "zombied" and true or nil)
+c:w_value(cc, "new_game_character_name", "MCP_Agent")
+c:w_value(cc, "new_game_faction", FAC)
+c:w_value(cc, "new_game_loadout", table.concat(kit, ","))
+c:w_value(cc, "new_game_map", LOC)
+c:w_value(cc, "new_game_money", money)
+c:save()
+exec_console_cmd("keypress_on_start off")
+device():pause(false)
+exec_console_cmd("start server(all/single/alife/new) client(localhost)")
+exec_console_cmd("main_menu off")
+return #kit, money or 0
+'''
+
+TP_GOTO = r'''
+exec_console_cmd("main_menu off")
+local gg, sim = game_graph(), alife()
+local function lvl_of(g) return sim:level_name(gg:vertex(g):level_id()) end
+local p, lv, gv, how
+if POS then -- nearest graph vertex; the exact spot is set after the load
+  local t, bd = vector():set(POS[1], POS[2], POS[3])
+  local g = 0
+  while gg:valid_vertex_id(g) do
+    local v = gg:vertex(g)
+    if sim:level_name(v:level_id()) == LVL then
+      local d = v:level_point():distance_to_sqr(t)
+      if not bd or d < bd then bd, gv = d, g end
+    end
+    g = g + 1
+  end
+  how = "graph vertex nearest to the position"
+end
+local loc = not gv and pick_loc(LVL, community())
+if loc and lvl_of(ini_map:r_float_ex(loc[2], "gvid")) == LVL then
+  p = vector():set(ini_map:r_float_ex(loc[2], "x"), ini_map:r_float_ex(loc[2], "y"), ini_map:r_float_ex(loc[2], "z"))
+  lv, gv, how = ini_map:r_float_ex(loc[2], "lvid"), ini_map:r_float_ex(loc[2], "gvid"), "start location " .. loc[2]
+end
+if not gv then -- a smart terrain's graph vertex (a valid AI node); bases first, then by name
+  local best
+  for _, v in pairs(SIMBOARD.smarts) do
+    local s = v.smrt
+    if lvl_of(s.m_game_vertex_id) == LVL then
+      local b = (s.props and s.props.base or 0) > 0
+      if not best or (b and not best[2]) or (b == best[2] and s:name() < best[1]:name()) then best = {s, b} end
+    end
+  end
+  if best then gv, how = best[1].m_game_vertex_id, "smart terrain " .. best[1]:name() end
+end
+if not gv then return "error", "level " .. LVL .. " has no graph vertices in this game" end
+if not p then p, lv = gg:vertex(gv):level_point(), gg:vertex(gv):level_vertex_id() end
+ChangeLevel(p, lv, gv, VEC_ZERO)
+return "ok", how, fmt(p)
+'''
+
+TP_PLACE = r'''
+exec_console_cmd("main_menu off")
+local p = vector():set(POS[1], POS[2], POS[3])
+local bad, r = 4294967295, 0
+if level.vertex_id(p) >= bad then -- off the AI map: snap to the nearest node within 30 m
+  local found
+  for d = 1, 30 do
+    local n = math.max(8, math.floor(2 * math.pi * d / 1.5))
+    for k = 0, n - 1 do
+      local a = 2 * math.pi * k / n
+      local v = level.vertex_id(vector():set(p.x + d * math.cos(a), p.y, p.z + d * math.sin(a)))
+      if v < bad then found = v break end
+    end
+    if found then r = d break end
+  end
+  if not found then return "error", "position " .. fmt(p) .. " is not near the AI map of " .. level.name() end
+  p = level.vertex_position(found)
+end
+db.actor:set_actor_position(p)
+return "ok", fmt(p), r
+'''
+
+TP_PROBE = r'''
+local a = db.actor
+if not (level.present() and a) then return "" end
+return level.name(), tostring(a.afterFirstUpdate == true), tostring(a:alive())
+'''
+
+TP_FINAL = r'''
+local a, gave = db.actor, ""
+if FAC then a:set_character_community("actor_" .. FAC, 0, 0) end
+local pda = a:object("device_pda_1") or a:object("device_pda_2") or a:object("device_pda_3")
+if not pda then alife_create_item("device_pda_1", a) gave = "device_pda_1" end
+return level.name(), fmt(a:position()), community(), pda and pda:section() or gave, gave, a:money()
+'''
+
+TP_NAME_RX = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def tp_lua(code, fac=None, lvl=None, pos=None, loc=None):
+    def s(v):
+        return f'"{v}"' if v else "nil"
+    p = "{%s}" % ",".join(repr(float(c)) for c in pos) if pos else "nil"
+    pre = TP_PRELUDE.replace("@FAC@", s(fac)).replace("@LVL@", s(lvl)).replace("@POS@", p).replace("@LOC@", s(loc))
+    return pre + code
+
+
+def tp_exec(inst, code, timeout=30, **kw):
+    return inst.call("lua.exec", {"code": tp_lua(code, **kw)}, timeout=timeout)["results"]
+
+
+def tp_wait(inst, want_level, deadline):
+    """Until the actor is alive on want_level, its first update ran and no load is in progress."""
+    last = None
+    while True:
+        if inst.dead:
+            reason = inst.crash["reason"] if inst.crash else None
+            raise RuntimeError(f"game exited with code {inst.exit_code} while waiting for {want_level}" +
+                               (f": {reason}" if reason else "") + " (see game_last_crash)")
+        if time.time() > deadline:
+            raise TimeoutError(f"actor not in control on {want_level} in time; last probe: {last}")
+        try:  # heartbeat is answered while the main thread loads; lua.exec only after it
+            if not inst.call("engine.heartbeat", timeout=5).get("loading"):
+                last = tp_exec(inst, TP_PROBE, timeout=10)
+                if last[:3] == [want_level, "true", "true"]:
+                    return
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+        time.sleep(1)
+
+
+def teleport(inst, faction, level, position, cvars, timeout):
+    t0 = time.time()
+    deadline = t0 + timeout
+    for name in (faction, level):
+        if name is not None and not TP_NAME_RX.match(name):
+            raise ValueError(f"bad name {name!r}")
+    if position is not None and len(position) != 3:
+        raise ValueError("position must be [x, y, z]")
+    err, mode, cur_level, cur_fac, loc, loc_level = tp_exec(inst, TP_INFO, fac=faction, lvl=level)
+    if err:
+        raise ValueError(err)
+    notes, load_s, fac_set = [], 0.0, None
+    if mode == "menu":
+        faction = faction or "stalker"
+        level = level or loc_level
+        if not level:
+            raise ValueError(f"faction {faction} has no start location; give a level")
+        kit, money = tp_exec(inst, TP_NEWGAME, fac=faction, loc=loc or None)
+        notes.append(f"new game as {faction}: {kit} kit items, {money} RU, story mode " +
+                     ("off" if faction == "zombied" else "on"))
+        t = time.time()
+        if loc:  # the faction-select script jumps from fake_start to the start location by itself
+            notes.append(f"start location {loc}")
+            tp_wait(inst, level, deadline)
+        else:
+            tp_wait(inst, "fake_start", deadline)
+        load_s += time.time() - t
+        cur_level = level if loc else "fake_start"
+    else:
+        if faction and faction != cur_fac:
+            fac_set = faction
+            notes.append(f"in-game faction change: community {cur_fac} -> {faction} in place (inventory, story and "
+                         "relations untouched); for a clean start as a faction use game_restart, then game_teleport")
+    if level and level != cur_level:
+        how = tp_exec(inst, TP_GOTO, lvl=level, pos=position)
+        if how[0] == "error":
+            raise RuntimeError(how[1])
+        notes.append(f"level change to {level} via {how[1]} ({how[2]})")
+        t = time.time()
+        tp_wait(inst, level, deadline)
+        load_s += time.time() - t
+    if position is not None:
+        placed = tp_exec(inst, TP_PLACE, pos=position)
+        if placed[0] == "error":
+            raise RuntimeError(placed[1])
+        if placed[2] != "0":
+            notes.append(f"position off the AI map, snapped {placed[2]} m to {placed[1]}")
+    lvl, pos, fac, pda, gave, money = tp_exec(inst, TP_FINAL, fac=fac_set)
+    if gave:
+        notes.append(f"actor had no PDA; gave {gave}")
+    applied = []
+    for cmd in cvars or []:
+        res = inst.call("console.exec", {"cmd": cmd}, timeout=30)
+        lines, _ = bound(res.get("lines", []), keep="head", max_chars=2000)
+        applied.append({"cmd": cmd, "lines": lines})
+    return {"instance": inst.id, "level": lvl, "position": [float(c) for c in pos.split(",")], "faction": fac,
+            "pda": pda or None, "money": int(float(money)), "load_s": round(load_s, 1),
+            "total_s": round(time.time() - t0, 1), "cvars": applied or None, "notes": notes or None}
+
+
+@tool
+async def game_teleport(instance: str | None = None, faction: str | None = None, level: str | None = None,
+                        position: list[float] | None = None, cvars: list[str] | None = None,
+                        timeout: float = 600) -> dict:
+    """Get a playable session on a map: returns once the actor is in control there (or errors/times out).
+
+    Main menu: starts a new game as faction (default stalker) with its stock kit (PDA included) on level (default:
+    the faction's start). The stock start location on that level is used, else a smart terrain's graph vertex;
+    two loads (fake_start, then the level). In game: other level -> level change; position [x, y, z] -> moves the
+    actor there (snapped to the nearest AI node if off the map). faction in game only switches the actor's
+    community in place. cvars: console commands applied after arrival (e.g. ["g_god on"]).
+    Unknown level/faction -> error listing the valid ones. Result: level, position, faction, load_s, notes."""
+    return await run(teleport, get(instance), faction, level, position, cvars, timeout)
+
+
 def main():
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     w = wer_warning(DEFAULT_EXE.name)
