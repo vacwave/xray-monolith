@@ -7,3 +7,4 @@
 - Screenshots / render → `Layers/xrRender/r__screenshot.cpp`, `xrEngine/Render.h` → `render.md`
 - Game state (actor, level, time) → `xrGame/Actor*.cpp`, `Level.h`, `level_script.cpp` → `gamestate.md`
 - Build, output, 3rd party, gamedata packing → `src/Common.props`, `engine-vs2022.sln`, `compressor/` → `build.md`
+- Python MCP supervisor (instances, slots/caps, launch, log buffer, tools) → `mcp/anomaly_mcp.py`, `mcp/README.md`, `.mcp.json` → `supervisor.md`

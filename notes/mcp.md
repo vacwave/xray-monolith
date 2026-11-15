@@ -15,7 +15,7 @@
 - Gotcha: xrEngine builds with exceptions off → nlohmann auto-uses abort-on-throw; only use non-throwing APIs (`parse(s,nullptr,false)`, `find`, `is_*` checks, `dump(..., error_handler_t::replace)`).
 - nlohmann/json v3.12.0 vendored at `src/3rd party/nlohmann/json.hpp` (+ LICENSE.MIT); include only in .cpp files.
 - `-mcp_port 0` = ephemeral port (sscanf %d, 0..65535 valid). After listen, actual port (getsockname) is written as `<port>\n` to `<app_data_root>\mcp_port` via `mcp_port.tmp` + MoveFileEx; deleted in `mcp::stop()`. Stale file remains after a crash or failed bind.
-- `engine.info` also returns `frame` (Device.dwFrame), `active` (Device.b_is_Active), `rendered` (Device.dwRenderedFrames), `iconic` (IsIconic main window), `silent` (Device.IsSilent()).
+- `engine.info` also returns `pid` (GetCurrentProcessId; used by the supervisor to watch attached games), `frame` (Device.dwFrame), `active` (Device.b_is_Active), `rendered` (Device.dwRenderedFrames), `iconic` (IsIconic main window), `silent` (Device.IsSilent()).
 - MCP runs are silent by default: no splash, main window minimized, never takes focus, still renders; `-showwindow` restores normal window/focus/splash (see engine.md).
 - Multi-instance: each instance `-fsltx C:\Anomaly\fsgame.ltx -mcp_port 0 -appdata <dir>`; MCP mode never pauses on focus loss.
 - Log streaming: `mcp::capture_log()` (called in WinMain_impl right after `Core._initialize` when `-mcp_port`) registers `on_log` via `xrLogger::AddLogCallback`; removed at the top of `mcp::stop()`. Missed: the ~11 lines logged inside `Core._initialize` (CPU, FS init, xrCore build); seq 1 is "Game started: ...".
@@ -25,7 +25,9 @@
 - Backpressure: outbox is a deque; `queue_event` drops the oldest queued event beyond `max_queued_events` (10000); responses never dropped. Net thread sends outside out_lock, so a slow client never blocks the logger. Client recovers gaps via log.tail.
 - Reconnect recipe (verified): connect, read events, call `log.tail {"since":<last seen or 0>}`, union by seq → gapless. "* [MCP] Client connected" is the first streamed line of a connection.
 - Fixed: `engine.info` crashed while a level was loading (`g_pGameLevel->name()` is empty, so json(null c_str)); it now returns level null until the name is set.
-- `console.exec {"cmd"}` → `{"lines":[...]}` (xrEngine builtin, `Console->Execute`, i.e. no history/echo). `lua.exec {"code"}` → `{"results":[tostring each, nil→"nil"],"lines":[...]}`; registered from xrGame (`xrGame/mcp_lua.cpp`, `mcp_register_lua()` in `CGamePersistent::OnAppStart`). Errors → -32603 with message (+ traceback).
+- `console.exec {"cmd"}` → `{"lines":[...],"truncated":N}` (xrEngine builtin, `Console->Execute`, i.e. no history/echo). `lua.exec {"code"}` → `{"results":[tostring each, nil→"nil"],"lines":[...],"truncated":N}`; registered from xrGame (`xrGame/mcp_lua.cpp`, `mcp_register_lua()` in `CGamePersistent::OnAppStart`). Errors → -32603 with message (+ traceback).
 - Line capture: `mcp::run_logged(f)` (ENGINE_API) logs `* [MCP] exec #<id>` before f and `... done` after, then waits (cv on log_lock, max 2 s) until on_log sees the end marker; returns ring lines strictly between (FIFO logger queue ⇒ all lines printed during f). Lines from other threads in that window are included. Timeout → partial lines + `! [MCP] exec #N: log lines incomplete`. Markers stay in the log/ring/events.
 - ENGINE_API JSON helpers for xrGame (keeps nlohmann out of xrGame): `get_string_param(params,key,out)` (UTF-8→cp1251), `to_json_string(s)` (cp1251→UTF-8 quoted). Handler error messages are converted cp1251→UTF-8.
-- Gotcha: console `help` crashes the stock engine (`CCC_Token::Info` with null tokens, xr_ioc_cmd.h:266) — not MCP; use cvar queries for smoke tests.
+- Fixed: console `help` crashed in `CCC_Token::Info` (null token list, xr_ioc_cmd.h); null guard added. `help` prints ~1000 lines.
+- `run_logged` returns JSON members `"lines":[first 500],"truncated":<rest>` (`max_exec_lines`); handlers wrap it in `{...}`. Lines beyond the cap are still in the ring/events.
+- Supervisor (Python, `mcp/anomaly_mcp.py`) → see `supervisor.md`.

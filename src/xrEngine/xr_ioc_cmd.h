@@ -261,6 +261,8 @@ public:
 	{
 		I[0] = 0;
 		xr_token* tok = tokens;
+		if (!tok)
+			return;
 		for (int Iter = 0;; Iter++)
 		{
 			if (tok[Iter].name == nullptr)

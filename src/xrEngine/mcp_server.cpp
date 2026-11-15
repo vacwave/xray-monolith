@@ -26,6 +26,7 @@ namespace
 		max_line = 1024 * 1024,
 		log_ring_size = 10000, // lines kept for log.tail
 		max_queued_events = 10000, // oldest events are dropped beyond this
+		max_exec_lines = 500, // run_logged keeps the first lines, counts the rest as truncated
 	};
 
 	// JSON-RPC error codes
@@ -384,6 +385,7 @@ namespace
 				{ "protocol_version", protocol_version },
 				{ "version", engine_version.c_str() },
 				{ "mt", true },
+				{ "pid", GetCurrentProcessId() },
 				{ "frame", Device.dwFrame },
 				{ "active", Device.b_is_Active != FALSE },
 				{ "rendered", Device.dwRenderedFrames },
@@ -446,7 +448,7 @@ namespace
 				out = "console is not ready";
 				return false;
 			}
-			out = "{\"lines\":" + run_logged([&]() { Console->Execute(cmd.c_str()); }) + "}";
+			out = "{" + run_logged([&]() { Console->Execute(cmd.c_str()); }) + "}";
 			return true;
 		});
 	}
@@ -480,6 +482,7 @@ xr_string run_logged(const std::function<void()>& f)
 	Msg("%s%llu done", mark_prefix, id);
 
 	json arr = json::array();
+	u64 truncated = 0;
 	bool complete;
 	{
 		// Bounded wait: the logger thread only takes log_lock briefly and never waits on the main thread
@@ -490,13 +493,18 @@ xr_string run_logged(const std::function<void()>& f)
 			u64 end = complete ? mark_end : last_seq + 1;
 			for (const auto& l : log_ring)
 				if (l.seq > mark_begin && l.seq < end)
-					arr.push_back(l.line);
+				{
+					if (arr.size() < max_exec_lines)
+						arr.push_back(l.line);
+					else
+						truncated++;
+				}
 		}
 		mark_id = 0;
 	}
 	if (!complete)
 		Msg("! [MCP] exec #%llu: log lines incomplete (logger did not catch up in %u ms)", id, (u32)mark_wait_ms);
-	return dump(arr).c_str();
+	return xr_string("\"lines\":") + dump(arr).c_str() + ",\"truncated\":" + std::to_string(truncated).c_str();
 }
 
 bool get_string_param(LPCSTR params, LPCSTR key, xr_string& out)

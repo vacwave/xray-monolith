@@ -15,6 +15,28 @@ namespace
 		return 1;
 	}
 
+	// print() replacement during lua.exec: tostring'd args, tab-separated, to the engine log
+	int log_print(lua_State* L)
+	{
+		int n = lua_gettop(L);
+		xr_string s;
+		for (int i = 1; i <= n; i++)
+		{
+			lua_getglobal(L, "tostring");
+			lua_pushvalue(L, i);
+			lua_call(L, 1, 1);
+			const char* v = lua_tostring(L, -1);
+			if (!v)
+				return luaL_error(L, "'tostring' must return a string to 'print'");
+			if (i > 1)
+				s += "	";
+			s += v;
+			lua_pop(L, 1);
+		}
+		Log(s.c_str());
+		return 0;
+	}
+
 	// tostring() on the value at idx; never raises
 	xr_string to_string(lua_State* L, int idx)
 	{
@@ -50,6 +72,12 @@ namespace
 		}
 		int handler = top + 1;
 
+		// Swap print for the log version; the old one stays on the stack and is restored after the pcall
+		lua_getglobal(L, "print");
+		lua_pushcfunction(L, log_print);
+		lua_setglobal(L, "print");
+		int old_print = handler + 1;
+
 		// Passing the values through a function keeps the chunk frame (a plain "return f()" is a tail call, which drops it from error positions and tracebacks)
 		xr_string ret = "return (function(...) return ... end)(" + code + "\n)";
 		int err = luaL_loadbuffer(L, ret.c_str(), ret.size(), "=lua.exec");
@@ -64,11 +92,13 @@ namespace
 		bool ok = !err;
 		if (ok)
 		{
-			for (int i = handler + 1; i <= lua_gettop(L); i++)
+			for (int i = old_print + 1; i <= lua_gettop(L); i++)
 				results.push_back(to_string(L, i));
 		}
 		else
 			error = to_string(L, -1);
+		lua_pushvalue(L, old_print);
+		lua_setglobal(L, "print");
 		lua_settop(L, top);
 		return ok;
 	}
@@ -106,7 +136,7 @@ namespace
 				out += ",";
 			out += mcp::to_json_string(results[i].c_str());
 		}
-		out += "],\"lines\":" + lines + "}";
+		out += "]," + lines + "}";
 		return true;
 	}
 }

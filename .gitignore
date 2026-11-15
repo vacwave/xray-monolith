@@ -46,3 +46,9 @@ compressor/mod/
 *~
 
 __pycache__/
+
+# MCP supervisor
+!/.mcp.json
+/.mcp-run/
+__pycache__/
+*.egg-info/

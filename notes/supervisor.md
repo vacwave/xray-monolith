@@ -1,0 +1,14 @@
+# Python MCP supervisor (`mcp/`)
+- Single file `mcp/anomaly_mcp.py`; MCP SDK 2.x (`mcp>=2.3,<3`): FastMCP is renamed `mcp.server.mcpserver.MCPServer` in 2.x (`mcp.server.fastmcp` raises). Run: `py -3.11 mcp/anomaly_mcp.py`; `.mcp.json` registers `anomaly` with a repo-relative path (Claude Code must start in the repo/worktree root).
+- SDK 2.x hides the text of non-`ToolError` exceptions ("Error executing tool X"): the `@tool` wrapper re-raises everything as `ToolError("<Type>: <msg>")`. Client side: `CallToolResult.is_error` (not `isError`).
+- Tools are async; blocking work runs via `anyio.to_thread.run_sync`. Each instance: socket reader thread (responses by id + `log` events) and a process watcher thread (WaitForSingleObject via ctypes).
+- Slots: `%LOCALAPPDATA%\anomaly-mcp\slots\<profile>-<n>.lock`, `msvcrt.locking(LK_NBLCK)` on byte 0, held by the supervisor until the game exits (watcher releases) or game_stop. Caps: env `ANOMALY_MCP_MAX_VANILLA/GAMMA` > `%LOCALAPPDATA%\anomaly-mcp\config.json` > 3/2. Profile gamma iff game_root is C:\GAMMA.
+- Instance id = slot name (`vanilla-1`); appdata `<repo>\.mcp-run\<id>\appdata` (reused; user.ltx overwritten from `mcp/templates/user.ltx` each launch, shaders_cache seeded once). A relaunch into the same slot replaces the dead entry.
+- Launched games go into a KILL_ON_JOB_CLOSE job object, so they die with the supervisor (keeps caps honest); on stdin EOF the supervisor first game_stops them gracefully. Attached games: no slot, no job.
+- Ring: deque of (seq, line, arrival time; 0 for fills), 20k. Live events with seq <= last_seq are dropped (already fetched); a jump > 1 triggers a `log.tail {"since": prev}` fill on a side thread; merges rebuild sorted by seq. Connect always does `log.tail since=last_seq`. Log rate = live arrivals in the last 10 s.
+- Output safeguards (`bound`): collapse consecutive repeats `×N`, clip lines to 2000 chars, cap 20k chars (exec keeps head, log/status keep tail), `omitted` explains; exec adds the engine's `truncated`.
+- game_stop: `console.exec quit` (replies, then exits in <1 s), wait 30 s, TerminateProcess. Externally killed game → exit code 1, alive false, buffer kept.
+- Verified timings: launch → connected + engine.info ≈5 s (menu still loading, frame ~2); `new_game` → level `fake_start` in engine.info after ≈8 s; 5000-line spam exec ≈0.1 s.
+- Quick exit (code 0 within 15 s) = presence mutex (same exe dir + appdata) or startup failure; reported with the newest log file's tail (with a mutex block that is the other instance's log).
+- Gotcha (seen once, not reproduced): a launch hung with no `logs` dir and no `mcp_port` for 120 s; game_launch then times out leaving the process (game_stop kills it).
+- Gotcha (build): never pipe MSBuild into `Select-Object -First N` — it stops the pipeline and kills MSBuild mid-build, leaving cl.exe orphans.
