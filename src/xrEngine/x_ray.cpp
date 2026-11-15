@@ -1128,6 +1128,8 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 
 	compute_build_id();
 	Core._initialize("xray", NULL, TRUE, fsgame[0] ? fsgame : NULL);
+	if (Core.ParamsData.test(ECoreParams::mcp_port))
+		mcp::capture_log();
 	renderdoc_initialize();
 
 	InitSettings();

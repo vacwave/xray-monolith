@@ -8,3 +8,5 @@
 - Crash sequence: SetImmediateMode :806, format_message :808, crashhandler :814, LogStackTrace :820, FlushLog :857, save_mini_dump :859.
 - Minidump: `save_mini_dump` xrDebugNew.cpp:664; name `<App>_<User>_<timestamp>.mdmp` in `$logs$` (fallback `logs/`, then cwd); flags MiniDumpNormal|FilterMemory|ScanMemory :737.
 - Crash hook: `Debug.set_crashhandler(void(*)())` xrDebug.h:24 — single slot, already used by console (XR_IOConsole.cpp:238 DumpConsoleVariablesOnCrash); chain, don't replace.
+- `xrLogger::InitLog` runs inside `Core._initialize` (xrCore.cpp:82); `AddLogCallback` needs theLogger, so the earliest callback point in xrEngine is right after `Core._initialize`. Callbacks see lines only when the logger thread prints them (no replay).
+- Never call Msg from a log callback (re-enters logging under logCallbackGuard).

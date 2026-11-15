@@ -14,6 +14,8 @@ namespace mcp
 	// Thread-safe; data_json must be valid JSON text. Dropped when no client is connected
 	ENGINE_API void send_event(LPCSTR name, LPCSTR data_json);
 
+	// Start buffering engine log lines for log events / log.tail (call as early as possible)
+	void capture_log();
 	void start(u16 port, LPCSTR version);
 	void stop();
 }
