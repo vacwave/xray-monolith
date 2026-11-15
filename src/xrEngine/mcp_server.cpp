@@ -58,6 +58,24 @@ namespace
 
 	xr_map<xr_string, handler> handlers;
 	xr_string engine_version;
+	string_path port_file = "";
+
+	// <app_data_root>\mcp_port: actual port + newline, written via temp file + rename for the supervisor
+	void write_port_file(u16 port)
+	{
+		string_path tmp;
+		FS.update_path(port_file, "$app_data_root$", "mcp_port");
+		xr_sprintf(tmp, "%s.tmp", port_file);
+		FILE* f = fopen(tmp, "wb");
+		bool ok = f && fprintf(f, "%u\n", port) > 0;
+		if (f && fclose(f) != 0)
+			ok = false;
+		if (!ok || !MoveFileEx(tmp, port_file, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+		{
+			Msg("! [MCP] Failed to write %s", port_file);
+			port_file[0] = 0;
+		}
+	}
 
 	std::string dump(const json& j)
 	{
@@ -263,6 +281,8 @@ namespace
 				{ "protocol_version", protocol_version },
 				{ "version", engine_version.c_str() },
 				{ "mt", true },
+				{ "frame", Device.dwFrame },
+				{ "active", Device.b_is_Active != FALSE },
 				{ "level", g_pGameLevel ? json(g_pGameLevel->name().c_str()) : json(nullptr) },
 			};
 			out = dump(info).c_str();
@@ -315,6 +335,12 @@ void start(u16 port, LPCSTR version)
 		return;
 	}
 
+	sockaddr_in bound{};
+	int bound_len = sizeof(bound);
+	if (getsockname(listen_sock, (sockaddr*)&bound, &bound_len) == 0)
+		port = ntohs(bound.sin_port);
+	write_port_file(port);
+
 	register_builtins();
 	Device.seqFrame.Add(&frame, REG_PRIORITY_LOW);
 
@@ -335,6 +361,8 @@ void stop()
 
 	Device.seqFrame.Remove(&frame);
 	WSACleanup();
+	if (port_file[0])
+		DeleteFile(port_file);
 	Msg("* [MCP] Stopped");
 }
 }

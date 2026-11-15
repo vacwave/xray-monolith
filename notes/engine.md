@@ -6,3 +6,8 @@
 - Startup: WinMain x_ray.cpp:1271 → WinMain_impl :971 → Core._initialize :1107, InitEngine :173, InitConsole :239, Startup :589.
 - In Startup: `Device.Create()` :648, `Init_Discord` :662 (model for starting a service thread), `Device.Run()` :675; shutdown after Run returns :677-715, `destroyEngine` :310.
 - Flags: raw `strstr(Core.Params, "-start ")` x_ray.cpp:639; typed `ECoreParams` xrCore/xrParams.h:3 filled in xrParams.cpp:26, test via `Core.ParamsData.test(...)`.
+- `-appdata <dir>`: `xrParams::GetAppDataArg` (xrParams.cpp; quoted `"..."` for spaces, else up to next space; `_fullpath`-normalized, `\`, no trailing slash). Applied in `CLocatorAPI::_initialize` when the `$app_data_root$` line is parsed, so `$logs$`/`$game_saves$`/... follow; dir created via `VerifyPath`.
+- user.ltx loads (`CCC_LoadCFG`, falls back to `$fs_root$`) and saves (`CCC_SaveCFG`) via `$app_data_root$`; logs and minidumps via `$logs$`; shaders_cache under app_data_root → all follow `-appdata`.
+- Presence mutex (x_ray.cpp, `NO_MULTI_INSTANCES`) = crc of exe dir, chained with crc of lowercased `-appdata` path when given. A blocked instance exits silently with code 0 (WinMain ignores WinMain_impl's return).
+- Focus loss: `CRenderDevice::OnWM_Activate` device.cpp; `g_always_active` (rsAlwaysActive) or `-mcp_port` keeps `b_is_Active` TRUE (not in exclusive fullscreen, g_screenmode 2). `b_is_Active` gates rendering (`on_idle`) and seqAppActivate/Deactivate; `dwFrame` advances even when inactive.
+- Core.Params is the lowercased command line; WinMain's lpCmdLine keeps case and is available before Core._initialize.

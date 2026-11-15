@@ -106,4 +106,6 @@ enum class ECoreParams : u8
 
 namespace xrParams {
 	void LoadParams();
+	// -appdata <dir> (quoted if it has spaces) as a normalized absolute path without trailing slash
+	XRCORE_API bool GetAppDataArg(LPCSTR cmdline, string_path& out);
 }

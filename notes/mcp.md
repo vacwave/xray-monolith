@@ -14,3 +14,6 @@
 - Builtins: `ping` → "pong"; `engine.info` → protocol_version, version ("X-Ray Monolith vX (build N, date)"), mt:true, level (`g_pGameLevel->name()` or null).
 - Gotcha: xrEngine builds with exceptions off → nlohmann auto-uses abort-on-throw; only use non-throwing APIs (`parse(s,nullptr,false)`, `find`, `is_*` checks, `dump(..., error_handler_t::replace)`).
 - nlohmann/json v3.12.0 vendored at `src/3rd party/nlohmann/json.hpp` (+ LICENSE.MIT); include only in .cpp files.
+- `-mcp_port 0` = ephemeral port (sscanf %d, 0..65535 valid). After listen, actual port (getsockname) is written as `<port>\n` to `<app_data_root>\mcp_port` via `mcp_port.tmp` + MoveFileEx; deleted in `mcp::stop()`. Stale file remains after a crash or failed bind.
+- `engine.info` also returns `frame` (Device.dwFrame) and `active` (Device.b_is_Active) for liveness/focus checks.
+- Multi-instance: each instance `-fsltx C:\Anomaly\fsgame.ltx -mcp_port 0 -appdata <dir>`; MCP mode never pauses on focus loss.

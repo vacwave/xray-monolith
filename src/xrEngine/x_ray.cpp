@@ -665,8 +665,10 @@ void Startup()
 	if (Core.ParamsData.test(ECoreParams::mcp_port))
 	{
 		LPCSTR p = strstr(Core.Params, "-mcp_port ");
-		int port = p ? atoi(p + xr_strlen("-mcp_port ")) : 0;
-		if (port > 0 && port < 65536)
+		int port = -1;
+		if (p)
+			sscanf(p + xr_strlen("-mcp_port "), "%d", &port);
+		if (port >= 0 && port < 65536) // 0 = ephemeral port
 			mcp::start((u16)port, make_string("%s (build %d, %s)", XRAY_MONOLITH_VERSION, build_id, build_date).c_str());
 		else
 			Msg("! [MCP] -mcp_port: invalid or missing port");
@@ -1040,6 +1042,14 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 
 	// Create hash
 	u32 pathHash = path_crc32(exePath, xr_strlen(exePath));
+
+	// Instances with different -appdata may share one bin dir
+	string_path appdata;
+	if (xrParams::GetAppDataArg(lpCmdLine, appdata))
+	{
+		xr_strlwr(appdata);
+		pathHash = crc32(appdata, xr_strlen(appdata), pathHash);
+	}
 
 	// Create unique mutex name  
 	string256 mutexName = {};

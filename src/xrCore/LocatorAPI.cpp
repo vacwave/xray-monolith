@@ -826,7 +826,16 @@ void CLocatorAPI::_initialize(u32 flags, LPCSTR target_folder, LPCSTR fs_name)
 				p_it = pathes.find(root);
 			}
 
-			FS_Path* P = new FS_Path((p_it != pathes.end()) ? p_it->second->m_Path : root, lp_add, lp_def, lp_capt, fl);
+			FS_Path* P;
+			string_path appdata;
+			if (0 == xr_strcmp(id, "$app_data_root$") && xrParams::GetAppDataArg(Core.Params, appdata))
+			{
+				// -appdata replaces the root here, so later entries ($logs$, ...) resolve against it
+				P = new FS_Path(appdata, nullptr, lp_def, lp_capt, fl);
+				VerifyPath(P->m_Path);
+			}
+			else
+				P = new FS_Path((p_it != pathes.end()) ? p_it->second->m_Path : root, lp_add, lp_def, lp_capt, fl);
 			bNoRecurse = !(fl & FS_Path::flRecurse);
 			Recurse(P->m_Path);
 			auto I = pathes.insert(std::make_pair(xr_strdup(id), P));

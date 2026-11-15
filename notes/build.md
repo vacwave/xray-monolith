@@ -7,3 +7,5 @@
 - Check build output via Get-Item/ls, not Read (Read on _build is denied). Get-Item on _build may also be blocked; Copy-Item to C:\Anomaly\bin works, then check there.
 - C:\Anomaly user.ltx is a low-settings baseline with r__framelimit 30; uncap it (r__framelimit 0) before any FPS test.
 - Smoke run: Start-Process C:\Anomaly\bin\AnomalyDX11AVX.exe -WorkingDirectory C:\Anomaly; CloseMainWindow() shuts down cleanly; log C:\Anomaly\appdata\logs\xray_<user>.log.
+- Engine is one static exe (xrCore etc. linked in): only AnomalyDX11AVX.exe + .pdb change in bin_dbg.
+- Blocked duplicate instance (presence mutex) exits within seconds with code 0; detect by quick exit, not code.

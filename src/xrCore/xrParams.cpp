@@ -27,3 +27,29 @@ void xrParams::LoadParams()
 		}
 	}
 }
+
+bool xrParams::GetAppDataArg(LPCSTR cmdline, string_path& out)
+{
+	LPCSTR p = strstr(cmdline, "-appdata ");
+	if (!p)
+		return false;
+	p += xr_strlen("-appdata ");
+	while (*p == ' ')
+		p++;
+
+	string_path arg = "";
+	if (*p == '"')
+		sscanf(p + 1, "%[^\"]", arg);
+	else
+		sscanf(p, "%[^ ]", arg);
+	if (!arg[0] || !_fullpath(out, arg, sizeof(out)))
+		return false;
+
+	for (char* c = out; *c; c++)
+		if (*c == '/')
+			*c = '\\';
+	size_t len = xr_strlen(out);
+	while (len > 3 && out[len - 1] == '\\')
+		out[--len] = 0;
+	return true;
+}

@@ -802,7 +802,8 @@ void CRenderDevice::OnWM_Activate(WPARAM wParam, LPARAM lParam)
 	BOOL fMinimized = (BOOL)HIWORD(wParam);
 	BOOL bActive = ((fActive != WA_INACTIVE) && (!fMinimized)) ? TRUE : FALSE;
 
-	if (psDeviceFlags2.test(rsAlwaysActive) && g_screenmode != 2)
+	// MCP mode keeps simulating/rendering when unfocused, like g_always_active
+	if ((psDeviceFlags2.test(rsAlwaysActive) || Core.ParamsData.test(ECoreParams::mcp_port)) && g_screenmode != 2)
 	{
 		Device.b_is_Active = TRUE;
 
