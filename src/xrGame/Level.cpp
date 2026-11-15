@@ -1242,10 +1242,16 @@ void CLevel::script_gc()
 	
 }
 
+int psLua_ParallelGCPause = 0;
+static bool s_lua_gc_cycle = false;
+static int s_lua_gc_cycle_end_kb = 0;
+
 // demonized: bind LuaGC call to be available in device.cpp
 bool CLevel::Load(u32 dwNum)
 {
     inherited::Load(dwNum);
+    s_lua_gc_cycle = false;
+    s_lua_gc_cycle_end_kb = 0;
     Msg("Device.LuaGC bind");
     Device.LuaGC.bind(&CLevel::LuaGC);
     Device.LuaGCDebug.bind(&CLevel::LuaGCDebug);
@@ -1255,7 +1261,26 @@ bool CLevel::Load(u32 dwNum)
 // demonized: called from Device, via Device.LuaGC pointer
 int CLevel::LuaGC()
 {
-    return lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLua_ParallelGCStep);
+    lua_State* L = ai().script_engine().lua();
+
+    // Don't start the next cycle until the heap has grown by psLua_ParallelGCPause percent since the last one ended
+    if (psLua_ParallelGCPause && !s_lua_gc_cycle && s_lua_gc_cycle_end_kb)
+    {
+        const int kb = lua_gc(L, LUA_GCCOUNT, 0);
+        // A collection outside this loop (collectgarbage, LUA_GCCOLLECT) shrank the heap: grow from there
+        s_lua_gc_cycle_end_kb = _min(s_lua_gc_cycle_end_kb, kb);
+        if (kb < s_lua_gc_cycle_end_kb + s_lua_gc_cycle_end_kb / 100 * psLua_ParallelGCPause)
+            return 1;
+    }
+
+    s_lua_gc_cycle = true;
+    const int res = lua_gc(L, LUA_GCSTEP, psLua_ParallelGCStep);
+    if (res == 1)
+    {
+        s_lua_gc_cycle = false;
+        s_lua_gc_cycle_end_kb = lua_gc(L, LUA_GCCOUNT, 0);
+    }
+    return res;
 }
 void CLevel::LuaGCDebug()
 {
