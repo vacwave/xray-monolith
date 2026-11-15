@@ -509,6 +509,9 @@ _DDS:
 			if (img_loaded_lod)
 			{
 				Reduce(LoadInfo.Width, LoadInfo.Height, IMG.MipLevels, img_loaded_lod);
+				// only the mips left after the skipped ones: asking for more makes D3DX re-encode the smallest levels
+				if (IMG.MipLevels > 1)
+					LoadInfo.MipLevels = IMG.MipLevels - _min(u32(img_loaded_lod), IMG.MipLevels - 1);
 			}
 
 			//LoadInfo.Usage = D3D_USAGE_IMMUTABLE;
