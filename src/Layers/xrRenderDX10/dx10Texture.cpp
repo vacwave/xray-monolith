@@ -445,6 +445,10 @@ _DDS:
 
 			LoadInfo.pSrcInfo = &IMG;
 
+			// Use a full mip chain from the file as is: with the default MipLevels D3DX decodes and re-encodes every level (very slow for BC6H/BC7)
+			if (IMG.MipLevels == GetPowerOf2Plus1(_max(IMG.Width, IMG.Height)))
+				LoadInfo.MipLevels = IMG.MipLevels;
+
 #ifdef USE_DX11
 			R_CHK(D3DX11CreateTextureFromMemory(
 				HW.pDevice,
