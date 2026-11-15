@@ -4,6 +4,7 @@ Agent <-> MCP stdio (this process) <-> TCP JSON lines <-> engine (-mcp_port). st
 """
 import ctypes
 import ctypes.wintypes as wt
+import difflib
 import fnmatch
 import functools
 import glob
@@ -1431,6 +1432,8 @@ if level.vertex_id(p) >= bad then -- off the AI map: snap to the nearest node wi
   end
   if not found then return "error", "position " .. fmt(p) .. " is not near the AI map of " .. level.name() end
   p = level.vertex_position(found)
+elseif p.y < level.vertex_position(level.vertex_id(p)).y - 0.5 then -- below the ground: lift onto the node
+  p.y = level.vertex_position(level.vertex_id(p)).y
 end
 db.actor:set_actor_position(p)
 return "ok", fmt(p), r
@@ -2241,6 +2244,747 @@ async def game_lua_profile(instance: str | None = None, seconds: float = 5, top:
     if mode not in LUA_PROFILE_MODES:
         raise ValueError(f"mode must be one of {LUA_PROFILE_MODES}")
     return await run(lua_profile, inst, seconds, max(1, min(int(top), 200)), mode)
+
+
+# ---------------------------------------------------------------- scenario tools
+# game_spawnable / game_spawn / game_give / game_actor / game_kill / game_release / game_weather / game_emission:
+# guarded lua.exec chunks through Anomaly's own script paths (debug spawner lists and squad creation, alife_create(_item),
+# alife_release, level_weathers, surge/psi-storm managers). Each chunk returns one JSON string ({error} on failure).
+
+SC_PRE = r'''
+local A = @ARGS@
+local function J(v)
+  local t = type(v)
+  if t == "nil" then return "null" end
+  if t == "boolean" then return tostring(v) end
+  if t == "number" then
+    if v ~= v or v == math.huge or v == -math.huge then return "null" end
+    if v == math.floor(v) and math.abs(v) < 1e15 then return string.format("%d", v) end
+    return string.format("%.3f", v)
+  end
+  if t == "table" then
+    local o = {}
+    if v[1] ~= nil or next(v) == nil then
+      for i = 1, #v do o[i] = J(v[i]) end
+      return "[" .. table.concat(o, ",") .. "]"
+    end
+    for k, x in pairs(v) do o[#o + 1] = J(tostring(k)) .. ":" .. J(x) end
+    return "{" .. table.concat(o, ",") .. "}"
+  end
+  return '"' .. (tostring(v):gsub('[%c"\\]', function(c) return string.format("\\u%04x", c:byte()) end)) .. '"'
+end
+local function fail(m) return J({error = m}) end
+local function in_game() return level.present() and db.actor ~= nil and alife() ~= nil end
+local NOGAME = "not in game (main menu or no actor yet); start one with game_teleport"
+local BAD = 4294967295
+local function r2(x) return math.floor(x * 100 + 0.5) / 100 end
+local function P(p) return {r2(p.x), r2(p.y), r2(p.z)} end
+local function snap(p, maxr) -- the point's AI node, else the nearest on rings up to maxr m
+  local v = level.vertex_id(p)
+  if v < BAD then return v, 0 end
+  for d = 1, maxr do
+    local n = math.max(8, math.floor(2 * math.pi * d / 1.5))
+    for k = 0, n - 1 do
+      local a = 2 * math.pi * k / n
+      v = level.vertex_id(vector():set(p.x + d * math.cos(a), p.y, p.z + d * math.sin(a)))
+      if v < BAD then return v, d end
+    end
+  end
+end
+local function mod(name) -- a game script module (loaded on demand); nil if a mod removed it
+  local ok, m = pcall(function() return _G[name] end)
+  return ok and type(m) == "table" and m or nil
+end
+local function creature(o) return IsStalker(o) or IsMonster(o) end
+'''
+
+SC_CATALOG = r'''
+local m = mod("ui_debug_main")
+if not (m and type(m.get_spawn_table) == "function" and type(m.id_to_spawn_table) == "table") then
+  return fail("ui_debug_main.get_spawn_table (the debug spawner's section lists) is not available")
+end
+local out = {}
+for _, name in ipairs(m.id_to_spawn_table) do
+  for _, sec in ipairs(m.get_spawn_table(name) or {}) do
+    out[#out + 1] = name .. "|" .. sec .. "|" .. (name:find("^Squads") and ini_sys:r_string_ex(sec, "faction") or "")
+  end
+end
+return J(table.concat(out, "\n"))
+'''
+
+SC_SPAWN = r'''
+if not in_game() then return fail(NOGAME) end
+local a, sec, kind, n, rel = db.actor, A.section, A.kind, A.count, A.relation
+local base, clip, turned
+if A.pos then
+  base = vector():set(A.pos[1], A.pos[2], A.pos[3])
+else -- dist m ahead of the camera, horizontally; blocked by level geometry -> the freest of 8 directions
+  local d, p = device().cam_dir, a:position()
+  local yaw = math.atan2(d.x, d.z)
+  local best, bd, turn = nil, -1, 0
+  for k = 0, 7 do
+    local y = yaw + (k % 2 == 1 and 1 or -1) * math.ceil(k / 2) * math.pi / 4
+    local h = vector():set(math.sin(y), 0, math.cos(y))
+    local rq = ray_pick(vector():set(p.x, p.y + 1.5, p.z), h, A.dist, rq_target.rqtStatic, a)
+    local free = (rq:query() and rq:get_distance() < A.dist) and math.max(0.5, rq:get_distance() - 0.7) or A.dist
+    if free > bd + 0.5 then best, bd, turn = h, free, math.floor(math.deg(y - yaw) + 0.5) end
+    if free >= A.dist or k == 0 and not A.turn then break end
+  end
+  if bd < A.dist then clip = r2(bd) end
+  if turn ~= 0 then turned = (turn + 540) % 360 - 180 end
+  base = vector():set(p.x + best.x * bd, p.y, p.z + best.z * bd)
+end
+local lv0, moved = snap(base, 30)
+if not lv0 then return fail("position " .. J(P(base)) .. " is not within 30 m of the AI map of " .. level.name()) end
+local center, gv = level.vertex_position(lv0), a:game_vertex_id()
+local ring = n > 1 and math.max(A.spacing, A.spacing * n / (2 * math.pi)) or 0
+local gw = rel == "enemy" and -1000 or rel == "friend" and 1000 or 0
+local function info(se, k) return {id = se.id, section = se:section_name(), kind = k, position = P(se.position)} end
+local out, notes = {}, {}
+for i = 1, n do
+  local p, lv = center, lv0
+  if ring > 0 then
+    local ang = 2 * math.pi * (i - 1) / n
+    local l = snap(vector():set(center.x + ring * math.cos(ang), center.y, center.z + ring * math.sin(ang)), 3)
+    if l then p, lv = level.vertex_position(l), l end
+  end
+  local se
+  if kind == "squad" then -- as the debug spawner / create_squad_at_named_location: no smart, sim picks a target
+    se = alife_create(sec, p, lv, gv)
+    if se then
+      se:create_npc(nil, p, lv, gv)
+      local o = info(se, "squad")
+      o.faction, o.members = se.player_id, {}
+      for k in se:squad_members() do
+        local m = k.object or alife():object(k.id)
+        if m then
+          SIMBOARD:setup_squad_and_group(m)
+          SendScriptCallback("squad_on_npc_creation", se, m)
+          o.members[#o.members + 1] = {id = m.id, section = m:section_name(), community = alife_character_community(m)}
+        end
+      end
+      if rel then se:set_squad_relation(rel) end
+      out[#out + 1] = o
+    end
+  elseif kind == "item" then
+    se = alife_create_item(sec, {vector():set(p.x, p.y + 0.3, p.z), lv, gv})
+    if se then out[#out + 1] = info(se, kind) end
+  else
+    se = alife_create(sec, p, lv, gv)
+    if se then
+      local stpk = kind == "anomaly" and mod("utils_stpk")
+      local data = stpk and stpk.get_object_data(se)
+      if data then -- the debug spawner's zone setup: a 3 m sphere
+        data.object_flags, data.restrictor_type = 31, 0
+        data.shapes = {{shtype = 0, offset = VEC_ZERO, radius = 3}}
+        stpk.set_object_data(data, se)
+      end
+      if rel and IsStalker(nil, se:clsid()) then se:force_set_goodwill(gw, 0) end
+      out[#out + 1] = info(se, kind)
+    end
+  end
+  if not se then notes[#notes + 1] = "creating #" .. i .. " failed (see log_tail)" end
+end
+return J({objects = out, center = P(center), snapped_m = moved, clipped_m = clip, turned_deg = turned, level = level.name(), notes = notes})
+'''
+
+SC_ONLINE = r'''
+if not in_game() then return fail(NOGAME) end
+local out = {}
+for _, id in ipairs(A.ids) do
+  local o = level.object_by_id(id)
+  local r = {id = id, exists = alife():object(id) ~= nil, online = o ~= nil}
+  if o then
+    r.position = P(o:position())
+    if creature(o) then r.alive = o:alive() end
+  end
+  out[#out + 1] = r
+end
+return J(out)
+'''
+
+SC_GIVE = r'''
+if not in_game() then return fail(NOGAME) end
+local a, sec, ids = db.actor, A.section, {}
+if A.remove then
+  a:iterate_inventory(function(_, it)
+    if it:section() == sec and (A.count == 0 or #ids < A.count) then ids[#ids + 1] = it:id() end
+  end, a)
+  for _, id in ipairs(ids) do alife_release_id(id) end
+  return J({removed = ids})
+end
+if A.rounds then -- itms_manager splits the rounds into full boxes + a remainder
+  local t = alife_create_item(sec, a, {ammo = A.rounds})
+  for _, se in ipairs(type(t) == "table" and t or {t}) do ids[#ids + 1] = se.id end
+else
+  for _ = 1, A.count do
+    local se = alife_create_item(sec, a)
+    if se then ids[#ids + 1] = se.id end
+  end
+end
+return J({ids = ids})
+'''
+
+SC_EQUIP = r'''
+if not in_game() then return fail(NOGAME) end
+local a, out = db.actor, {}
+for _, id in ipairs(A.ids) do
+  local o = level.object_by_id(id)
+  local sec = o and o:section()
+  local slot = sec and ini_sys:line_exist(sec, "slot") and ini_sys:r_s32(sec, "slot") or -1
+  if not o then out[#out + 1] = {id = id, error = "not online yet"}
+  elseif slot < 0 then out[#out + 1] = {id = id, error = sec .. " has no inventory slot"}
+  else -- the move is an inventory event: the slot changes a frame later (A.check polls it)
+    local w = a:item_in_slot(slot)
+    local ok = w ~= nil and w:id() == id
+    if not (ok or A.check) then a:move_to_slot(o, slot) end
+    if ok and A.check and IsWeapon(o) and a:active_slot() ~= slot then a:activate_slot(slot) end
+    out[#out + 1] = {id = id, slot = slot, equipped = ok}
+  end
+end
+return J(out)
+'''
+
+SC_ACTOR = r'''
+if not in_game() then return fail(NOGAME) end
+local a, S = db.actor, A.set
+if not a:alive() then return fail("the actor is dead") end
+-- absolute setters (the change_* ones only queue a delta for the next condition update)
+if S.health then a:set_health_ex(S.health) end
+if S.stamina then a.power = S.stamina end
+if S.radiation then a.radiation = S.radiation end
+if S.satiety then a.satiety = S.satiety end
+if S.psy_health then a.psy_health = S.psy_health end
+if S.bleeding == 0 then a.bleeding = 1 end -- ChangeBleeding(1) heals every wound
+if S.money then a:give_money(S.money - a:money()) end
+return J({ok = true})
+'''
+
+SC_KILL = r'''
+if not in_game() then return fail(NOGAME) end
+local out = {}
+local function kill(id, squad)
+  local o, r = level.object_by_id(id), {id = id, squad = squad}
+  if not o then r.result = alife():object(id) and "offline (not on this level's online radius); use game_release" or "gone"
+  elseif not creature(o) then r.result = "not a creature (" .. o:section() .. ")"
+  elseif not o:alive() then r.result = "already dead"
+  else o:kill(A.by_actor and db.actor or o) r.result = "killed" r.section = o:section() end
+  out[#out + 1] = r
+end
+for _, id in ipairs(A.ids) do
+  local se = alife():object(id)
+  if se and (se:clsid() == clsid.online_offline_group_s or se:clsid() == clsid.online_offline_group) then
+    for k in se:squad_members() do kill(k.id, id) end
+  elseif id == 0 then out[#out + 1] = {id = 0, result = "the actor; use game_actor or lua db.actor:kill(db.actor)"}
+  else kill(id) end
+end
+return J(out)
+'''
+
+SC_RELEASE = r'''
+if not in_game() then return fail(NOGAME) end
+local out = {}
+for _, e in ipairs(A.items) do
+  local id, want = e[1], e[2]
+  local se = alife():object(id)
+  if not se then out[#out + 1] = {id = id, result = "gone"}
+  elseif id == 0 then out[#out + 1] = {id = id, result = "the actor; not released"}
+  elseif want and se:section_name() ~= want then
+    out[#out + 1] = {id = id, result = "id now belongs to " .. se:section_name() .. "; skipped"}
+  else
+    local sec = se:section_name()
+    if not alife_release(se) then -- alife_release skips creatures without a squad (debug-spawned ones)
+      alife_record(se, false)
+      alife():release(se, true)
+    end
+    out[#out + 1] = {id = id, section = sec, result = alife():object(id) and "release pending" or "released"}
+  end
+end
+return J(out)
+'''
+
+SC_WEATHER = r'''
+if not in_game() then return fail(NOGAME) end
+local lw = mod("level_weathers")
+if not (lw and type(lw.get_weather_manager) == "function") then
+  return fail("level_weathers.get_weather_manager is not available")
+end
+local wm = lw.get_weather_manager()
+local function cur()
+  return {weather = level.get_weather(), cycle = wm.cycle, preset = wm.preset, weather_type = wm.weatherType,
+    time = string.format("%02d:%02d", level.get_time_hours(), level.get_time_minutes()), day = level.get_time_days(),
+    weather_fx = level.is_wfx_playing()}
+end
+local cycles, owner, files = {}, {}, {}
+for c, ps in pairs(wm.presets or {}) do
+  local l = {}
+  for p in pairs(ps) do l[#l + 1] = p owner[p] = c end
+  table.sort(l)
+  cycles[c] = l
+end
+local fl = getFS():file_list_open("$game_weathers$", 1)
+for i = 0, fl:Size() - 1 do files[#files + 1] = (fl:GetAt(i):gsub("%.ltx$", "")) end
+fl:Free()
+table.sort(files)
+local other = {}
+for _, f in ipairs(files) do if not owner[f] then other[#other + 1] = f end end
+local before, notes, W = cur(), {}, A.weather
+local cyc, pre, isfile
+if W then
+  if cycles[W] then cyc = W pre = owner[wm.preset or ""] == W and wm.preset or cycles[W][math.random(#cycles[W])]
+  elseif owner[W] then cyc, pre = owner[W], W end
+  for _, f in ipairs(files) do if f == W then isfile = true end end
+  if not (cyc or isfile) then
+    local sim, lw = {}, W:lower()
+    for _, c in ipairs(files) do if lw:find(c:lower(), 1, true) or c:lower():find(lw, 1, true) then sim[#sim + 1] = c end end
+    for c in pairs(cycles) do if lw:find(c, 1, true) or c:find(lw, 1, true) then sim[#sim + 1] = c end end
+    return J({error = "unknown weather '" .. W .. "'" .. (#sim > 0 and "; similar: " .. table.concat(sim, ", ") or ""),
+      cycles = cycles, other = other})
+  end
+end
+local mins = 0
+if A.minute_of_day then mins = (A.minute_of_day - (level.get_time_hours() * 60 + level.get_time_minutes())) % 1440 end
+if A.advance then mins = mins + math.floor(A.advance * 60 + 0.5) end
+if mins > 0 then
+  level.change_game_time(math.floor(mins / 1440), math.floor(mins % 1440 / 60), mins % 60)
+  wm:forced_weather_change()
+end
+if W then
+  if wm.weatherType ~= "atmosfear" then
+    notes[#notes + 1] = level.name() .. " has the fixed weather type " .. tostring(wm.weatherType) ..
+      " (indoor/underground): level_weathers puts it back at the next game hour"
+  end
+  if level.is_wfx_playing() then notes[#notes + 1] = "a weather effect (surge/psi-storm) is playing and overrides the weather until it ends" end
+  if cyc and wm.weatherType == "atmosfear" then -- through the manager, so it sticks for a full weather period
+    wm.cycle, wm.preset = cyc, pre
+    wm.transition_period, wm.pre_blowout_period, wm.weather_fx = false, false, nil
+    wm:reset_change_date(true)
+    wm:select_weather(true)
+  else
+    level.set_weather(W, true)
+    if not cyc then notes[#notes + 1] = W .. " is not a cycle preset: level_weathers replaces it at the next game hour" end
+  end
+end
+return J({before = before, after = cur(), advanced_minutes = mins, notes = notes,
+  cycles = A.list and cycles or nil, other = A.list and other or nil})
+'''
+
+SC_EMISSION = r'''
+if not in_game() then return fail(NOGAME) end
+local K, act = A.kind, A.action
+local name = K == "surge" and "surge_manager" or "psi_storm_manager"
+local M = mod(name)
+local get = M and (K == "surge" and M.get_surge_manager or M.get_psi_storm_manager)
+local start = M and (K == "surge" and M.start_surge or M.start_psi_storm)
+local stop = M and (K == "surge" and M.stop_surge or M.stop_psi_storm)
+if type(get) ~= "function" or type(start) ~= "function" or type(stop) ~= "function" then
+  return fail(name .. " (get/start/stop functions) is not available in this game's scripts")
+end
+local m, notes = get(), {}
+local function state()
+  local s = {started = m.started == true, level = level.name(), weather_fx = level.is_wfx_playing(),
+    time_factor = level.get_time_factor()}
+  if m.started and m.inited_time then
+    s.elapsed_s = math.floor(game.get_game_time():diffSec(m.inited_time) / level.get_time_factor())
+  end
+  if K == "surge" then s.duration_s, s.actor_in_cover = m.surge_time, GetEvent("current_safe_cover") and true or false end
+  return s
+end
+local before = state()
+if act == "start" then
+  if m.started then notes[#notes + 1] = K .. " already running"
+  else
+    start()
+    if not m.started then
+      local lv = mod("level_weathers")
+      local opt = mod("ui_options")
+      local key = K == "surge" and "alife/event/emission_state" or "alife/event/psi_storm_state"
+      if lv and lv.valid_levels and lv.valid_levels[level.name()] ~= true then
+        notes[#notes + 1] = "skipped: " .. level.name() .. " has no " .. K .. "s (underground/indoor level)"
+      elseif opt and not opt.get(key) then notes[#notes + 1] = "skipped: disabled in the game options (" .. key .. ")"
+      else notes[#notes + 1] = "skipped by " .. name .. " (level exception or an on_before_* callback)" end
+    end
+  end
+elseif act == "stop" then
+  if m.started then stop() else notes[#notes + 1] = K .. " was not running" end
+end
+return J({kind = K, action = act, before = before, after = state(), notes = notes})
+'''
+
+SC_CACHE = {}  # (instance id, pid) -> catalog
+SC_SPAWNED = {}  # instance id -> {"pid": pid, "objects": [{id, section, kind, level}]}
+SC_ALIASES = {  # kind alias -> category key patterns (keys come from the debug spawner's list names)
+    "item": ["artefacts*", "items_*", "helmets", "outfits_*", "weapons_*"],
+    "weapon": ["weapons_melee", "weapons_pistol", "weapons_shotgun", "weapons_smg", "weapons_rifle", "weapons_sniper",
+               "weapons_explosive", "weapons_misc"],
+    "ammo": ["weapons_ammo"], "outfit": ["outfits_*", "helmets"], "artefact": ["artefacts*"],
+    "monster": ["npc_mutant"], "stalker": ["npc_stalker"], "npc": ["npc_*"],
+    "squad": ["squads_*"], "monster_squad": ["squads_mutant"], "stalker_squad": ["squads_stalker"],
+}
+SC_SPAWN_KIND = {"npc_mutant": "monster", "npc_stalker": "stalker", "vehicles": "vehicle", "anomaly": "anomaly",
+                 "physic_misc": "physic"}
+SC_DEFAULTS = {"item": (2, 0.6), "monster": (15, 2), "stalker": (15, 2), "squad": (25, 8), "vehicle": (8, 6),
+               "anomaly": (8, 6), "physic": (4, 1.5)}  # kind -> (distance ahead m, spacing m)
+RELATIONS = ("enemy", "neutral", "friend")
+
+
+def sc_lit(v):
+    """Python value -> Lua literal (args of the SC_* chunks)."""
+    if v is None:
+        return "nil"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        if v != v or v in (float("inf"), float("-inf")):
+            raise ValueError("numbers must be finite")
+        return repr(v)
+    if isinstance(v, str):
+        return '"' + v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r") + '"'
+    if isinstance(v, (list, tuple)):
+        return "{" + ",".join(sc_lit(x) for x in v) + "}"
+    if isinstance(v, dict):
+        return "{" + ",".join(f"[{sc_lit(str(k))}]={sc_lit(x)}" for k, x in v.items()) + "}"
+    raise TypeError(f"cannot pass {type(v).__name__} to Lua")
+
+
+def sc_exec(inst, code, args=None, timeout=30):
+    if inst.dead:
+        raise RuntimeError(f"instance {inst.id} is not running (exit code {inst.exit_code})")
+    if inst.hung:
+        raise RuntimeError("the game is hung (see game_status)")
+    if inst.call("engine.heartbeat", timeout=5).get("loading"):
+        raise RuntimeError("a level is loading; retry once game_state shows in_game")
+    res = inst.call("lua.exec", {"code": SC_PRE.replace("@ARGS@", sc_lit(args or {})) + code}, timeout=timeout)
+    out = json.loads(res["results"][0])
+    if isinstance(out, dict) and out.get("error"):
+        extra = "; ".join(f"{k}: {json.dumps(v)}" for k, v in out.items() if k != "error")
+        raise ValueError(out["error"] + (f"; {extra}" if extra else ""))
+    return out
+
+
+def sc_key(name):
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
+def sc_catalog(inst):
+    """{section: (category key, faction)} from the debug spawner lists; cached per game process."""
+    key = (inst.id, inst.pid)
+    if key not in SC_CACHE:
+        cat = {}
+        for line in sc_exec(inst, SC_CATALOG, timeout=60).splitlines():
+            name, sec, fac = line.split("|")
+            cat.setdefault(sec, (sc_key(name), fac or None))
+        SC_CACHE[key] = cat
+    return SC_CACHE[key]
+
+
+def sc_section(inst, section):
+    cat = sc_catalog(inst)
+    if section in cat:
+        return cat[section]
+    close = difflib.get_close_matches(section, list(cat), n=8, cutoff=0.6)
+    sub = [s for s in sorted(cat) if section.lower() in s.lower()][:8]
+    hint = list(dict.fromkeys(sub + close))[:10]
+    raise ValueError(f"unknown or non-spawnable section {section!r}" + (f"; similar: {', '.join(hint)}" if hint else "")
+                     + " (see game_spawnable)")
+
+
+def sc_kind_match(kind, cat_key):
+    pats = SC_ALIASES.get(kind, [kind])
+    return any(fnmatch.fnmatchcase(cat_key, p) for p in pats)
+
+
+def sc_spawned(inst):
+    reg = SC_SPAWNED.get(inst.id)
+    if not reg or reg["pid"] != inst.pid:
+        reg = SC_SPAWNED[inst.id] = {"pid": inst.pid, "objects": []}
+    return reg["objects"]
+
+
+def sc_wait_online(inst, ids, wait):
+    """SC_ONLINE until every id has a game object or `wait` s passed (online objects appear a frame or more later)."""
+    deadline = time.time() + wait
+    while True:
+        st = sc_exec(inst, SC_ONLINE, {"ids": ids}) if ids else []
+        if all(s["online"] or not s["exists"] for s in st) or time.time() >= deadline:
+            return {s["id"]: s for s in st}
+        time.sleep(0.1)
+
+
+def spawnable(inst, kind, pattern, faction, limit):
+    cat = sc_catalog(inst)
+    if not (kind or pattern or faction):
+        cats, facs = {}, {}
+        for c, f in cat.values():
+            cats[c] = cats.get(c, 0) + 1
+            if f:
+                facs[f] = facs.get(f, 0) + 1
+        return {"instance": inst.id, "sections": len(cat), "categories": dict(sorted(cats.items())),
+                "aliases": {k: v for k, v in SC_ALIASES.items()}, "squad_factions": dict(sorted(facs.items())),
+                "hint": "filter with kind (alias or category key/glob), pattern (glob on the section name), faction"}
+    if kind and kind not in SC_ALIASES and not any(sc_kind_match(kind, c) for c, _ in cat.values()):
+        raise ValueError(f"unknown kind {kind!r}; aliases: {', '.join(SC_ALIASES)}; categories: "
+                         + ", ".join(sorted({c for c, _ in cat.values()})))
+    pat = pattern if pattern and any(ch in pattern for ch in "*?[") else f"*{pattern}*" if pattern else None
+    hits = sorted((s, c, f) for s, (c, f) in cat.items()
+                  if (not kind or sc_kind_match(kind, c)) and (not pat or fnmatch.fnmatch(s, pat))
+                  and (not faction or f == faction))
+    shown = hits[:limit]
+    by_cat = {}
+    for s, c, _ in shown:
+        by_cat.setdefault(c, []).append(s)
+    facs = {s: f for s, _, f in shown if f}
+    return {"instance": inst.id, "matched": len(hits), "by_category": by_cat, "squad_factions": facs or None,
+            "omitted": f"{len(hits) - len(shown)} more; narrow with pattern or raise limit" if len(hits) > len(shown)
+            else None}
+
+
+def spawn(inst, section, count, position, distance, relation, wait):
+    cat_key, _ = sc_section(inst, section)
+    if cat_key == "phantom":
+        raise ValueError("phantoms are client-only effects and cannot be spawned as objects")
+    kind = "squad" if cat_key.startswith("squads_") else SC_SPAWN_KIND.get(cat_key, "item")
+    if not 1 <= count <= 50:
+        raise ValueError("count must be 1..50")
+    if position is not None and len(position) != 3:
+        raise ValueError("position must be [x, y, z]")
+    if relation is not None and relation not in RELATIONS:
+        raise ValueError(f"relation must be one of {RELATIONS}")
+    notes = []
+    if relation and kind not in ("squad", "stalker"):
+        notes.append(f"relation ignored for {kind}s")
+        relation = None
+    dist, spacing = SC_DEFAULTS[kind]
+    res = sc_exec(inst, SC_SPAWN, {"section": section, "kind": kind, "count": count, "relation": relation,
+                                   "pos": list(position) if position is not None else None,
+                                   "dist": float(distance if distance is not None else dist), "spacing": spacing,
+                                   "turn": kind != "item"})
+    reg = sc_spawned(inst)
+    ids = []
+    for o in res["objects"]:
+        reg.append({"id": o["id"], "section": o["section"], "kind": o["kind"], "level": res["level"]})
+        ids += [m["id"] for m in o.get("members", [])] or [o["id"]]
+    st = sc_wait_online(inst, ids, wait) if wait > 0 else {}
+    for o in res["objects"]:
+        for m in o.get("members", []) or [o]:
+            s = st.get(m["id"])
+            if s:
+                m["online"] = s["online"]
+                if s.get("position"):
+                    m["position"] = s["position"]
+    if res.get("turned_deg") is not None:
+        notes.append(f"level geometry ahead: placed {res['turned_deg']} deg off the view direction (+ = right)")
+    if res.get("clipped_m") is not None:
+        notes.append(f"level geometry ahead: distance shortened to {res['clipped_m']} m")
+    if res["snapped_m"] > 1:
+        notes.append(f"point off the AI map; snapped {res['snapped_m']} m to the nearest node")
+    if any(m.get("online") is False for o in res["objects"] for m in o.get("members", []) or [o]):
+        notes.append("some objects are still offline (alife only): far from the actor or not online yet")
+    return {"instance": inst.id, "level": res["level"], "section": section, "kind": kind, "category": cat_key,
+            "center": res["center"], "objects": res["objects"], "notes": (notes + res["notes"]) or None}
+
+
+def give(inst, section, count, rounds, equip, remove):
+    cat_key, _ = sc_section(inst, section)
+    if not sc_kind_match("item", cat_key):
+        raise ValueError(f"{section} is a {cat_key} section, not an inventory item; use game_spawn")
+    if remove:
+        if count < 0:
+            raise ValueError("count must be >= 0 (0 = all)")
+        out = sc_exec(inst, SC_GIVE, {"section": section, "count": count, "remove": True})
+        return {"instance": inst.id, "section": section, "removed_ids": out["removed"]}
+    if rounds is not None and (cat_key != "weapons_ammo" or rounds < 1):
+        raise ValueError("rounds (>= 1) is only for ammo sections")
+    if not 1 <= count <= 100:
+        raise ValueError("count must be 1..100")
+    out = sc_exec(inst, SC_GIVE, {"section": section, "count": count, "rounds": rounds})
+    res = {"instance": inst.id, "section": section, "ids": out["ids"]}
+    if equip:
+        ids = out["ids"][:1]
+        sc_wait_online(inst, ids, 3)
+        eq = sc_exec(inst, SC_EQUIP, {"ids": ids})
+        deadline = time.time() + 2
+        while not eq[0].get("error") and time.time() < deadline:
+            time.sleep(0.1)
+            eq = sc_exec(inst, SC_EQUIP, {"ids": ids, "check": True})
+            if eq[0].get("equipped"):
+                break
+        res["equip"] = eq[0]
+    return res
+
+
+def actor_set(inst, **values):
+    s = {k: v for k, v in values.items() if v is not None and k != "heal"}
+    for k, v in s.items():
+        if k != "money" and not 0 <= v <= 1:
+            raise ValueError(f"{k} must be 0..1")
+    if s.get("bleeding") not in (None, 0):
+        raise ValueError("bleeding: only 0 (stop all bleeding) is supported")
+    if values.get("heal"):
+        s = {"health": 1, "stamina": 1, "radiation": 0, "psy_health": 1, "bleeding": 0, **s}
+    if "money" in s:
+        s["money"] = int(s["money"])
+        if s["money"] < 0:
+            raise ValueError("money must be >= 0")
+    def stats():  # engine values (Lua's actor.satiety getter always reads 1)
+        a = inst.call("state.get", {}, timeout=3).get("actor") or {}
+        return {k: a.get(k) for k in ("health", "stamina", "radiation", "satiety", "psy_health", "bleeding", "money",
+                                      "alive", "god_mode")}
+
+    res = {"before": stats()}
+    sc_exec(inst, SC_ACTOR, {"set": s})
+    res["after"] = stats()
+    off = [k for k, v in s.items() if res["after"].get(k) is not None and abs(res["after"][k] - v) > 0.01]
+    if off:
+        res["notes"] = f"not applied: {', '.join(off)}" + (
+            " (god mode is on and keeps the stats; console_exec 'g_god off')" if res["after"].get("god_mode") else "")
+    return {"instance": inst.id, **res}
+
+
+def release(inst, ids, spawned):
+    reg = sc_spawned(inst)
+    known = {o["id"]: o["section"] for o in reg}
+    items = [[int(i), known[int(i)]] if int(i) in known else [int(i)] for i in ids or []]
+    if spawned:
+        items += [[o["id"], o["section"]] for o in reg if o["id"] not in {i[0] for i in items}]
+    if not items:
+        return {"instance": inst.id, "results": [], "notes": "nothing to release"}
+    out = sc_exec(inst, SC_RELEASE, {"items": items})
+    pending = [r for r in out if r["result"] == "release pending"]
+    deadline = time.time() + 2
+    while pending and time.time() < deadline:  # squads/online objects go away a frame or more later
+        time.sleep(0.1)
+        st = sc_wait_online(inst, [r["id"] for r in pending], 0)
+        for r in pending:
+            if not st[r["id"]]["exists"]:
+                r["result"] = "released"
+        pending = [r for r in pending if r["result"] == "release pending"]
+    done ={r["id"] for r in out if r["result"] in ("released", "release pending", "gone")
+            or r["result"].startswith("id now")}
+    reg[:] = [o for o in reg if o["id"] not in done]
+    return {"instance": inst.id, "results": out, "still_tracked": len(reg)}
+
+
+def weather_set(inst, name, time_of_day, advance_hours):
+    args = {"weather": name, "advance": advance_hours, "list": not (name or time_of_day is not None or advance_hours)}
+    if time_of_day is not None:
+        m = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?", str(time_of_day).strip())
+        if not m or int(m[1]) > 23 or int(m[2] or 0) > 59:
+            raise ValueError("time must be 'HH:MM' (00:00..23:59) or an hour 0..23")
+        args["minute_of_day"] = int(m[1]) * 60 + int(m[2] or 0)
+    if advance_hours is not None and not 0 <= advance_hours <= 24 * 30:
+        raise ValueError("advance_hours must be 0..720")
+    res = sc_exec(inst, SC_WEATHER, args)
+    if res.get("other"):
+        res["other"], extra = res["other"][:100], len(res["other"]) - 100
+        if extra > 0:
+            res["other_omitted"] = extra
+    return {"instance": inst.id, **res}
+
+
+@tool
+async def game_spawnable(instance: str | None = None, kind: str | None = None, pattern: str | None = None,
+                         faction: str | None = None, limit: int = 200) -> dict:
+    """Spawnable sections from the game's data (Anomaly's debug spawner lists, so mods' items are included).
+
+    No filter -> categories with counts, kind aliases and squad factions. kind: alias (item, weapon, ammo, outfit,
+    artefact, monster, stalker, npc, squad, monster_squad, stalker_squad) or a category key / glob (e.g. items_food,
+    weapons_rifle, squads_stalker). pattern: glob on the section name (no wildcard = substring). faction: squads of
+    that faction (e.g. bandit, duty, monster_predatory_day). limit: max sections listed (default 200)."""
+    inst = get(instance)
+    return await run(spawnable, inst, kind, pattern, faction, max(1, min(int(limit), 2000)))
+
+
+@tool
+async def game_spawn(section: str, count: int = 1, position: list[float] | None = None,
+                     distance: float | None = None, relation: str | None = None, instance: str | None = None,
+                     wait: float = 3) -> dict:
+    """Spawn count (1..50) objects of a spawnable section (see game_spawnable): items on the ground, monsters,
+    stalkers, squads (alife squad sections: members are created and the squad joins the simulation like a natural
+    one), anomalies, vehicles, physics objects. Saves/loads like natural objects.
+
+    Placement: position [x, y, z], else distance m ahead of the camera (default item 2, monster/stalker 15,
+    squad 25, others 4-8), snapped to the nearest AI-map node (within 30 m; never inside geometry); count > 1 spreads
+    them on a ring. relation (squads/stalkers): enemy | neutral | friend towards the actor (default: faction's).
+    Returns alife ids at once; waits up to `wait` s for the game objects (online true/false per object; squads far
+    from the actor stay offline). Every spawn is tracked for game_release(spawned=True). Kill with game_kill."""
+    inst = get(instance)
+    return with_error_hint(inst, await run(spawn, inst, section, int(count), position, distance, relation,
+                                           max(0.0, min(float(wait), 30.0))))
+
+
+@tool
+async def game_give(section: str, count: int = 1, rounds: int | None = None, equip: bool = False,
+                    remove: bool = False, instance: str | None = None) -> dict:
+    """Give the actor count (1..100) inventory items of section (see game_spawnable kind=item). Ammo: count = full
+    boxes, or rounds = exact number of rounds (split into full boxes + a remainder). equip: move the (first) item to
+    its slot (weapons become active; outfits/helmets are worn). remove: take up to count items of section from the
+    actor instead (count 0 = all). Returns the item ids. Money / health: game_actor."""
+    inst = get(instance)
+    return with_error_hint(inst, await run(give, inst, section, int(count), rounds, equip, remove))
+
+
+@tool
+async def game_actor(heal: bool = False, health: float | None = None, stamina: float | None = None,
+                     radiation: float | None = None, satiety: float | None = None, psy_health: float | None = None,
+                     bleeding: float | None = None, money: int | None = None,
+                     instance: str | None = None) -> dict:
+    """Set actor stats (0..1): health, stamina, radiation, satiety, psy_health; bleeding 0 stops bleeding; money =
+    exact amount (RU). heal = health/stamina/psy 1, radiation 0, bleeding stopped (explicit values win). Returns before
+    and after. Other toggles are console cvars (console_exec): "g_god on" (god mode), "g_unlimitedammo on";
+    faction: game_teleport(faction=...)."""
+    inst = get(instance)
+    return with_error_hint(inst, await run(lambda: actor_set(inst, heal=heal, health=health, stamina=stamina,
+                                                             radiation=radiation, satiety=satiety,
+                                                             psy_health=psy_health, bleeding=bleeding, money=money)))
+
+
+@tool
+async def game_kill(ids: list[int], by_actor: bool = False, instance: str | None = None) -> dict:
+    """Kill creatures by id through the engine's kill path (death callbacks, corpses, squad bookkeeping run as usual).
+    A squad id kills its online members. by_actor: the actor is the killer (counts as the actor's kill: goodwill,
+    stats); default the victim itself. Offline (alife-only) creatures cannot be killed; release them instead."""
+    inst = get(instance)
+    return with_error_hint(inst, {"instance": inst.id, "results": await run(
+        sc_exec, inst, SC_KILL, {"ids": [int(i) for i in ids], "by_actor": by_actor})})
+
+
+@tool
+async def game_release(ids: list[int] | None = None, spawned: bool = False, instance: str | None = None) -> dict:
+    """Remove objects from the game (alife_release: squads with their members, NPCs out of their squads, items also
+    from inventories). ids: any object ids; spawned: everything game_spawn created in this game process that still
+    exists (ids are checked against the spawned section, so reused ids are skipped)."""
+    inst = get(instance)
+    return with_error_hint(inst, await run(release, inst, ids, spawned))
+
+
+@tool
+async def game_weather(weather: str | None = None, time: str | None = None, advance_hours: float | None = None,
+                       instance: str | None = None) -> dict:
+    """Weather and time of day. No arguments -> current state plus the valid weathers: cycles {cycle: [presets]}
+    (e.g. clear, cloudy, rainy, stormy, foggy) and other weather files. weather: a cycle (random preset of it) or a
+    preset, applied at once through level_weathers (holds for a full weather period); another weather file is set
+    directly (level_weathers replaces it at the next game hour). time: 'HH:MM' or hour, reached by advancing the game
+    clock (never backwards); advance_hours: advance further. Returns before/after (weather, cycle, preset, time, day).
+    Surges/psi-storms play weather effects that override the weather while they run. Time factor: not here."""
+    inst = get(instance)
+    return with_error_hint(inst, await run(weather_set, inst, weather, time, advance_hours))
+
+
+@tool
+async def game_emission(kind: str = "surge", action: str = "status", instance: str | None = None) -> dict:
+    """Emission (kind=surge) or psi-storm (kind=psi_storm) through Anomaly's surge_manager / psi_storm_manager (the
+    debug tools' calls, so the scripted effects, sounds, hits and their Lua load are the real thing). action: start,
+    stop (ends it at once), status. Start may be skipped by the manager (underground level, disabled in options,
+    level exceptions); notes say why. Returns before/after: started, elapsed_s, duration_s (surge), weather_fx,
+    time_factor. game_state.world.surge / psi_storm report the same started flag."""
+    inst = get(instance)
+    if kind not in ("surge", "psi_storm"):
+        raise ValueError("kind must be surge or psi_storm")
+    if action not in ("start", "stop", "status"):
+        raise ValueError("action must be start, stop or status")
+    return with_error_hint(inst, {"instance": inst.id,
+                                  **await run(sc_exec, inst, SC_EMISSION, {"kind": kind, "action": action})})
 
 
 def main():
