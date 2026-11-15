@@ -135,7 +135,10 @@ void CInifile::InsertIntoDATA(xr_unordered_flat_map<shared_str, Items>& FinalDat
 	DATA.reserve(FinalData.size());
 	for (auto& SectPair : FinalData)
 	{
-        DATA.push_back({ SectPair.first, SectPair.second });
+		// FinalData is discarded after this; move-assign, push_back(Sect&&) would copy through xalloc::construct
+		Sect& S = DATA.emplace_back();
+		S.Name = SectPair.first;
+		S.Data = std::move(SectPair.second);
 	}
 	std::sort(DATA.begin(), DATA.end(), [](const Sect& a, const Sect& b)
 	{
@@ -377,8 +380,8 @@ void CInifile::StashCurrentSection(
 		}
 		else
 		{
-			BaseData.emplace(CurrentBase->Name, *CurrentBase);
 			SectionToFilename[CurrentBase->Name] = currentFileName;
+			BaseData.emplace(CurrentBase->Name, std::move(*CurrentBase)); // deleted below
 		}
 		xr_delete(CurrentBase);
 	}
@@ -399,8 +402,8 @@ void CInifile::StashCurrentSection(
 		}
 		else
 		{
-			OverrideData.emplace(CurrentOverride->Name, *CurrentOverride);
 			OverrideToFilename[CurrentOverride->Name].insert(currentFileName);
+			OverrideData.emplace(CurrentOverride->Name, std::move(*CurrentOverride)); // deleted below
 		}
 		xr_delete(CurrentOverride);
 	}
@@ -1010,7 +1013,7 @@ CInifile::Items CInifile::MergeSections(
 	return Result;
 }
 
-CInifile::Items CInifile::EvaluateSection(
+const CInifile::Items& CInifile::EvaluateSection(
 	shared_str SectionName,
 	EvaluationsContext& Evaluations,
 	string_path currentFileName
@@ -1092,19 +1095,23 @@ CInifile::Items CInifile::EvaluateSection(
 					BaseData[parent].Name = parent;
 				}
 			}
-			Items ParentData = EvaluateSection(parent, Evaluations, currentFileName);
+			// reference into ResolvedCache, used before the cache is modified again
+			const Items& ParentData = EvaluateSection(parent, Evaluations, currentFileName);
 			ResolvedParents = MergeSections(ResolvedParents, ParentData, DeletedItems, false);
 		}
 	}
 
-	Items ResolvedBaseAndMods = BaseData[SectionName].Data;
+	const Items& BaseItems = BaseData[SectionName].Data;
+	const Items* ResolvedBaseAndMods = &BaseItems;
+	Items MergedBaseAndMods;
 	auto o_it = OverrideData.find(SectionName);
 	if (o_it != OverrideData.end())
 	{
-		ResolvedBaseAndMods = MergeSections(ResolvedBaseAndMods, o_it->second.Data, DeletedItems, true);
+		MergedBaseAndMods = MergeSections(BaseItems, o_it->second.Data, DeletedItems, true);
+		ResolvedBaseAndMods = &MergedBaseAndMods;
 		OverrideData.erase(o_it);
 	}
-	Items CurrentResult = MergeSections(ResolvedParents, ResolvedBaseAndMods, DeletedItems, false);
+	Items CurrentResult = MergeSections(ResolvedParents, *ResolvedBaseAndMods, DeletedItems, false);
 
 	// Optimized list splitting and joining with reduced allocations
 	static auto split_list = [](shared_str items, char delimiter = ',')
