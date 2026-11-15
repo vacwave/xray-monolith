@@ -525,6 +525,26 @@ _DDS:
 			}
 			LoadInfo.pSrcInfo = &IMG;
 
+			// BC6H/BC7 need a size that is a multiple of 4: D3DX rounds it up and re-encodes, which takes seconds per texture.
+			// Load these uncompressed at the same rounded size instead.
+			if ((LoadInfo.Width | LoadInfo.Height) & 3)
+			{
+				DXGI_FORMAT unpacked = DXGI_FORMAT_UNKNOWN;
+				switch (IMG.Format)
+				{
+				case DXGI_FORMAT_BC7_UNORM: unpacked = DXGI_FORMAT_R8G8B8A8_UNORM; break;
+				case DXGI_FORMAT_BC7_UNORM_SRGB: unpacked = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; break;
+				case DXGI_FORMAT_BC6H_UF16:
+				case DXGI_FORMAT_BC6H_SF16: unpacked = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
+				}
+				if (unpacked != DXGI_FORMAT_UNKNOWN)
+				{
+					LoadInfo.Format = unpacked;
+					LoadInfo.Width = (LoadInfo.Width + 3) & ~3u;
+					LoadInfo.Height = (LoadInfo.Height + 3) & ~3u;
+				}
+			}
+
          HRESULT textureLoadResult;
 #ifdef USE_DX11
             textureLoadResult = D3DX11CreateTextureFromMemory
