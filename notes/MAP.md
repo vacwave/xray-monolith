@@ -6,6 +6,7 @@
 - Input / actions, MCP input injection (input.run, game_input) → `xrEngine/Xr_input.cpp`, `xrEngine/mcp_input.*`, `xrGame/mcp_input.cpp`, `xrGame/Level_input.cpp`, `xr_level_controller.cpp`, `level_script.cpp` → `input.md`
 - Screenshots / render (MCP screenshot.begin/get, game_screenshot) → `Layers/xrRender/r__screenshot.cpp`, `xrEngine/Render.h`, `xrEngine/mcp_screenshot.*`, R4 `DoAsyncScreenshot` → `render.md`
 - Game state (actor, level, time, new-game/faction scripts, level change; MCP state.get / game_state snapshot: mode, UI, actor, hands, target, world) → `xrGame/Actor*.cpp`, `Level.h`, `level_script.cpp`, `xrGame/mcp_state.cpp` → `gamestate.md`
+- World queries (MCP world.objects/world.object, game_objects/game_object: nearby objects, kinds, bearing, los, offline alife, crosshair target) → `xrGame/mcp_world.cpp` → `world.md`
 - Build, output, 3rd party, gamedata packing → `src/Common.props`, `engine-vs2022.sln`, `compressor/` → `build.md`
 - Python MCP supervisor (instances, slots/caps, launch, log buffer, tools, crash records, hang monitor, dumps/WER, game_teleport) → `mcp/anomaly_mcp.py`, `mcp/setup_wer.ps1`, `mcp/README.md`, `.mcp.json` → `supervisor.md`
 - Perf measurement (game_perf, perf.start/perf.report, frame phases, Lua/GC timing hooks, instrumentation points for the Lua profiler) → `xrEngine/mcp_perf.*`, `xrGame/mcp_perf.cpp`, `luabind/src/pcall.cpp` (`pcall_hook`), marks in `device.cpp` on_idle → `perf.md`

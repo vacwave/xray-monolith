@@ -47,4 +47,5 @@
 - `input.run {"steps":[...]}` → `{"id"}` (validated up front: unknown names → -32603 with the valid list); runs from the next frame. `input.status {"id"}` → `{id,done,started,elapsed_ms,frames,cancelled?,warning?,held}`; without id → `{running:[...],held:[names]}`. `input.release_all` → `{released,cancelled}`. Last 32 finished sequences are kept. See input.md.
 - `mcp::client_id()` (mcp_server.h, xrEngine-internal) = current conn_id, 0 when no client.
 - Registration from xrGame: `mcp_register_input()` (xrGame/mcp_input.cpp, OnAppStart) → `mcp_input::init(hooks)` (ENGINE_API; no-op without -mcp_port).
+- `world.objects` / `world.object` (nearby objects, one object's detail) -> see world.md; registered from xrGame/mcp_world.cpp.
 - `state.get` (game state snapshot) -> see gamestate.md; registered from xrGame/mcp_state.cpp. JSON built with a local flat-object builder (`jobj`) over `mcp::to_json_string` (no nlohmann in xrGame).

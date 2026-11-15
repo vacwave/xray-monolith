@@ -155,6 +155,7 @@ extern void clean_game_globals();
 extern void init_game_globals();
 extern void mcp_register_input();
 extern void mcp_register_state();
+extern void mcp_register_world();
 extern void mcp_register_lua();
 extern void mcp_register_perf();
 extern void mcp_register_events();
@@ -166,6 +167,7 @@ void CGamePersistent::OnAppStart()
 	init_game_globals();
 	mcp_register_input();
 	mcp_register_state();
+	mcp_register_world();
 	mcp_register_lua();
 	mcp_register_perf();
 	mcp_register_events();

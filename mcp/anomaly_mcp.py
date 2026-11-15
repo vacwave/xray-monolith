@@ -1612,6 +1612,93 @@ async def game_state(instance: str | None = None, sections: list[str] | None = N
     return await run(game_state_get, inst, sections)
 
 
+# ---------------------------------------------------------------- game_objects
+
+WORLD_KINDS = ("stalker", "monster", "corpse", "item", "weapon", "ammo", "artefact", "anomaly", "campfire",
+               "container", "door", "physic", "vehicle", "ladder", "level_changer", "smart_terrain", "restrictor",
+               "cover", "squad", "other", "npc", "box", "zone", "loot", "creature", "all")
+
+
+def world_call(inst, method, params):
+    """world.* on the main thread; answers {available: false, reason: loading} without waiting while a level loads."""
+    if inst.dead:
+        raise RuntimeError(f"instance {inst.id} is not running (exit code {inst.exit_code})")
+    if inst.hung:
+        return {"instance": inst.id, "available": False, "reason": "hung"}
+    t0 = time.perf_counter()
+    if inst.call("engine.heartbeat", timeout=5).get("loading"):
+        return {"instance": inst.id, "available": False, "reason": "loading", "source": "supervisor"}
+    try:
+        res = inst.call(method, params, timeout=3)
+    except TimeoutError:
+        if inst.call("engine.heartbeat", timeout=5).get("loading"):
+            return {"instance": inst.id, "available": False, "reason": "loading", "source": "supervisor"}
+        raise TimeoutError(f"{method}: no reply in 3 s and no level is loading (main thread stalled; see game_status)")
+    res["call_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    return {"instance": inst.id, **res}
+
+
+@tool
+async def game_objects(instance: str | None = None, radius: float = 100, kinds: list[str] | None = None,
+                       pattern: str | None = None, alive: bool | None = None, hostile_only: bool = False,
+                       visible_only: bool = False, los: bool = False, limit: int = 30, summary: bool = False,
+                       offline: bool = False, position: list[float] | None = None) -> dict:
+    """Find things around the actor (or `position` [x,y,z]) without screenshots: nearest first, compact, read-only.
+
+    radius: metres (3D distance from the origin). kinds: stalker (living NPC, incl.
+    traders), monster, corpse (dead stalker/monster, `of`), item, weapon, ammo, artefact, anomaly, campfire,
+    container, door, physic, vehicle, ladder, level_changer, smart_terrain, restrictor, cover (smart cover), squad
+    (offline only), other (default: all but restrictor and cover); aliases
+    npc=stalker, box=container, zone=anomaly, loot=item+weapon+ammo+artefact, creature=stalker+monster+corpse, all.
+    pattern: case-insensitive glob on section / object name / NPC name. alive: true = living creatures only, false =
+    corpses only. hostile_only: living creatures whose relation to the actor is enemy. visible_only: inside the
+    current camera view (frustum, not occlusion). los: per object an unobstructed ray from the camera to its centre
+    (level geometry and other objects block; at most 64 rays per call, later objects get no los field).
+    limit: max objects (default 30, cap 100); summary=true returns only counts per kind (cheap first look).
+    offline: also alife server entities on this level that have no client object (beyond the online radius, squads):
+    listed separately in `offline` (id, kind, section, name, position, distance, bearing, alive, squad, smart;
+    offline: true); hostile_only / visible_only disable it.
+    Per object: id, kind, section, name (unique object name), display (NPC character name / item name), position,
+    distance, bearing (deg to turn right to face its centre: game_input {"look": {"yaw": bearing, "pitch":
+    elevation}}, or {"look_at": position}), elevation (deg up). Creatures: alive, health, community, rank, relation
+    (friend/neutral/enemy/worst_enemy), wounded, in_combat, enemy_id, sees_actor, squad_id/squad/smart; corpses:
+    items, has_loot. Items: condition, cost, ammo/mag_size/ammo_type (weapons), rounds (ammo). Anomalies: type (engine
+    class), radius, enabled (campfires: lit). Containers: empty, items, closed. Level changers: destination. Also counts (per kind,
+    all matches), total, omitted, target (crosshair: distance, point, id/kind/section or material for level geometry),
+    cost_ms (engine time). Outside a level: {available: false, reason: no_level/loading/no_actor}.
+    Detail for one object (inventory, money, active item, zone power): game_object(id)."""
+    inst = get(instance)
+    bad = [k for k in (kinds or []) if k not in WORLD_KINDS]
+    if bad:
+        raise ValueError(f"unknown kinds {bad}; valid: {list(WORLD_KINDS)}")
+    p = {"radius": str(float(radius)), "limit": int(limit)}
+    if kinds:
+        p["kinds"] = ",".join(kinds)
+    if pattern:
+        p["pattern"] = pattern
+    if alive is not None:
+        p["alive"] = int(alive)
+    for k, v in (("hostile_only", hostile_only), ("visible_only", visible_only), ("los", los), ("summary", summary),
+                 ("offline", offline)):
+        if v:
+            p[k] = 1
+    if position is not None:
+        if len(position) != 3:
+            raise ValueError("position must be [x, y, z]")
+        p["position"] = ",".join(str(float(c)) for c in position)
+    return await run(world_call, inst, "world.objects", p)
+
+
+@tool
+async def game_object(id: int, instance: str | None = None) -> dict:
+    """Full detail for one object by id (from game_objects / game_state.target): the game_objects fields plus los
+    (always), inventory (grouped by section: count, rounds; capped at 50) / items / money / active_item for NPCs and
+    corpses, inventory of containers, effective_radius / max_power for anomalies, parent_id when the object is inside
+    an inventory. Not online -> the alife server entity (offline: true). Unknown id -> object null."""
+    inst = get(instance)
+    return await run(world_call, inst, "world.object", {"id": int(id)})
+
+
 # ---------------------------------------------------------------- game_input
 
 def input_run(inst, steps, wait, timeout):
