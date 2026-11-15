@@ -466,6 +466,8 @@ void CInifile::LTXLoad (
 	Sect* CurrentOverride = 0;
 	MezzStringBuffer str;
 	MezzStringBuffer str2;
+	MezzStringBuffer value_raw; // reused for every line, always written before use
+	MezzStringBuffer currentLine;
 
 	BOOL bInsideSTR = FALSE;
 	BOOL bIsCurrentSectionOverride = FALSE;
@@ -525,6 +527,9 @@ void CInifile::LTXLoad (
 	};
 
 	xr_unordered_flat_set<shared_str> sectionsMarkedForCreate;
+	string_path itemFileNameSrc;
+	shared_str itemFileName;
+	bool bItemFileNameValid = false;
 
 	while (!F->eof() || (bIsRootFile && !bHasLoadedModFiles))
 	{
@@ -612,7 +617,7 @@ void CInifile::LTXLoad (
 
 			continue;
 		}
-		xr_string currentLine = str;
+		xr_strcpy(currentLine, currentLine.GetSize(), str);
 
 		// Parse comment - single pass instead of multiple strchr calls
 		LPSTR comm = strchr(str, ';');
@@ -813,7 +818,6 @@ void CInifile::LTXLoad (
 			// name = value
 			bool bIsDelete = str[0] == '!';
 
-			MezzStringBuffer value_raw;
 			char* name = (char*)(str + (bIsDelete ? 1 : 0));
 			char* t = strchr(name, '=');
 			if (t)
@@ -860,13 +864,19 @@ void CInifile::LTXLoad (
 			if (!I.first)
 			{
                 if (print_dltx_warnings)
-				    Msg("~[DLTX] WARNING: Malformed line %s in file %s, can't get key name, skipping, section data might be altered unexpectedly", currentLine.c_str(), currentFileName);
+				    Msg("~[DLTX] WARNING: Malformed line %s in file %s, can't get key name, skipping, section data might be altered unexpectedly", currentLine.GetBuffer(), currentFileName);
 				continue;
 			}
 			I.second = bIsDelete ? DLTX_DELETE.c_str() : (str2[0] ? str2.GetBuffer() : NULL);
 
-			auto fname = toLowerCaseCopy(trimCopy(getFilename(std::string(currentFileName))));
-			I.filename = fname.c_str();
+			// currentFileName changes only on #include, so recompute the item filename only then
+			if (!bItemFileNameValid || xr_strcmp(itemFileNameSrc, currentFileName))
+			{
+				bItemFileNameValid = true;
+				xr_strcpy(itemFileNameSrc, currentFileName);
+				itemFileName = toLowerCaseCopy(trimCopy(getFilename(std::string(currentFileName)))).c_str();
+			}
+			I.filename = itemFileName;
 			I.depth = depth;
 
 			if (*I.first || *I.second)
