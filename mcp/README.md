@@ -42,6 +42,12 @@ All tools take an optional `instance` (default: the last launched or attached on
 | `log_tail` | `n` (≤1000), `grep` regex, `since` seq, from the supervisor's 20k-line buffer |
 | `game_teleport` | playable session on a map: from the main menu a new game as `faction` (stock kit incl. PDA) on `level`; in game a level change and/or move to `position` [x,y,z]; then `cvars` (console commands). Returns when the actor is in control: level, position, faction, `load_s`, notes. Unknown level/faction → error with the valid list |
 | `game_perf` | `seconds` window (default 5): fps, frame-time percentiles, hitches, frame cap/limiter, main-thread phases with Lua share, worker-task Lua/GC, memory (see `notes/perf.md`) |
+| `game_events` | structured events from the 5k buffer, oldest first: `script_error` (kind, fatal, message, file, line, traceback, count, since_last), `level_loaded`/`level_unloaded`, `actor_spawned`/`actor_died` (killer), `game_saved`/`game_loaded`, `menu_opened`/`menu_closed`, `task_given`/`task_completed`/`task_failed`; `since` seq, `types` (fnmatch), `limit` (≤500) |
+
+`game_status` adds `events` (new events / script errors since the last status call); `console_exec`, `lua_exec` and
+`game_teleport` add `script_errors` when script errors arrived since the last such call; `game_last_crash` adds the
+last fatal `script_error`. Script errors repeating within 5 s are coalesced by the engine (one event per 5 s with
+`since_last` = occurrences folded in, `count` = total). Lua errors inside engine callbacks are fatal in this engine.
 
 Output safeguards: consecutive identical lines are collapsed to `line ×N`, long lines are clipped, each result is
 capped at 20k chars, and `omitted` says what was left out. The engine itself returns at most 500 lines per exec

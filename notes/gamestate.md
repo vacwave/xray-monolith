@@ -8,3 +8,5 @@
 - Level list: `game_maps_single.ltx` `[level_maps_single]` (readable from the main menu). In game: `game_graph():vertex(g):level_id()` → `alife():level_name(id)`; `valid_vertex_id(g)` (no vertex_count in Lua); `SIMBOARD.smarts[id].smrt` = every se_smart_terrain (`m_game_vertex_id`, `props`).
 - `ChangeLevel(pos, lvid, gvid, VEC_ZERO)` (_g.script) level change works from `lua.exec`, autosaves first; `db.actor.afterFirstUpdate` = true after the actor binder's first update on the new level.
 - `db.actor:set_actor_position(p)` has no checks: a point with `level.vertex_id(p) == 4294967295` (no AI node) drops the actor through the world; level loads are ~6-12 s with a warm shader cache.
+- Task from Lua: `local t = CGameTask(); t:set_id(id); t:set_title(s); db.actor:give_task(t, 0, false, 0)`; `db.actor:set_task_state(task.completed, id)` (task.fail / in_progress / completed).
+- Kill the actor: `db.actor:kill(db.actor)` (CActor::Die gets the actor as killer).

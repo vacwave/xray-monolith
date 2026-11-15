@@ -9,6 +9,7 @@
 #include "pch_script.h"
 #include "script_storage.h"
 #include "script_thread.h"
+#include "../xrGame/mcp_events.h"
 #include "../xrCore/mezz_stringbuffer.h"
 #include <stdarg.h>
 #include <unordered_map>
@@ -779,6 +780,7 @@ bool CScriptStorage::load_buffer(lua_State* L, LPCSTR caBuffer, size_t tSize, LP
 //#ifdef DEBUG
 		if (Core.isDebug()) print_output(L,caScriptName,l_iErrorCode);
 //#endif //-DEBUG
+		mcp_script_error(L, "load", caScriptName);
 		on_error(L);
 		return (false);
 	}
@@ -1041,6 +1043,7 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 //#ifdef DEBUG
 		if (Core.isDebug()) print_output(lua(),caScriptName,l_iErrorCode);
 //#endif
+		mcp_script_error(lua(), "load", caScriptName);
 		on_error(lua());
 		lua_settop(lua(), start);
 		return (false);

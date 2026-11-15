@@ -155,6 +155,7 @@ extern void clean_game_globals();
 extern void init_game_globals();
 extern void mcp_register_lua();
 extern void mcp_register_perf();
+extern void mcp_register_events();
 
 void CGamePersistent::OnAppStart()
 {
@@ -163,6 +164,7 @@ void CGamePersistent::OnAppStart()
 	init_game_globals();
 	mcp_register_lua();
 	mcp_register_perf();
+	mcp_register_events();
 	inherited::OnAppStart();
 	m_pUI_core = xr_new<ui_core>();
 	m_pMainMenu = xr_new<CMainMenu>();

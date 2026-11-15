@@ -25,6 +25,7 @@
 //Alundaio
 #ifdef ENGINE_LUA_ALIFE_STORAGE_MANAGER_CALLBACKS
 #include "pch_script.h"
+#include "mcp_events.h"
 #include "../../xrServerEntities/script_engine.h"
 #endif
 //-Alundaio
@@ -110,6 +111,7 @@ void CALifeStorageManager::save(LPCSTR save_name_no_check, bool update_name)
 #else // DEBUG
 	Msg("* Game %s is successfully saved to file '%s'", m_save_name, temp);
 #endif // DEBUG
+	mcp_event_game_saved(m_save_name, temp);
 
 	//Alundaio: To get the savegame fname to make our own custom save states
 #ifdef ENGINE_LUA_ALIFE_STORAGE_MANAGER_CALLBACKS
@@ -228,6 +230,7 @@ bool CALifeStorageManager::load(LPCSTR save_name_no_check)
 	VERIFY(graph().actor());
 
 	Msg("* Game %s is successfully loaded from file '%s' (%.3fs)", save_name, file_name, timer.GetElapsed_sec());
+	mcp_event_game_loaded(save_name, file_name);
 
 	return (true);
 }

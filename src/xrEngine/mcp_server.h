@@ -19,6 +19,7 @@ namespace mcp
 	ENGINE_API xr_string run_logged(const std::function<void()>& f);
 	// JSON helpers for handlers outside xrEngine; engine strings are cp1251, JSON is UTF-8
 	ENGINE_API bool get_string_param(LPCSTR params, LPCSTR key, xr_string& out);
+	ENGINE_API bool get_int_param(LPCSTR params, LPCSTR key, s64& out);
 	ENGINE_API xr_string to_json_string(LPCSTR s);
 
 	// Start buffering engine log lines for log events / log.tail (call as early as possible)

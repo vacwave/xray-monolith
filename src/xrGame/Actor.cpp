@@ -1,4 +1,5 @@
 #include "pch_script.h"
+#include "mcp_events.h"
 #include "Actor_Flags.h"
 #include "hudmanager.h"
 #ifdef DEBUG
@@ -872,6 +873,7 @@ void CActor::Die(CObject* who)
     Msg("--- Actor [%s] dies !", this->Name());
 #endif // #ifdef DEBUG
 	inherited::Die(who);
+	mcp_event_actor_died(who);
 
 	if (OnServer())
 	{

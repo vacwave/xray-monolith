@@ -13,6 +13,7 @@
 #include "ui/UIMapWnd.h"
 #include "..\..\xrEngine\x_ray.h"
 #include "string_table.h"
+#include "mcp_events.h"
 
 #pragma warning(push)
 #pragma warning(disable:4995)
@@ -127,6 +128,7 @@ CGameTask* CGameTaskManager::GiveGameTaskToActor(CGameTask* t, u32 timeToComplet
 		CurrentGameUI()->UpdatePda();
 
 	t->ChangeStateCallback();
+	mcp_event_task(t, "given");
 
 	return t;
 }
@@ -137,6 +139,7 @@ void CGameTaskManager::SetTaskState(CGameTask* t, ETaskState state)
 	m_flags.set(eChanged, TRUE);
 
 	t->SetTaskState(state);
+	mcp_event_task(t, state == eTaskStateCompleted ? "completed" : state == eTaskStateFail ? "failed" : "in_progress");
 
 	if (ActiveTask() == t)
 	{

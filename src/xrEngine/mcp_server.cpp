@@ -578,6 +578,16 @@ bool get_string_param(LPCSTR params, LPCSTR key, xr_string& out)
 	return true;
 }
 
+bool get_int_param(LPCSTR params, LPCSTR key, s64& out)
+{
+	json p = json::parse(params, nullptr, false);
+	auto it = p.is_object() ? p.find(key) : p.end();
+	if (it == p.end() || !it->is_number_integer())
+		return false;
+	out = it->get<s64>();
+	return true;
+}
+
 xr_string to_json_string(LPCSTR s)
 {
 	return dump(json(to_utf8(s))).c_str();

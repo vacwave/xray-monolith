@@ -4,6 +4,7 @@ Agent <-> MCP stdio (this process) <-> TCP JSON lines <-> engine (-mcp_port). st
 """
 import ctypes
 import ctypes.wintypes as wt
+import fnmatch
 import functools
 import glob
 import itertools
@@ -411,6 +412,7 @@ class Instance:
         self.started = time.time()
         self.ring = deque(maxlen=RING_SIZE)  # (seq, line, arrival time or 0 for gap fills)
         self.last_seq = 0
+        self.events = EventBuffer()  # engine "game" events
         self.lock = threading.Lock()
         self.sock = None
         self.wfile_lock = threading.Lock()
@@ -499,6 +501,7 @@ class Instance:
         res = self.call("log.tail", {"since": self.last_seq}, timeout=timeout)
         with self.lock:
             self._merge([(l["seq"], l["line"]) for l in res["lines"]], live=False)
+        self.events.fill(self, self.events.last_seq)
 
     def _reader(self, s):
         f = s.makefile("rb")
@@ -519,6 +522,8 @@ class Instance:
                         self._merge([(seq, line)], live=True)
                     if gap is not None:
                         threading.Thread(target=self.fill_gap, args=(gap,), daemon=True).start()
+                elif msg.get("event") == "game":
+                    self.events.on_live(self, msg.get("data") or {})
                 elif msg.get("event") == "crash":
                     self.crash_event = msg.get("data") or {}
                     log.info("[%s] crash event: %s", self.id, (self.crash_event.get("reason") or "")[:300])
@@ -982,7 +987,7 @@ def status(inst, n):
             "appdata": str(inst.appdata) if inst.appdata else None, "uptime_s": round(time.time() - inst.started),
             "engine_info": info_or_error(inst) if inst.sock and not inst.hung else None,
             "log_rate_lines_per_s": inst.rate(), "last_seq": inst.last_seq, "buffered_lines": len(inst.ring),
-            "warnings": [w for w in [wer_warning(inst.exe_name)] if w] or None,
+            "warnings": [w for w in [wer_warning(inst.exe_name)] if w] or None, "events": events_status(inst),
             "last_lines": lines, "omitted": note}
 
 
@@ -1001,7 +1006,7 @@ def last_crash(inst, n):
         c["engine_reason"] = None  # same text
     with inst.crash_lock:
         deleted, inst.dumps_deleted = inst.dumps_deleted, []
-    return {"instance": inst.id, "crashed": True, **c, "stack_omitted": stack_note,
+    return {"instance": inst.id, "crashed": True, **c, "stack_omitted": stack_note, "script_error": last_fatal_script_error(inst),
             "dumps_deleted_by_retention": deleted or None}
 
 
@@ -1121,7 +1126,7 @@ async def game_stop(instance: str | None = None) -> dict:
 async def console_exec(cmd: str, instance: str | None = None, timeout: float = 30) -> dict:
     """Run an engine console command; returns the log lines it printed (repeats collapsed, size capped)."""
     inst = get(instance)
-    return exec_result(await run(inst.call, "console.exec", {"cmd": cmd}, timeout))
+    return with_error_hint(inst, exec_result(await run(inst.call, "console.exec", {"cmd": cmd}, timeout)))
 
 
 @tool
@@ -1130,7 +1135,7 @@ async def lua_exec(code: str, instance: str | None = None, timeout: float = 30) 
     (e.g. 'level.name()'); statements run as a chunk. print() output and other log lines come back in lines.
     Errors are returned as tool errors with the traceback."""
     inst = get(instance)
-    return exec_result(await run(inst.call, "lua.exec", {"code": code}, timeout))
+    return with_error_hint(inst, exec_result(await run(inst.call, "lua.exec", {"code": code}, timeout)))
 
 
 @tool
@@ -1150,6 +1155,131 @@ async def log_tail(instance: str | None = None, n: int = 100, grep: str | None =
     return {"instance": inst.id, "alive": not inst.dead, "first_seq": items[0][0] if items else None,
             "last_seq": items[-1][0] if items else inst.last_seq, "matched": matched, "returned_raw": len(items),
             "lines": lines, "omitted": note}
+
+
+# ---------------------------------------------------------------- game events
+# The engine sends {"event":"game","data":{"seq","type","time" (unix ms),"frame","data"}} and keeps the last 1000 for
+# events.tail {"since":S}. Script errors are coalesced engine-side: repeats of a kind+message within 5 s are counted
+# and reported once per 5 s (data.count = total, data.since_last = occurrences this event stands for).
+
+EVENT_RING = 5000
+EVENT_TEXT_CHARS = 4000  # per string field in game_events results (tracebacks)
+
+
+class EventBuffer:
+    def __init__(self):
+        self.items = deque(maxlen=EVENT_RING)  # event dicts sorted by seq
+        self.last_seq = 0
+        self.lost = 0  # events the engine ring no longer held when we filled a gap
+        self.lock = threading.Lock()
+        self.filling = False
+        self.seen = {}  # consumer -> last seq it reported
+
+    def merge(self, evs, first_seq=None, since=None):
+        with self.lock:
+            if first_seq is not None and since is not None and first_seq > since + 1:
+                self.lost += first_seq - since - 1 - sum(1 for e in self.items if since < e["seq"] < first_seq)
+            m = {e["seq"]: e for e in self.items}
+            for e in evs:
+                m.setdefault(e.get("seq", 0), e)
+            self.items = deque((m[s] for s in sorted(m)), maxlen=EVENT_RING)
+            if self.items:
+                self.last_seq = max(self.last_seq, self.items[-1]["seq"])
+
+    def fill(self, inst, since):
+        try:
+            res = inst.call("events.tail", {"since": since}, timeout=15)
+            self.merge(res.get("events", []), res.get("first_seq"), since)
+        except Exception as e:
+            log.warning("[%s] events.tail failed: %s", inst.id, e)
+        finally:
+            self.filling = False
+
+    def on_live(self, inst, e):
+        seq = e.get("seq", 0)
+        gap = None
+        with self.lock:
+            if seq <= self.last_seq:
+                return  # already fetched by events.tail
+            if seq > self.last_seq + 1 and not self.filling:
+                self.filling, gap = True, self.last_seq
+            self.items.append(e)
+            self.last_seq = seq
+        if e.get("type") == "script_error":
+            d = e.get("data") or {}
+            log.info("[%s] script error (%s): %s", inst.id, d.get("kind"), (d.get("message") or "")[:200])
+        if gap is not None:
+            threading.Thread(target=self.fill, args=(inst, gap), daemon=True).start()
+
+    def select(self, since=None, types=None):
+        with self.lock:
+            items = list(self.items)
+        if since is not None:
+            items = [e for e in items if e["seq"] > since]
+        if types:
+            items = [e for e in items if any(fnmatch.fnmatchcase(e.get("type", ""), t) for t in types)]
+        return items
+
+    def new_counts(self, consumer):
+        """Events / script errors since this consumer last asked; marks them seen."""
+        with self.lock:
+            since = self.seen.get(consumer, 0)
+            new = [e for e in self.items if e["seq"] > since]
+            self.seen[consumer] = self.last_seq
+        errs = [e for e in new if e.get("type") == "script_error"]
+        return {"new_events": len(new), "new_script_errors": sum((e.get("data") or {}).get("since_last", 1) for e in errs),
+                "new_fatal_script_errors": sum(1 for e in errs if (e.get("data") or {}).get("fatal")),
+                "new_types": sorted({e.get("type") for e in new}) or None}
+
+
+def event_out(e):
+    d = dict(e.get("data") or {})
+    for k, v in d.items():
+        if isinstance(v, str) and len(v) > EVENT_TEXT_CHARS:
+            d[k] = v[:EVENT_TEXT_CHARS] + f"... [{len(v) - EVENT_TEXT_CHARS} chars cut]"
+    return {"seq": e.get("seq"), "time": round(e.get("time", 0) / 1000, 3), "type": e.get("type"), "frame": e.get("frame"),
+            "data": d}
+
+
+def events_status(inst):
+    ev = inst.events
+    return {"last_seq": ev.last_seq, "buffered": len(ev.items), "lost": ev.lost or None, **ev.new_counts("status")}
+
+
+def with_error_hint(inst, out):
+    """Adds a short note when script errors arrived since the last exec-like call."""
+    c = inst.events.new_counts("exec")
+    if c["new_script_errors"]:
+        out["script_errors"] = (f"{c['new_script_errors']} new script error(s)"
+                                + (f", {c['new_fatal_script_errors']} fatal" if c["new_fatal_script_errors"] else "")
+                                + "; see game_events(types=['script_error'])")
+    return out
+
+
+def last_fatal_script_error(inst):
+    errs = [e for e in inst.events.select(types=["script_error"]) if (e.get("data") or {}).get("fatal")]
+    return event_out(errs[-1]) if errs else None
+
+
+@tool
+async def game_events(instance: str | None = None, since: int | None = None, types: list[str] | None = None,
+                      limit: int = 100) -> dict:
+    """Structured game events from the supervisor buffer (survives reconnects and game exit), oldest first.
+    Types: script_error (data: kind, fatal, message, file, line, script, traceback, count, since_last), level_loaded
+    (level, previous), level_unloaded, actor_spawned, actor_died (killer_id/name/section), game_saved, game_loaded,
+    menu_opened, menu_closed, task_given, task_completed, task_failed, task_in_progress.
+    since: only events with seq > since (page with the returned last_seq); without it the newest `limit` are returned.
+    types: type names or fnmatch patterns (e.g. ['task_*']). limit: max 500. Script errors repeating within 5 s are
+    coalesced: count = total so far, since_last = occurrences this event stands for. Fatal errors (kind callback/
+    luabind/cast/panic) end the game; see game_last_crash."""
+    inst = get(instance)
+    limit = max(1, min(limit, 500))
+    items = inst.events.select(since, types)
+    matched = len(items)
+    items = items[:limit] if since is not None else items[-limit:]
+    return {"instance": inst.id, "alive": not inst.dead, "matched": matched, "events": [event_out(e) for e in items],
+            "last_seq": items[-1]["seq"] if items else (since if since is not None else inst.events.last_seq),
+            "newest_seq": inst.events.last_seq, "more": matched > len(items), "lost": inst.events.lost or None}
 
 
 # ---------------------------------------------------------------- game_teleport
@@ -1415,7 +1545,8 @@ async def game_teleport(instance: str | None = None, faction: str | None = None,
     actor there (snapped to the nearest AI node if off the map). faction in game only switches the actor's
     community in place. cvars: console commands applied after arrival (e.g. ["g_god on"]).
     Unknown level/faction -> error listing the valid ones. Result: level, position, faction, load_s, notes."""
-    return await run(teleport, get(instance), faction, level, position, cvars, timeout)
+    inst = get(instance)
+    return with_error_hint(inst, await run(teleport, inst, faction, level, position, cvars, timeout))
 
 
 # ---------------------------------------------------------------- game_perf

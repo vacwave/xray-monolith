@@ -1,4 +1,5 @@
 #include "pch_script.h"
+#include "mcp_events.h"
 #include "../xrEngine/xr_ioconsole.h"
 #include "../xrEngine/xr_ioc_cmd.h"
 #include "../xrEngine/customhud.h"
@@ -1972,12 +1973,15 @@ public:
 				l_iErrorCode = lua_pcall(ai().script_engine().lua(), 0, 0, 0);
 				if (l_iErrorCode)
 				{
+					mcp_script_error(ai().script_engine().lua(), "console", *m_script_name);
 					ai().script_engine().print_output(ai().script_engine().lua(), *m_script_name, l_iErrorCode);
 					ai().script_engine().on_error(ai().script_engine().lua());
 					return;
 				}
 			}
 
+			if (l_iErrorCode)
+				mcp_script_error(ai().script_engine().lua(), "console", *m_script_name);
 			ai().script_engine().print_output(ai().script_engine().lua(), *m_script_name, l_iErrorCode);
 		}
 	} //void	Execute
