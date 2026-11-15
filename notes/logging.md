@@ -5,8 +5,16 @@
 - Log file: `<ApplicationName>_<UserName>.log` in `$logs$` (log.cpp:331-342); previous renamed to `.bkp`.
 - Gotcha: `FlushLog` log.cpp:255 is async (only signals logger thread); real flush is `InternalFlushLog` :244.
 - Build defines NO_BUG_TRAP + USE_OWN_MINI_DUMP (build_config_defines.h:25-26) → live filter is `UnhandledFilter` xrDebugNew.cpp:804 (installed :1195).
-- Crash sequence: SetImmediateMode :806, format_message :808, crashhandler :814, LogStackTrace :820, FlushLog :857, save_mini_dump :859.
+- Crash sequence (non-MCP): SetImmediateMode, format_message, crashhandler, LogStackTrace, FlushLog, save_mini_dump, MessageBox, CONTINUE_SEARCH.
 - Minidump: `save_mini_dump` xrDebugNew.cpp:664; name `<App>_<User>_<timestamp>.mdmp` in `$logs$` (fallback `logs/`, then cwd); flags MiniDumpNormal|FilterMemory|ScanMemory :737.
 - Crash hook: `Debug.set_crashhandler(void(*)())` xrDebug.h:24 — single slot, already used by console (XR_IOConsole.cpp:238 DumpConsoleVariablesOnCrash); chain, don't replace.
 - `xrLogger::InitLog` runs inside `Core._initialize` (xrCore.cpp:82); `AddLogCallback` needs theLogger, so the earliest callback point in xrEngine is right after `Core._initialize`. Callbacks see lines only when the logger thread prints them (no replay).
 - Never call Msg from a log callback (re-enters logging under logCallbackGuard).
+- `xrDebug.cpp` is excluded from DX11-AVX (xrCore Release-AVX); only xrDebugNew.cpp is live (NO_BUG_TRAP branch: `backend` and `UnhandledFilter`).
+- MCP mode in xrCore = `strstr(GetCommandLine(), "-mcp_port")` (`mcp_mode()` in xrDebugNew.cpp; works before Core params). `xrDebug::_initialize` then calls `WerSetFlags(WER_FAULT_REPORTING_NO_UI)`. Do not set SEM_NOGPFAULTERRORBOX: it would skip WER LocalDumps.
+- MCP crash paths (no MessageBox/ShowWindow/ShowCursor): `backend` (FATAL/R_ASSERT/fail/fatal/purecall/abort/invalid-param) → gather_info, reason, own dump of the current context (RtlCaptureContext, code 0xC0000420), handler, FlushLogSync, TerminateProcess(1). `UnhandledFilter` → `mcp_unhandled`: reason (code, AV op/address, module+offset), stack, dump, handler, FlushLogSync, return CONTINUE_SEARCH so WER writes its LocalDumps dump; exit code = exception code. `do_exit` (CHECK_OR_EXIT) → log, handler, exit 1. dx10HW device-creation failure → exit 1, no box.
+- `mcp_enter_crash`: the first crashing thread reports; a re-entrant crash on that thread terminates at once, other threads sleep 30 s then terminate. It also sets logger immediate mode.
+- Crash state for the handler: `Debug.crash_reason()` / `crash_stack()` (StackWalker lines captured in LogStackTrace, 32 KB) / `crash_dump()` (path set by save_mini_dump, which passes NULL exception info when given none).
+- `xrLogger::FlushLogSync()` = InternalPrintAllRecords + InternalFlushLog on the calling thread; FlushLog stays async.
+- Not suppressible: crashes that bypass our filter (fastfail, filters replaced by DLLs) only get WER, without UI thanks to WerSetFlags. The clipboard copy in gather_info still happens in MCP mode.
+- The engine minidump is named `<App>_<Core.UserName>_<ts>.mdmp` (Core.UserName is "player" here, unlike the log name), ~260 KB.

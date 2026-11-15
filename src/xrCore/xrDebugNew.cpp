@@ -44,6 +44,7 @@ static BOOL bException = FALSE;
 #endif
 
 #include <dbghelp.h> // MiniDump flags
+#include <werapi.h> // WerSetFlags
 
 #ifdef USE_BUG_TRAP
 # include <BugTrap/source/BugTrap.h> // for BugTrap functionality
@@ -66,6 +67,63 @@ static BOOL bException = FALSE;
 XRCORE_API xrDebug Debug;
 
 static bool error_after_dialog = false;
+
+// MCP mode (-mcp_port): crash paths show no dialogs; reason/stack/dump are kept for the crash handler (MCP crash event)
+static bool mcp_mode()
+{
+	return strstr(GetCommandLine(), "-mcp_port") != nullptr;
+}
+
+static string4096 mcp_crash_reason = "";
+static char mcp_crash_stack[32768] = "";
+static string_path mcp_crash_dump = "";
+static bool mcp_capture_stack = false;
+static volatile LONG mcp_crash_thread = 0;
+
+// Bounded, never fails (the CRT safe string functions would re-enter the crash path on overflow)
+static void mcp_append_stack(LPCSTR s)
+{
+	size_t len = strlen(mcp_crash_stack), n = strlen(s);
+	if (len + n + 2 > sizeof(mcp_crash_stack))
+		return;
+	memcpy(mcp_crash_stack + len, s, n);
+	mcp_crash_stack[len + n] = '\n';
+	mcp_crash_stack[len + n + 1] = 0;
+}
+
+// The first crashing thread reports; a crash inside crash handling exits at once, other threads wait for the exit
+static void mcp_enter_crash(DWORD exit_code)
+{
+	LONG me = (LONG)GetCurrentThreadId();
+	LONG prev = InterlockedCompareExchange(&mcp_crash_thread, me, 0);
+	if (prev == me)
+		TerminateProcess(GetCurrentProcess(), exit_code);
+	if (prev)
+	{
+		Sleep(30000);
+		TerminateProcess(GetCurrentProcess(), exit_code);
+	}
+	xrLogger::SetImmediateMode(true);
+}
+
+// gather_info text: drop '\r' and the trailing "stack trace:" part
+static void mcp_set_reason(LPCSTR info)
+{
+	size_t n = 0;
+	for (LPCSTR p = info; *p && n + 1 < sizeof(mcp_crash_reason); ++p)
+		if (*p != '\r')
+			mcp_crash_reason[n++] = *p;
+	mcp_crash_reason[n] = 0;
+	if (LPSTR st = strstr(mcp_crash_reason, "stack trace:"))
+		*st = 0;
+	n = strlen(mcp_crash_reason);
+	while (n && (mcp_crash_reason[n - 1] == '\n' || mcp_crash_reason[n - 1] == ' '))
+		mcp_crash_reason[--n] = 0;
+}
+
+LPCSTR xrDebug::crash_reason() { return mcp_crash_reason; }
+LPCSTR xrDebug::crash_stack() { return mcp_crash_stack; }
+LPCSTR xrDebug::crash_dump() { return mcp_crash_dump; }
 
 namespace crash_saving
 {
@@ -104,6 +162,8 @@ protected:
         if (sLowered.find("filename not available") != std::string::npos) return;
         if (sLowered.find("function-name not available") != std::string::npos) return;
         trim(s);
+        if (mcp_capture_stack)
+            mcp_append_stack(s.c_str());
         Msg("%s", s.c_str());
     }
 };
@@ -120,7 +180,10 @@ void LogStackTrace(LPCSTR header = nullptr, bool printStack = false)
         printLuaStack();
         Msg("\n");
         auto s = xr_StackWalker();
+        mcp_crash_stack[0] = 0;
+        mcp_capture_stack = true;
         s.ShowCallstack();
+        mcp_capture_stack = false;
     }
 }
 
@@ -236,8 +299,36 @@ void xrDebug::gather_info(const char* expression, const char* description, const
 	}
 }
 
+#ifdef USE_OWN_MINI_DUMP
+void save_mini_dump(_EXCEPTION_POINTERS* pExceptionInfo);
+#endif
+
+// Minidump of the calling thread's current state (no exception), reported as STATUS_ASSERTION_FAILURE
+static void mcp_dump_here()
+{
+#ifdef USE_OWN_MINI_DUMP
+	CONTEXT ctx;
+	RtlCaptureContext(&ctx);
+	EXCEPTION_RECORD rec = {};
+	rec.ExceptionCode = 0xC0000420;
+	rec.ExceptionAddress = (PVOID)ctx.Rip;
+	EXCEPTION_POINTERS ep = { &rec, &ctx };
+	save_mini_dump(&ep);
+#endif
+}
+
 void xrDebug::do_exit(const std::string& message)
 {
+	if (mcp_mode())
+	{
+		mcp_enter_crash(1);
+		Msg("! %s", message.c_str());
+		mcp_set_reason(message.c_str());
+		if (handler)
+			handler();
+		xrLogger::FlushLogSync();
+		TerminateProcess(GetCurrentProcess(), 1);
+	}
 	xrLogger::FlushLog();
 	MessageBox(NULL, message.c_str(), "Error", MB_OK | MB_ICONERROR | MB_SYSTEMMODAL);
 	TerminateProcess(GetCurrentProcess(), 1);
@@ -259,10 +350,24 @@ void xrDebug::backend(const char* expression, const char* description, const cha
 
 	CS.Enter();
 
+	bool mcp = mcp_mode();
+	if (mcp)
+		mcp_enter_crash(1);
+
 	string4096 assertion_info;
 
 	gather_info(expression, description, argument0, argument1, file, line, function, assertion_info,
 	            sizeof(assertion_info));
+
+	if (mcp)
+	{
+		mcp_set_reason(assertion_info);
+		mcp_dump_here();
+		if (handler)
+			handler();
+		xrLogger::FlushLogSync();
+		TerminateProcess(GetCurrentProcess(), 1);
+	}
 
 	LPCSTR endline = "\r\n";
 	LPSTR buffer = assertion_info + xr_strlen(assertion_info);
@@ -736,11 +841,12 @@ void save_mini_dump (_EXCEPTION_POINTERS* pExceptionInfo)
                 // write the dump
                 MINIDUMP_TYPE dump_flags = MINIDUMP_TYPE(MiniDumpNormal | MiniDumpFilterMemory | MiniDumpScanMemory );
 
-                BOOL bOK = pDump( GetCurrentProcess(), GetCurrentProcessId(), hFile, dump_flags, &ExInfo, NULL, NULL );
+                BOOL bOK = pDump( GetCurrentProcess(), GetCurrentProcessId(), hFile, dump_flags, pExceptionInfo ? &ExInfo : NULL, NULL, NULL );
                 if (bOK)
                 {
                     xr_sprintf( szScratch, "Saved dump file to '%s'", szDumpPath );
                     szResult = szScratch;
+                    xr_strcpy( mcp_crash_dump, szDumpPath );
                     // retval = EXCEPTION_EXECUTE_HANDLER;
                 }
                 else
@@ -765,6 +871,8 @@ void save_mini_dump (_EXCEPTION_POINTERS* pExceptionInfo)
     {
         szResult = "DBGHELP.DLL not found";
     }
+    if (mcp_mode())
+        Msg("* %s", szResult);
 }
 #endif //-USE_OWN_MINI_DUMP
 
@@ -800,9 +908,73 @@ void format_message(LPSTR buffer, const u32& buffer_size)
 #endif //-!_EDITOR
 
 #ifdef NO_BUG_TRAP
+static void mcp_describe_exception(_EXCEPTION_POINTERS* p, LPSTR out, u32 size)
+{
+	EXCEPTION_RECORD* r = p ? p->ExceptionRecord : nullptr;
+	if (!r)
+	{
+		xr_strcpy(out, size, "Unhandled exception");
+		return;
+	}
+	LPCSTR name = "";
+	switch (r->ExceptionCode)
+	{
+	case EXCEPTION_ACCESS_VIOLATION: name = " access violation"; break;
+	case EXCEPTION_IN_PAGE_ERROR: name = " in-page error"; break;
+	case EXCEPTION_STACK_OVERFLOW: name = " stack overflow"; break;
+	case EXCEPTION_INT_DIVIDE_BY_ZERO: name = " integer divide by zero"; break;
+	case EXCEPTION_ILLEGAL_INSTRUCTION: name = " illegal instruction"; break;
+	case EXCEPTION_PRIV_INSTRUCTION: name = " privileged instruction"; break;
+	case EXCEPTION_BREAKPOINT: name = " breakpoint"; break;
+	case EXCEPTION_FLT_DIVIDE_BY_ZERO: name = " float divide by zero"; break;
+	case EXCEPTION_FLT_INVALID_OPERATION: name = " float invalid operation"; break;
+	case 0xC0000374: name = " heap corruption"; break;
+	case 0xE06D7363: name = " C++ exception"; break;
+	}
+	string128 detail = "";
+	if ((r->ExceptionCode == EXCEPTION_ACCESS_VIOLATION || r->ExceptionCode == EXCEPTION_IN_PAGE_ERROR) && r->NumberParameters >= 2)
+	{
+		ULONG_PTR op = r->ExceptionInformation[0];
+		xr_sprintf(detail, " (%s 0x%p)", op == 0 ? "reading" : op == 1 ? "writing" : op == 8 ? "executing" : "accessing",
+		           (void*)r->ExceptionInformation[1]);
+	}
+	string_path module = "?";
+	u64 offset = (u64)r->ExceptionAddress;
+	HMODULE m = nullptr;
+	if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+	                      (LPCSTR)r->ExceptionAddress, &m) && GetModuleFileName(m, module, sizeof(module)))
+		offset -= (u64)m;
+	LPCSTR mod = strrchr(module, '\\') ? strrchr(module, '\\') + 1 : module;
+	xr_sprintf(out, size, "Unhandled exception 0x%08X%s%s at 0x%p (%s+0x%llX), thread %u", r->ExceptionCode, name, detail,
+	           r->ExceptionAddress, mod, offset, GetCurrentThreadId());
+}
+
+// MCP mode: log, own dump, crash handler (MCP crash event), sync log flush, no dialog. Then Windows Error Reporting
+// finishes without UI (LocalDumps dump if configured) and the process exits with the exception code.
+static LONG mcp_unhandled(_EXCEPTION_POINTERS* p)
+{
+	mcp_enter_crash(p && p->ExceptionRecord ? p->ExceptionRecord->ExceptionCode : 1);
+	mcp_describe_exception(p, mcp_crash_reason, sizeof(mcp_crash_reason));
+	Msg("! %s", mcp_crash_reason);
+	if (shared_str_initialized)
+		Msg("stack trace:\n");
+	LogStackTrace(nullptr, true);
+	xrLogger::FlushLogSync();
+# ifdef USE_OWN_MINI_DUMP
+	save_mini_dump(p);
+# endif
+	if (Debug.get_crashhandler())
+		Debug.get_crashhandler()();
+	xrLogger::FlushLogSync();
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
 //AVO: simplify function
 LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
 {
+	if (mcp_mode())
+		return mcp_unhandled(pExceptionInfo);
+
     xrLogger::SetImmediateMode(true);
 	string256 error_message;
 	format_message(error_message, sizeof(error_message));
@@ -1193,6 +1365,10 @@ void xrDebug::_initialize(const bool& dedicated)
     SetupExceptionHandler(is_dedicated);
 #endif // USE_BUG_TRAP
 	previous_filter = ::SetUnhandledExceptionFilter(UnhandledFilter); // exception handler to all "unhandled" exceptions
+
+	// MCP mode: Windows Error Reporting may still dump (LocalDumps) but never shows its dialog
+	if (mcp_mode())
+		WerSetFlags(WER_FAULT_REPORTING_NO_UI);
 
 #if 0
     struct foo

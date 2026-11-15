@@ -258,6 +258,14 @@ void xrLogger::FlushLog()
 	theLogger->UnpauseLogging();
 }
 
+void xrLogger::FlushLogSync()
+{
+	if (theLogger == nullptr)
+		return;
+	theLogger->InternalPrintAllRecords();
+	theLogger->InternalFlushLog();
+}
+
 void xrLogger::SetImmediateMode(bool enable)
 {
 	if (theLogger == nullptr)

@@ -4,7 +4,7 @@
 - Decided: net thread only parses/queues; all game/Lua/console work runs on the main thread in a pureFrame.
 - Decided: engine pushes every log line as an event so the supervisor survives crashes with full history.
 - Decided: MT branch only (`dev-mt-mcp`); supervisor lives here permanently, no non-MT port.
-- Methods: `ping`, `engine.info`, `log.tail`, `console.exec`, `lua.exec`; events: `log` (planned: `crash`).
+- Methods: `ping`, `engine.info`, `engine.heartbeat`, `log.tail`, `console.exec`, `lua.exec`; events: `log`, `crash`.
 - Engine server: `src/xrEngine/mcp_server.{h,cpp}` (namespace `mcp`); started in `Startup` (x_ray.cpp) after `Init_Discord` when `-mcp_port N` (`ECoreParams::mcp_port`), `mcp::stop()` right after `Device.Run()`.
 - Protocol v1: one JSON object per line. Req `{"id","method","params"}` → `{"id","result"}` / `{"id","error":{"code","message"}}`; events `{"event","data"}`. Codes: -32700 parse, -32600 invalid, -32601 no method, -32603 handler error.
 - Net thread (std::thread) owns all socket I/O: accept → select(5ms) loop that flushes outbox then recv; one client, re-accepts after disconnect. Max line 1 MB.
@@ -31,3 +31,7 @@
 - Fixed: console `help` crashed in `CCC_Token::Info` (null token list, xr_ioc_cmd.h); null guard added. `help` prints ~1000 lines.
 - `run_logged` returns JSON members `"lines":[first 500],"truncated":<rest>` (`max_exec_lines`); handlers wrap it in `{...}`. Lines beyond the cap are still in the ring/events.
 - Supervisor (Python, `mcp/anomaly_mcp.py`) → see `supervisor.md`.
+- `engine.heartbeat` → `{"frame","loading"}` is answered on the net thread in `on_line` (works while the main thread is hung or loading); loading = `pApp->IsLoading()` (ll_dwReference > 0, accessor added to x_ray.h). Observed: loading true briefly during the fake_start load; dwFrame did not stall there.
+- Crash event: `on_crash` is chained into `Debug.set_crashhandler` in `mcp::start` (calls the console's DumpConsoleVariablesOnCrash first; restored in stop). On the crashing thread: FlushLogSync, take `send_lock` (timed 1 s, then kept until exit), drain the outbox (log events) and send it plus `{"event":"crash","data":{"reason","stack","dump"}}` with SO_SNDTIMEO 2 s, then shutdown(SD_SEND) and recv until the client closes (<=3 s) so process exit does not reset the connection and lose data.
+- `out_lock`/`send_lock` are `std::timed_mutex` (the crash path never waits forever); the net thread holds `send_lock` per flush. `client_sock` (atomic) is the live client socket.
+- Crash triggers used for testing: AV = `lua.exec` `require("ffi").cast("int*",0)[0]` (LuaJIT does not catch the SEH AV); FATAL = `system_ini():r_string("no_such_section_xyz","x")`; hang = `while true do end`; __fastfail = scratchpad remote thread running `mov ecx,7; int 29h` (bypasses all in-process handlers).

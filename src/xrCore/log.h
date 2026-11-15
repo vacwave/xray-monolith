@@ -30,6 +30,8 @@ public:
 	static void EnableFastDebugLog();
 	static void InitLog();
 	static void FlushLog();
+	// Prints queued records and flushes the file on the calling thread (crash paths)
+	static void FlushLogSync();
 	static void CloseLog();
 	static void SetImmediateMode(bool enable);
 

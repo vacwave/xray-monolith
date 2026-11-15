@@ -650,6 +650,12 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
             "Please try to restart the game.\n"
 		    "CreateDevice returned 0x%08x", R
 		);
+        // MCP mode: no dialog, nonzero exit code
+        if (Core.ParamsData.test(ECoreParams::mcp_port))
+        {
+            xrLogger::FlushLogSync();
+            TerminateProcess(GetCurrentProcess(), 1);
+        }
         xrLogger::FlushLog();
 		MessageBox(NULL, "Failed to initialize graphics hardware.\nPlease try to restart the game.", "Error!",
             MB_OK | MB_ICONERROR);

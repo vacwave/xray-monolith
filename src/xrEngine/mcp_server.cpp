@@ -2,6 +2,7 @@
 #include "mcp_server.h"
 #include "IGame_Level.h"
 #include "XR_IOConsole.h"
+#include "x_ray.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -56,10 +57,13 @@ namespace
 	std::thread net_thread;
 	std::atomic<bool> running = false;
 	std::atomic<u32> conn_id = 0; // id of the current client, 0 when none
+	std::atomic<SOCKET> client_sock = INVALID_SOCKET;
+	std::timed_mutex send_lock; // held while writing to client_sock; the crash path keeps it until exit
+	crashhandler* prev_crash_handler = nullptr;
 
 	std::mutex in_lock;
 	xr_vector<request> inbox;
-	std::mutex out_lock;
+	std::timed_mutex out_lock; // timed: the crash path must not wait forever
 	xr_deque<outgoing> outbox;
 	u32 queued_events = 0; // events (conn 0) in outbox, guarded by out_lock
 
@@ -111,7 +115,7 @@ namespace
 	void queue_out(u32 conn, std::string line)
 	{
 		line += '\n';
-		std::lock_guard<std::mutex> lock(out_lock);
+		std::lock_guard<std::timed_mutex> lock(out_lock);
 		outbox.push_back({ conn, std::move(line) });
 	}
 
@@ -120,7 +124,7 @@ namespace
 	{
 		std::string line = dump(msg);
 		line += '\n';
-		std::lock_guard<std::mutex> lock(out_lock);
+		std::lock_guard<std::timed_mutex> lock(out_lock);
 		if (queued_events >= max_queued_events)
 		{
 			auto it = std::find_if(outbox.begin(), outbox.end(), [](const outgoing& o) { return o.conn == 0; });
@@ -219,6 +223,14 @@ namespace
 			return;
 		}
 
+		// Answered on the net thread, so it works while the main thread is busy (level load) or hung
+		if (method->get_ref<const std::string&>() == "engine.heartbeat")
+		{
+			bool loading = pApp && pApp->IsLoading();
+			queue_out(conn, dump({ { "id", id }, { "result", { { "frame", Device.dwFrame }, { "loading", loading } } } }));
+			return;
+		}
+
 		auto params = msg.find("params");
 		request req{ conn, id, method->get<std::string>(), params != msg.end() ? dump(*params) : "{}" };
 
@@ -246,10 +258,11 @@ namespace
 	{
 		xr_deque<outgoing> pending;
 		{
-			std::lock_guard<std::mutex> lock(out_lock);
+			std::lock_guard<std::timed_mutex> lock(out_lock);
 			pending.swap(outbox);
 			queued_events = 0;
 		}
+		std::lock_guard<std::timed_mutex> lock(send_lock);
 		for (auto& o : pending)
 		{
 			if (o.conn != 0 && o.conn != conn)
@@ -315,19 +328,66 @@ namespace
 				continue; // listen socket closed by stop() or transient error
 
 			{
-				std::lock_guard<std::mutex> lock(out_lock);
+				std::lock_guard<std::timed_mutex> lock(out_lock);
 				outbox.clear();
 				queued_events = 0;
 			}
 			conn_id = next_conn++;
+			client_sock = s;
 			Msg("* [MCP] Client connected");
 
 			serve_client(s, conn_id);
 
+			client_sock = INVALID_SOCKET;
 			conn_id = 0;
 			closesocket(s);
 			Msg("* [MCP] Client disconnected");
 		}
+	}
+
+	// Crash handler (crashing thread, any): synchronous, bounded send of the queued events plus the crash event.
+	// Does not rely on the net thread, which may be frozen.
+	void on_crash()
+	{
+		if (prev_crash_handler)
+			prev_crash_handler();
+		xrLogger::FlushLogSync();
+		SOCKET s = client_sock;
+		u32 conn = conn_id;
+		if (s == INVALID_SOCKET || !conn)
+			return;
+
+		std::string data;
+		if (!send_lock.try_lock_for(std::chrono::milliseconds(1000)))
+			data = "\n"; // the net thread may be stuck mid-line; a fresh line keeps the event parseable
+		// send_lock stays held from here on: the net thread must not interleave, and the process exits next
+		if (out_lock.try_lock_for(std::chrono::milliseconds(1000)))
+		{
+			for (const auto& o : outbox)
+				if (o.conn == 0 || o.conn == conn)
+					data += o.line;
+			outbox.clear();
+			queued_events = 0;
+			out_lock.unlock();
+		}
+		LPCSTR dmp = Debug.crash_dump();
+		data += dump({ { "event", "crash" }, { "data", {
+			{ "reason", to_utf8(Debug.crash_reason()) },
+			{ "stack", to_utf8(Debug.crash_stack()) },
+			{ "dump", *dmp ? json(to_utf8(dmp)) : json(nullptr) } } } });
+		data += '\n';
+
+		DWORD ms = 2000;
+		setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&ms, sizeof(ms));
+		if (!send_all(s, data))
+			return;
+		// Wait (bounded) for the client to close first, so process exit does not reset the connection and lose the data
+		shutdown(s, SD_SEND);
+		setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&ms, sizeof(ms));
+		char buf[256];
+		DWORD t0 = GetTickCount();
+		while (GetTickCount() - t0 < 3000 && recv(s, buf, sizeof(buf), 0) > 0)
+			;
 	}
 
 	// Main thread: run queued requests
@@ -567,6 +627,8 @@ void start(u16 port, LPCSTR version)
 
 	register_builtins();
 	Device.seqFrame.Add(&frame, REG_PRIORITY_LOW);
+	prev_crash_handler = Debug.get_crashhandler(); // chain: the console dumps its variables first
+	Debug.set_crashhandler(on_crash);
 
 	running = true;
 	net_thread = std::thread(net_loop);
@@ -589,6 +651,8 @@ void stop()
 	net_thread.join();
 
 	Device.seqFrame.Remove(&frame);
+	if (Debug.get_crashhandler() == on_crash)
+		Debug.set_crashhandler(prev_crash_handler);
 	WSACleanup();
 	if (port_file[0])
 		DeleteFile(port_file);

@@ -36,6 +36,11 @@ public:
 		m_on_dialog = on_dialog;
 	}
 
+	// Crash being handled (MCP mode, set before the crash handler runs): reason, stack trace, minidump path ("" if none)
+	LPCSTR crash_reason();
+	LPCSTR crash_stack();
+	LPCSTR crash_dump();
+
 	LPCSTR error2string(long code);
 
 	void gather_info(const char* expression, const char* description, const char* argument0, const char* argument1,

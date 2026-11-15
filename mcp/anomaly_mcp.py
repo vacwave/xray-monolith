@@ -17,7 +17,9 @@ import socket
 import subprocess
 import sys
 import threading
+import struct
 import time
+import winreg
 from collections import deque
 from pathlib import Path
 
@@ -42,24 +44,38 @@ MAX_LINE_CHARS = 2000
 QUICK_EXIT_S = 15  # an exit within this time after launch is reported as a failed/blocked launch
 PORT_WAIT_S = 120
 STOP_WAIT_S = 30
+HEARTBEAT_S = 2  # hang monitor poll interval
+WER_WAIT_S = 15  # after a crash-like exit, how long to wait for the WER dump to appear
+WER_KEY = r"SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps"
+# MiniDumpWithThreadInfo|IndirectlyReferencedMemory|DataSegs|HandleData|UnloadedModules|ProcessThreadData|FullMemoryInfo
+MID_DUMP_FLAGS = 0x1000 | 0x40 | 0x1 | 0x4 | 0x20 | 0x100 | 0x800
+
+DEFAULTS = {"max_vanilla": 3, "max_gamma": 2, "hang_timeout_s": 30, "load_hang_timeout_s": 600,
+            "dump_keep": 5, "dump_cap_gb": 40}
 
 
-def load_caps():
-    caps = {"vanilla": 3, "gamma": 2}
+def load_config():
+    """DEFAULTS < %LOCALAPPDATA%\\anomaly-mcp\\config.json < env ANOMALY_MCP_<KEY upper>."""
+    conf = dict(DEFAULTS)
     cfg = STATE_DIR / "config.json"
     if cfg.exists():
         try:
             data = json.loads(cfg.read_text(encoding="utf-8"))
-            for k in caps:
-                if isinstance(data.get(f"max_{k}"), int):
-                    caps[k] = data[f"max_{k}"]
+            for k in conf:
+                if isinstance(data.get(k), (int, float)):
+                    conf[k] = data[k]
         except Exception as e:
             log.warning("bad %s: %s", cfg, e)
-    for k in caps:
-        v = os.environ.get(f"ANOMALY_MCP_MAX_{k.upper()}")
+    for k in conf:
+        v = os.environ.get(f"ANOMALY_MCP_{k.upper()}")
         if v:
-            caps[k] = int(v)
-    return caps
+            conf[k] = float(v) if "." in v else int(v)
+    return conf
+
+
+def load_caps():
+    conf = load_config()
+    return {"vanilla": conf["max_vanilla"], "gamma": conf["max_gamma"]}
 
 
 # ---------------------------------------------------------------- Win32 helpers
@@ -135,6 +151,207 @@ def kill_with_supervisor(pid):
         k32.CloseHandle(h)
 
 
+dbghelp = ctypes.WinDLL("dbghelp", use_last_error=True)
+dbghelp.MiniDumpWriteDump.argtypes = [wt.HANDLE, wt.DWORD, wt.HANDLE, ctypes.c_int, wt.LPVOID, wt.LPVOID, wt.LPVOID]
+dbghelp.MiniDumpWriteDump.restype = wt.BOOL
+
+
+def write_minidump(pid, path, flags=MID_DUMP_FLAGS):
+    """Minidump of a live process (all thread stacks; MiniDumpWriteDump suspends it meanwhile)."""
+    h = k32.OpenProcess(0x0400 | 0x0010 | 0x0040, False, pid)  # QUERY_INFORMATION | VM_READ | DUP_HANDLE
+    if not h:
+        raise OSError(f"cannot open process {pid} for dumping (error {ctypes.get_last_error()})")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "wb") as f:
+            ok = dbghelp.MiniDumpWriteDump(h, pid, msvcrt.get_osfhandle(f.fileno()), flags, None, None, None)
+        if not ok:
+            err = ctypes.get_last_error()
+            path.unlink(missing_ok=True)
+            raise OSError(f"MiniDumpWriteDump failed (error {err:#x})")
+    finally:
+        k32.CloseHandle(h)
+    return path
+
+
+NTSTATUS = {
+    0xC0000005: "access violation", 0xC0000006: "in-page error", 0xC00000FD: "stack overflow",
+    0xC0000409: "fast fail / stack buffer overrun (__fastfail)", 0xC0000374: "heap corruption",
+    0xC0000602: "fail fast exception (RaiseFailFastException)",
+    0x80000003: "breakpoint", 0xC0000420: "assertion failure", 0xC0000094: "integer divide by zero",
+    0xC000001D: "illegal instruction", 0xC0000096: "privileged instruction", 0xE06D7363: "unhandled C++ exception",
+    0xC0000017: "out of memory", 0xC000013A: "Ctrl+C", 0xC0000142: "DLL initialization failed",
+    0xC0000135: "DLL not found",
+}
+FAST_FAIL = {2: "STACK_COOKIE_CHECK_FAILURE", 3: "CORRUPT_LIST_ENTRY", 4: "INCORRECT_STACK", 5: "INVALID_ARG",
+             6: "GS_COOKIE_INIT", 7: "FATAL_APP_EXIT (abort)", 8: "RANGE_CHECK_FAILURE", 10: "GUARD_ICALL_CHECK_FAILURE",
+             13: "INVALID_FIBER_SWITCH", 14: "INVALID_SET_OF_CONTEXT", 15: "INVALID_REFERENCE_COUNT",
+             18: "INVALID_JUMP_BUFFER", 19: "MRDATA_MODIFIED", 23: "INVALID_FLS_DATA", 38: "HEAP_METADATA_CORRUPTION"}
+
+
+def exit_code_name(code):
+    """Plain words for a process exit code."""
+    if code is None:
+        return None
+    if code in NTSTATUS:
+        return f"{code:#010x} {NTSTATUS[code]}"
+    if code == 3:
+        return "3: abort() / CRT termination (the engine's handlers were bypassed)"
+    if code == 1:
+        return "1: engine error exit (FATAL/assert) or killed"
+    if code == 0:
+        return "0: clean exit"
+    return f"{code} ({code:#010x})"
+
+
+STACK_SKIP_RX = re.compile(r"^(SymInit:|OS-Version:)|SymType:|xrDebugNew\.cpp|::on_crash$")
+
+
+def compact_stack(text):
+    """Engine stack text -> frames 'file (line): function', without StackWalker headers and crash-handler frames."""
+    return [re.sub(r"^.*[\\/]", "", l.strip()) for l in text.splitlines()
+            if l.strip() and not STACK_SKIP_RX.search(l.strip())]
+
+
+def drop_cvar_dump(lines):
+    """The crash handler logs ~1000 console variables; keep one line for that block."""
+    out, skipped = [], None
+    for l in lines:
+        if skipped is None and l.endswith("Console variables: start ---"):
+            skipped = 0
+        elif skipped is not None and l.endswith("Console variables: end ---"):
+            out.append(f"(console variables dump: {skipped} lines omitted)")
+            skipped = None
+        elif skipped is not None:
+            skipped += 1
+        else:
+            out.append(l)
+    if skipped is not None:
+        out.append(f"(console variables dump: {skipped} lines omitted, unterminated)")
+    return out
+
+
+FIELD_RX = re.compile(r"^(?:\[error\])?(Expression|Function|File|Line|Description|Arguments?(?: \d)?)\s*:\s?(.*)$")
+
+
+def crash_summary(engine_reason, exit_code, wer_exception, log_lines):
+    """One line in plain words: FATAL description/args/expression at file:line, or exception + module, or exit code."""
+    text = engine_reason or ""
+    lines = text.splitlines()
+    if not text:  # no crash event: look for the FATAL block the engine logs ("[error]Expression : ...")
+        lines = [l.split("] ", 1)[1] if l.startswith("[") and "] " in l and not l.startswith("[error]") else l
+                 for l in log_lines]
+    fields = {}
+    for l in lines:
+        m = FIELD_RX.match(l.strip())
+        if m and m.group(1) not in fields:
+            fields[m.group(1)] = m.group(2).strip()
+    if "Description" in fields or "Expression" in fields:
+        parts = [fields.get("Description", "")]
+        args = [v for k, v in fields.items() if k.startswith("Argument")]
+        parts += args
+        if fields.get("Expression") and fields["Expression"] != "<no expression>":
+            parts.append(f"expression: {fields['Expression']}")
+        out = "FATAL: " + " | ".join(p for p in parts if p)
+        if fields.get("File"):
+            out += f" at {fields['File']}:{fields.get('Line', '?')}"
+        if fields.get("Function"):
+            out += f" ({fields['Function']})"
+        return out
+    if text:
+        return lines[0]
+    if wer_exception:
+        return f"crashed outside the engine handler: {wer_exception}"
+    if exit_code is None:
+        return "connection lost, process still running"
+    return f"exited with {exit_code_name(exit_code)}"
+
+
+def dump_exception(path):
+    """Exception stream of a minidump: plain description (code, fast fail code, faulting module+offset) or None."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(16)
+            sig, _, count, rva = struct.unpack("<4sIII", head)
+            if sig != b"MDMP":
+                return None
+            f.seek(rva)
+            streams = {}
+            for _ in range(count):
+                stype, size, srva = struct.unpack("<III", f.read(12))
+                streams[stype] = (size, srva)
+            if 6 not in streams:  # ExceptionStream
+                return None
+            f.seek(streams[6][1])
+            tid, _, code, _, _, addr, nparams, _ = struct.unpack("<IIIIQQII", f.read(40))
+            params = struct.unpack("<15Q", f.read(120))[:nparams]
+            module = None
+            if 4 in streams:  # ModuleListStream
+                f.seek(streams[4][1])
+                (n,) = struct.unpack("<I", f.read(4))
+                mods = [struct.unpack("<QIIII", f.read(108)[:24]) for _ in range(n)]
+                for base, size, _, _, name_rva in mods:
+                    if base <= addr < base + size:
+                        f.seek(name_rva)
+                        (ln,) = struct.unpack("<I", f.read(4))
+                        module = f"{Path(f.read(ln).decode('utf-16-le')).name}+{addr - base:#x}"
+                        break
+    except (OSError, struct.error, UnicodeDecodeError):
+        return None
+    text = f"exception {code:#010x}" + (f" {NTSTATUS[code]}" if code in NTSTATUS else "")
+    if code == 0xC0000409 and params:
+        text += f", fast fail code {params[0]}" + (f" {FAST_FAIL[params[0]]}" if params[0] in FAST_FAIL else "")
+    if code == 0xC0000005 and len(params) >= 2:
+        text += f" ({ {0: 'reading', 1: 'writing', 8: 'executing'}.get(params[0], 'accessing')} {params[1]:#x})"
+    return text + f" at {module or hex(addr)}, thread {tid}"
+
+
+def wer_folder(exe_name):
+    """DumpFolder of the WER LocalDumps key for exe_name, or None when the key is missing."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, f"{WER_KEY}\\{exe_name}") as k:
+            return os.path.expandvars(winreg.QueryValueEx(k, "DumpFolder")[0])
+    except OSError:
+        return None
+
+
+def wer_set_dump_type(exe_name, full):
+    """DumpType 2 (full) or 0 (custom mid dump). Global per exe name: the last launch to set it wins."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, f"{WER_KEY}\\{exe_name}", 0, winreg.KEY_SET_VALUE) as k:
+            winreg.SetValueEx(k, "DumpType", 0, winreg.REG_DWORD, 2 if full else 0)
+        return None
+    except OSError as e:
+        return f"could not set WER DumpType ({e}); run mcp/setup_wer.ps1 as admin"
+
+
+def wer_warning(exe_name):
+    if wer_folder(exe_name):
+        return None
+    return (f"WER LocalDumps key for {exe_name} is missing: crashes that bypass the engine handler leave no dump. "
+            f"Run mcp/setup_wer.ps1 once as admin.")
+
+
+def prune_dumps(profile):
+    """Keep the newest dump_keep dumps of a profile (across instance dirs) within dump_cap_gb; returns deleted paths."""
+    conf = load_config()
+    files = [p for p in RUN_DIR.glob(f"{profile}-*/dumps/*") if p.suffix.lower() in (".dmp", ".mdmp")]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    cap = conf["dump_cap_gb"] * 1024 ** 3
+    deleted, total = [], 0
+    for i, p in enumerate(files):
+        size = p.stat().st_size
+        if i >= conf["dump_keep"] or total + size > cap:
+            try:
+                p.unlink()
+                deleted.append(str(p))
+            except OSError as e:
+                log.warning("cannot delete %s: %s", p, e)
+        else:
+            total += size
+    return deleted
+
+
 # ---------------------------------------------------------------- slots
 
 class Slot:
@@ -160,10 +377,11 @@ class Slot:
                 self.f = None
 
 
-def acquire_slot(profile):
+def acquire_slot(profile, index=None):
+    """First free slot, or exactly slot `index` (game_restart reuses its slot and appdata)."""
     cap = load_caps()[profile]
     SLOT_DIR.mkdir(parents=True, exist_ok=True)
-    for i in range(1, cap + 1):
+    for i in [index] if index else range(1, cap + 1):
         f = open(SLOT_DIR / f"{profile}-{i}.lock", "a+b")
         try:
             f.seek(0)
@@ -171,6 +389,8 @@ def acquire_slot(profile):
             return Slot(profile, i, f)
         except OSError:
             f.close()
+    if index:
+        raise RuntimeError(f"slot {profile}-{index} is taken (another launch grabbed it)")
     raise RuntimeError(f"instance cap reached: {cap} {profile} instances already run on this machine "
                        f"(slots in {SLOT_DIR}; cap via ANOMALY_MCP_MAX_{profile.upper()} or {STATE_DIR / 'config.json'})")
 
@@ -198,6 +418,27 @@ class Instance:
         self.ids = itertools.count(1)
         self.filling = False
         self.stopping = False
+        self.launch_params = None  # launch() kwargs, for game_restart
+        self.exe_name = DEFAULT_EXE.name
+        conf = load_config()
+        self.hang_timeout = conf["hang_timeout_s"]
+        self.load_timeout = conf["load_hang_timeout_s"]
+        # crash capture
+        self.crash_lock = threading.Lock()
+        self.crash_event = None  # data of the engine's crash event
+        self.crash = None  # record for game_last_crash
+        self.dumps = []  # dump files moved into dumps_dir
+        self.dumps_deleted = []  # retention deletions not yet reported
+        # hang monitor (engine.heartbeat is answered by the engine's net thread)
+        self.hung = False
+        self.loading = None
+        self.stall_s = 0.0
+        self.last_frame = None
+        self.progress_t = time.time()
+
+    @property
+    def dumps_dir(self):
+        return RUN_DIR / self.id / "dumps"
 
     # -- log buffer
 
@@ -278,6 +519,10 @@ class Instance:
                         self._merge([(seq, line)], live=True)
                     if gap is not None:
                         threading.Thread(target=self.fill_gap, args=(gap,), daemon=True).start()
+                elif msg.get("event") == "crash":
+                    self.crash_event = msg.get("data") or {}
+                    log.info("[%s] crash event: %s", self.id, (self.crash_event.get("reason") or "")[:300])
+                    break  # last message; closing lets the engine exit without resetting the connection
                 elif "id" in msg:
                     p = self.pending.get(msg["id"])
                     if p:
@@ -289,13 +534,16 @@ class Instance:
             if self.sock is s:
                 self.sock = None
             try:
+                f.close()
                 s.close()
             except OSError:
                 pass
             for p in list(self.pending.values()):
                 p[0].set()
             log.info("[%s] disconnected", self.id)
-            if not self.dead and not self.stopping and self.proc:
+            if self.crash_event is not None:
+                self.collect_crash()
+            elif not self.dead and not self.stopping and self.proc:
                 threading.Thread(target=self._reconnect, daemon=True).start()
 
     def _reconnect(self):
@@ -336,11 +584,13 @@ class Instance:
         self.proc = proc
         self.pid = proc.pid
         threading.Thread(target=self._watcher, daemon=True, name=f"watch-{self.id}").start()
+        threading.Thread(target=self._monitor, daemon=True, name=f"monitor-{self.id}").start()
 
     def _watcher(self):
         self.proc.wait()
         self.exit_code = self.proc.exit_code()
         self.dead = True
+        self.hung = False
         log.info("[%s] process %s exited with code %s", self.id, self.pid, self.exit_code)
         s = self.sock
         if s:
@@ -350,6 +600,115 @@ class Instance:
                 pass
         if self.slot:
             self.slot.release()
+        if self.crash_event is not None or (not self.stopping and self.exit_code != 0):
+            self.collect_crash(wait_wer=True)
+
+    @property
+    def crashed(self):
+        return self.crash is not None
+
+    def _monitor(self):
+        """Hung = engine frame stalled (or heartbeat unanswered) longer than the threshold; longer while loading."""
+        while not self.dead:
+            time.sleep(HEARTBEAT_S)
+            if self.sock is None or self.stopping or self.crash_event is not None:
+                continue
+            try:
+                hb = self.call("engine.heartbeat", timeout=5)
+            except Exception:
+                hb = None
+            now = time.time()
+            if hb:
+                self.loading = bool(hb.get("loading"))
+                if hb.get("frame") != self.last_frame:
+                    self.last_frame, self.progress_t = hb.get("frame"), now
+            self.stall_s = round(now - self.progress_t, 1)
+            limit = self.load_timeout if self.loading else self.hang_timeout
+            hung = self.stall_s > limit and not self.dead
+            if hung != self.hung:
+                log.info("[%s] %s (frame stalled %.0f s, loading %s)", self.id, "HUNG" if hung else "no longer hung",
+                         self.stall_s, self.loading)
+            self.hung = hung
+
+    def write_dump(self, tag="hang"):
+        """Supervisor-side minidump of the live process into dumps_dir."""
+        if self.dead or not self.pid:
+            raise RuntimeError(f"instance {self.id} is not running")
+        path = self.dumps_dir / f"{tag}_{self.pid}_{time.strftime('%Y%m%d_%H%M%S')}.dmp"
+        write_minidump(self.pid, path)
+        with self.crash_lock:
+            self.dumps.append(str(path))
+            self.dumps_deleted += prune_dumps(self.profile)
+        return path
+
+    def _gather_dumps(self, wait_wer):
+        """Move this run's engine .mdmp files and the WER dump (by pid) into dumps_dir. Caller holds crash_lock."""
+        found = []
+        if self.appdata:
+            found += [Path(p) for p in glob.glob(str(self.appdata / "logs" / "*.mdmp"))
+                      if os.path.getmtime(p) >= self.started - 1]
+        folder = wer_folder(self.exe_name)
+        if folder and self.pid:
+            wer = Path(folder) / f"{self.exe_name}.{self.pid}.dmp"
+            crash_like = self.exit_code is not None and (self.exit_code >= 0x80000000 or self.exit_code == 3)
+            deadline = time.time() + (WER_WAIT_S if wait_wer and crash_like else 0)
+            while not wer.exists() and time.time() < deadline:
+                time.sleep(0.5)
+            if wer.exists():
+                # WER may still be writing: wait until the size settles
+                size = -1
+                while size != wer.stat().st_size:
+                    size = wer.stat().st_size
+                    time.sleep(1)
+                found.append(wer)
+        moved = {}
+        for src in found:
+            dst = self.dumps_dir / src.name
+            try:
+                self.dumps_dir.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dst))
+                self.dumps.append(str(dst))
+                moved[str(src)] = str(dst)
+            except OSError as e:
+                log.warning("[%s] cannot move %s: %s", self.id, src, e)
+        if moved:
+            self.dumps_deleted += prune_dumps(self.profile)
+        return moved
+
+    def collect_crash(self, wait_wer=False):
+        """(Re)build the crash record from the crash event, exit code, dumps and logs. Idempotent."""
+        with self.crash_lock:
+            ev = self.crash_event or {}
+            moved = self._gather_dumps(wait_wer)
+            dump = ev.get("dump")
+            dump = moved.get(dump, dump) if dump else None
+            if dump and not os.path.exists(dump):
+                dump = next((d for d in self.dumps if Path(d).name == Path(dump).name), dump)
+            tail = self.log_file_tail(3000)
+            if tail:
+                tail = (tail[0], drop_cvar_dump(tail[1])[-60:])
+            buffered = drop_cvar_dump([l for _, l, _ in self.lines(n=3000)])[-60:]
+            wer = next((d for d in self.dumps if d.endswith(f".{self.pid}.dmp")), None)
+            exc = dump_exception(wer) if wer and os.path.exists(wer) else None
+            stack = compact_stack(ev.get("stack") or "")
+            self.crash = {
+                "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "pid": self.pid,
+                "exit_code": self.exit_code,
+                "exit_code_name": exit_code_name(self.exit_code),
+                "reason": crash_summary(ev.get("reason"), self.exit_code, exc, (tail[1] if tail else []) + buffered),
+                "event_received": bool(ev),
+                "engine_reason": ev.get("reason"),
+                "wer_exception": exc,
+                "stack": stack,
+                "dump": dump,
+                "wer_dump": wer,
+                "dumps": [d for d in self.dumps if os.path.exists(d)],
+                "log_file": tail[0] if tail else None,
+                "log_tail": tail[1] if tail else [],
+                "last_lines": buffered,
+            }
+            log.info("[%s] crash record: %s", self.id, self.crash["reason"])
 
     def log_file_tail(self, n=30):
         """Newest log file in the instance's appdata: (path, last n lines) or None."""
@@ -469,7 +828,9 @@ def info_or_error(inst, timeout=5):
         return {"error": str(e)}
 
 
-def launch(exe, game_root, show_window, new_game, extra_args, timeout):
+def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_args=None, timeout=180,
+           full_dumps=False, hang_timeout=None, load_timeout=None, slot_index=None):
+    params = {k: v for k, v in locals().items() if k != "slot_index"}
     exe = Path(exe) if exe else DEFAULT_EXE
     game_root = Path(game_root) if game_root else DEFAULT_GAME_ROOT
     if not exe.is_file():
@@ -477,7 +838,12 @@ def launch(exe, game_root, show_window, new_game, extra_args, timeout):
     if not (game_root / "fsgame.ltx").is_file():
         raise FileNotFoundError(f"no fsgame.ltx in {game_root}")
     profile = "gamma" if game_root.resolve() == GAMMA_ROOT.resolve() else "vanilla"
-    slot = acquire_slot(profile)
+    warnings = [w for w in [wer_warning(exe.name)] if w]
+    if not warnings:
+        w = wer_set_dump_type(exe.name, full_dumps)
+        if w:
+            warnings.append(w)
+    slot = acquire_slot(profile, slot_index)
     try:
         iid = slot.name
         appdata = RUN_DIR / iid / "appdata"
@@ -496,6 +862,11 @@ def launch(exe, game_root, show_window, new_game, extra_args, timeout):
                              stderr=subprocess.DEVNULL, close_fds=True)
         kill_with_supervisor(p.pid)
         inst = Instance(iid, appdata, slot, profile)
+        inst.launch_params, inst.exe_name = params, exe.name
+        if hang_timeout:
+            inst.hang_timeout = hang_timeout
+        if load_timeout:
+            inst.load_timeout = load_timeout
         inst.watch(ProcHandle(p.pid))
     except Exception:
         slot.release()
@@ -519,12 +890,22 @@ def launch(exe, game_root, show_window, new_game, extra_args, timeout):
         if port:
             break
         if time.time() - t0 > PORT_WAIT_S:
-            raise TimeoutError(f"no mcp_port file after {PORT_WAIT_S} s; instance {iid} left running (pid {p.pid})")
+            try:
+                dump = f"dump: {inst.write_dump('launch_timeout')}"
+            except Exception as e:
+                dump = f"dump failed: {e}"
+            inst.stopping = True
+            inst.proc.kill()
+            inst.proc.wait(10)
+            tail = inst.log_file_tail()
+            raise TimeoutError(f"no mcp_port file after {PORT_WAIT_S} s; killed pid {p.pid}; {dump}" +
+                               (f"\nlog tail ({tail[0]}):\n" + "\n".join(tail[1]) if tail else " (no log)"))
         time.sleep(0.25)
     inst.connect(port)
     info = info_or_error(inst, timeout=timeout)
     return {"instance": iid, "pid": p.pid, "port": port, "profile": profile, "appdata": str(appdata),
-            "args": args[1:], "copied_dlls": copied, "engine_info": info}
+            "args": args[1:], "copied_dlls": copied, "full_dumps": full_dumps, "engine_info": info,
+            "warnings": warnings or None}
 
 
 def attach(port, appdata):
@@ -554,12 +935,14 @@ def stop(inst):
         return {"instance": inst.id, "already_dead": True, "exit_code": inst.exit_code}
     inst.stopping = True
     graceful = False
-    try:
-        inst.call("console.exec", {"cmd": "quit"}, timeout=5)
-    except Exception as e:
-        log.info("[%s] quit: %s", inst.id, e)
+    hung = inst.hung
+    if not hung:  # a hung main thread never runs the quit command
+        try:
+            inst.call("console.exec", {"cmd": "quit"}, timeout=5)
+        except Exception as e:
+            log.info("[%s] quit: %s", inst.id, e)
     if inst.proc:
-        graceful = inst.proc.wait(STOP_WAIT_S)
+        graceful = not hung and inst.proc.wait(STOP_WAIT_S)
         if not graceful:
             inst.proc.kill()
             inst.proc.wait(10)
@@ -569,7 +952,21 @@ def stop(inst):
         inst.sock.close()
     if inst.slot:
         inst.slot.release()
-    return {"instance": inst.id, "graceful": graceful, "exit_code": inst.exit_code}
+    return {"instance": inst.id, "graceful": graceful, "killed_hung": hung, "exit_code": inst.exit_code}
+
+
+def restart(inst, new_game):
+    """Relaunch a launched instance with the same exe, game root and args into the same slot (and appdata)."""
+    if not inst.launch_params or not inst.slot:
+        raise ValueError(f"{inst.id} was not launched by this supervisor (attached games cannot be restarted)")
+    stopped = stop(inst) if not inst.dead else None
+    inst.slot.release()
+    params = dict(inst.launch_params)
+    if new_game is not None:
+        params["new_game"] = new_game
+    res = launch(**params, slot_index=inst.slot.index)
+    res["previous"] = {"exit_code": inst.exit_code, "crashed": inst.crashed, "stopped": stopped}
+    return res
 
 
 def status(inst, n):
@@ -577,11 +974,35 @@ def status(inst, n):
     items = inst.lines(n=n)
     lines, note = bound([l for _, l, _ in items])
     return {"instance": inst.id, "pid": inst.pid, "alive": alive, "exit_code": inst.exit_code, "port": inst.port,
-            "connected": inst.sock is not None, "profile": inst.profile, "slot": inst.slot.name if inst.slot else None,
+            "connected": inst.sock is not None, "crashed": inst.crashed,
+            "crash_reason": inst.crash["reason"] if inst.crash else None,
+            "hung": inst.hung, "frame_stall_s": inst.stall_s if alive else None, "loading": inst.loading,
+            "hang_threshold_s": inst.load_timeout if inst.loading else inst.hang_timeout,
+            "profile": inst.profile, "slot": inst.slot.name if inst.slot else None,
             "appdata": str(inst.appdata) if inst.appdata else None, "uptime_s": round(time.time() - inst.started),
-            "engine_info": info_or_error(inst) if inst.sock else None,
+            "engine_info": info_or_error(inst) if inst.sock and not inst.hung else None,
             "log_rate_lines_per_s": inst.rate(), "last_seq": inst.last_seq, "buffered_lines": len(inst.ring),
+            "warnings": [w for w in [wer_warning(inst.exe_name)] if w] or None,
             "last_lines": lines, "omitted": note}
+
+
+def last_crash(inst, n):
+    if inst.crash is None:
+        return {"instance": inst.id, "crashed": False, "alive": not inst.dead, "exit_code": inst.exit_code,
+                "exit_code_name": exit_code_name(inst.exit_code)}
+    c = dict(inst.crash)
+    stack = c.pop("stack")
+    c["stack"], stack_note = bound(stack[:25], keep="head", max_chars=4000)
+    if len(stack) > 25:
+        stack_note = f"{len(stack) - 25} more frames in the log"
+    c["log_tail"], _ = bound(c["log_tail"][-n:], max_chars=8000)
+    c["last_lines"], _ = bound(c["last_lines"][-n:], max_chars=8000)
+    if c["engine_reason"] and c["engine_reason"].splitlines()[0] == c["reason"]:
+        c["engine_reason"] = None  # same text
+    with inst.crash_lock:
+        deleted, inst.dumps_deleted = inst.dumps_deleted, []
+    return {"instance": inst.id, "crashed": True, **c, "stack_omitted": stack_note,
+            "dumps_deleted_by_retention": deleted or None}
 
 
 def exec_result(res):
@@ -598,7 +1019,8 @@ def exec_result(res):
 
 server = MCPServer("anomaly", instructions=(
     "Drives X-Ray Monolith (Stalker Anomaly) game instances. Start with game_launch, then use lua_exec / "
-    "console_exec / log_tail / game_status, and game_stop when done. Each tool takes an optional instance id "
+    "console_exec / log_tail / game_status, and game_stop when done. After a crash use game_last_crash and "
+    "game_restart; on a hang (game_status hung) use game_dump, then game_stop. Each tool takes an optional instance id "
     "(default: the last launched or attached)."))
 
 
@@ -622,14 +1044,48 @@ def tool(f):
 
 @tool
 async def game_launch(exe: str | None = None, game_root: str | None = None, show_window: bool = False,
-                      new_game: bool = False, extra_args: str | None = None, timeout: float = 180) -> dict:
+                      new_game: bool = False, extra_args: str | None = None, timeout: float = 180,
+                      full_dumps: bool = False, hang_timeout: float | None = None,
+                      load_timeout: float | None = None) -> dict:
     """Launch a game instance (silent/minimized unless show_window) and connect to it.
 
     exe: default <repo>/_build/_game/bin_dbg/AnomalyDX11AVX.exe. game_root: default C:\\Anomaly (C:\\GAMMA counts
     against the GAMMA cap). new_game: start a new game straight into a level. extra_args: more engine args.
     timeout: seconds to wait for the first engine.info reply after connecting (a new_game level load blocks it).
-    Refused when the machine-wide instance cap is reached."""
-    return await run(launch, exe, game_root, show_window, new_game, extra_args, timeout)
+    full_dumps: Windows Error Reporting writes full dumps (GBs) instead of mid dumps; the setting is global per exe
+    name, so the last launch wins for all running instances. hang_timeout / load_timeout: seconds of stalled frames
+    before the instance is marked hung (defaults 30 / 600 while a level loads).
+    Refused when the machine-wide instance cap is reached. If the engine never opens its port, the game is dumped
+    and killed, and the error names the dump."""
+    return await run(launch, exe, game_root, show_window, new_game, extra_args, timeout, full_dumps, hang_timeout,
+                     load_timeout)
+
+
+@tool
+async def game_restart(instance: str | None = None, new_game: bool | None = None) -> dict:
+    """Stop the instance if it still runs (a hung one is killed), then relaunch it with the same exe, game root and
+    args into the same slot and appdata. new_game overrides the original launch's choice when given."""
+    return await run(restart, get(instance), new_game)
+
+
+@tool
+async def game_last_crash(instance: str | None = None, lines: int = 30) -> dict:
+    """The instance's crash record: plain-words reason (FATAL description/expression/file:line, or exception code +
+    module), exit code name, engine stack, dump paths (engine .mdmp, WER dump by pid, in .mcp-run/<id>/dumps),
+    the .log path and tail, and the last buffered lines. crashed=false if it has not crashed."""
+    return await run(last_crash, get(instance), max(1, min(lines, 200)))
+
+
+@tool
+async def game_dump(instance: str | None = None) -> dict:
+    """Write a minidump of the running game from the supervisor (all thread stacks; use it on a hung instance).
+    Saved in .mcp-run/<id>/dumps; old dumps beyond the retention limits are deleted and listed."""
+    inst = get(instance)
+    path = await run(inst.write_dump)
+    with inst.crash_lock:
+        deleted, inst.dumps_deleted = inst.dumps_deleted, []
+    return {"instance": inst.id, "dump": str(path), "size_mb": round(path.stat().st_size / 2 ** 20, 1),
+            "dumps_deleted_by_retention": deleted or None}
 
 
 @tool
@@ -641,7 +1097,8 @@ async def game_attach(port: int | None = None, appdata: str | None = None) -> di
 
 @tool
 async def game_status(instance: str | None = None, lines: int = 20) -> dict:
-    """pid, alive, port, engine.info, log rate (lines/s) and the last log lines of an instance."""
+    """pid, alive, port, crashed (see game_last_crash), hung (frames stalled past the threshold; see game_dump),
+    engine.info, log rate (lines/s) and the last log lines of an instance."""
     return await run(status, get(instance), max(0, min(lines, 200)))
 
 
@@ -650,7 +1107,7 @@ async def game_list() -> dict:
     """Instances known to this supervisor, plus the machine-wide caps."""
     return {"current": current[0], "caps": load_caps(), "instances": [
         {"instance": i.id, "pid": i.pid, "alive": not i.dead, "exit_code": i.exit_code, "port": i.port,
-         "connected": i.sock is not None, "profile": i.profile, "slot": i.slot.name if i.slot else None,
+         "connected": i.sock is not None, "crashed": i.crashed, "hung": i.hung, "profile": i.profile, "slot": i.slot.name if i.slot else None,
          "last_seq": i.last_seq} for i in instances.values()]}
 
 
@@ -697,6 +1154,9 @@ async def log_tail(instance: str | None = None, n: int = 100, grep: str | None =
 
 def main():
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    w = wer_warning(DEFAULT_EXE.name)
+    if w:
+        log.warning(w)
     server.run("stdio")
     # stdin closed: quit launched games gracefully (the job object kills any that remain when we exit)
     ts = [threading.Thread(target=stop, args=(i,)) for i in instances.values() if i.slot and not i.dead]

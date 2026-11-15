@@ -16,6 +16,6 @@
 - Gotcha: DXGI `IDXGISwapChain::ResizeTarget` (dx10HW `CHW::Reset`) restores+activates a minimized window → skipped when silent (windowed only; ResizeBuffers sizes the buffers).
 - Silent mode clamps `rs_screenmode fullscreen` to borderless (CCC_Screenmode) and skips SetForegroundWindow/SetActiveWindow (device.cpp Run, Device_create, updateWindowProps) and the main-menu ClipCursor.
 - Rendering never checks IsIconic/occlusion: on_idle renders when `b_is_Active && Begin()`; Present's DXGI_STATUS_OCCLUDED is a success code, ignored. `Device.dwRenderedFrames` counts frames through seqRender+Present.
-- Non-crash dialogs: only dx10HW "Failed to initialize graphics hardware" MessageBox (device creation failure, then TerminateProcess).
+- Non-crash dialogs: only dx10HW "Failed to initialize graphics hardware" MessageBox (device creation failure, then TerminateProcess(0)); in MCP mode skipped, exit code 1.
 - Level start without UI: `-start server(all/single/alife/new) client(localhost)` loads `fake_start` (new-game level) in ~10 s. `-load <save>` at startup fails ("ALife simulator has not been started yet"). The saves in C:\Anomaly\appdata\savedgames (`1`, `bench_g1`) crash in `CALifeSimulatorBase::register_object` (null parent) with `server(<save>/single/alife/load)`, in normal-window mode too, so it is a save/mod mismatch, not windowing.
 - The main thread blocks while a level loads, so MCP calls get no reply until it finishes (several minutes for a save load).

@@ -29,11 +29,14 @@ All tools take an optional `instance` (default: the last launched or attached on
 
 | Tool | What it does |
 |---|---|
-| `game_launch` | `exe` (default `<repo>\_build\_game\bin_dbg\AnomalyDX11AVX.exe`), `game_root` (default `C:\Anomaly`), `show_window`, `new_game`, `extra_args`, `timeout` |
+| `game_launch` | `exe` (default `<repo>\_build\_game\bin_dbg\AnomalyDX11AVX.exe`), `game_root` (default `C:\Anomaly`), `show_window`, `new_game`, `extra_args`, `timeout`, `full_dumps`, `hang_timeout`, `load_timeout` |
 | `game_attach` | attach to a running `-mcp_port` game by `port` or `appdata` dir |
-| `game_status` | pid, alive, exit code, port, `engine.info`, log rate (lines/s), last lines |
+| `game_status` | pid, alive, exit code, port, `crashed`, `hung` (+ frame stall, loading), `engine.info`, log rate (lines/s), last lines |
 | `game_list` | instances of this supervisor and the caps |
-| `game_stop` | console `quit`, kill after 30 s, release the slot |
+| `game_stop` | console `quit`, kill after 30 s (at once when hung), release the slot |
+| `game_restart` | stop if running, relaunch with the same exe/args into the same slot and appdata; `new_game` override |
+| `game_last_crash` | crash record: plain-words reason, exit code name, engine stack, dump paths, .log tail, last buffered lines |
+| `game_dump` | minidump of the live game (all thread stacks, ~100 MB) into `.mcp-run\<id>\dumps` |
 | `console_exec` | engine console command → printed lines |
 | `lua_exec` | Lua chunk or expression list → `results` + printed lines (`print` goes to the log during the call) |
 | `log_tail` | `n` (≤1000), `grep` regex, `since` seq, from the supervisor's 20k-line buffer |
@@ -59,3 +62,20 @@ capped at 20k chars, and `omitted` says what was left out. The engine itself ret
   already running) or failed to start; `game_launch` reports it with the log tail.
 - Launched games are in a job object: they are killed if the supervisor exits; on a clean exit (stdin closed) the
   supervisor quits them gracefully first. Attached games are left alone.
+
+## Crashes and hangs
+
+- In MCP mode the engine never shows a dialog: FATAL/assert/`R_ASSERT`/`Debug.fatal`/CHECK_OR_EXIT exit with code 1,
+  unhandled exceptions exit with the exception code (Windows Error Reporting finishes without UI).
+  Before exiting it writes its own minidump and sends `{"event":"crash","data":{"reason","stack","dump"}}`.
+- The supervisor builds a crash record on a crash event or a nonzero exit it did not cause; dumps (engine `.mdmp`,
+  WER `AnomalyDX11AVX.exe.<pid>.dmp`, `game_dump` files) are moved into `.mcp-run\<id>\dumps`.
+- WER local dumps catch crashes that bypass the engine (`__fastfail`, heap corruption, stack overflow, replaced
+  filters). Run `mcp\setup_wer.ps1` once as admin; it also lets the supervisor switch `full_dumps` per launch.
+  The key is global per exe name: the last launch's `full_dumps` choice applies to all running instances.
+- Hang: `engine.heartbeat` (answered by the engine's net thread) reports the frame counter and a loading flag; frames
+  stalled longer than 30 s (600 s while loading) mark the instance `hung`. A launch with no port file after 120 s
+  is dumped and killed.
+- Config (`%LOCALAPPDATA%nomaly-mcp\config.json` or env `ANOMALY_MCP_<KEY>`): `hang_timeout_s` 30,
+  `load_hang_timeout_s` 600, `dump_keep` 5 (newest dumps per profile, across instances), `dump_cap_gb` 40.
+  Deletions are listed in `game_last_crash` / `game_dump` output.
