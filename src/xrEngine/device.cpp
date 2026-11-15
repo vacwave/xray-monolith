@@ -298,7 +298,31 @@ float GetMonitorRefresh()
 }
 
 extern int ps_framelimiter;
+extern int ps_framelimiter_sleep;
 extern u32 g_screenmode;
+
+#ifdef ECO_RENDER
+// Sleep until shortly before the frame limiter target; the caller's spin loop still ends the wait exactly
+static void EcoRenderSleep(std::chrono::high_resolution_clock::time_point target)
+{
+	static HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+	const auto remaining = target - std::chrono::high_resolution_clock::now() - std::chrono::milliseconds(1);
+	if (!timer || remaining <= std::chrono::microseconds(500))
+		return;
+
+	LARGE_INTEGER due;
+	due.QuadPart = -std::chrono::duration_cast<std::chrono::duration<LONGLONG, std::ratio<1, 10000000>>>(remaining).count();
+	if (!SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE))
+		return;
+
+	// Raised priority so a busy CPU doesn't delay the wake-up by a scheduler quantum
+	HANDLE thread = GetCurrentThread();
+	const int priority = GetThreadPriority(thread);
+	SetThreadPriority(thread, THREAD_PRIORITY_ABOVE_NORMAL);
+	WaitForSingleObject(timer, INFINITE);
+	SetThreadPriority(thread, priority);
+}
+#endif // ECO_RENDER
 
 CTimer FreezeTimer;
 void mt_FreezeThread(void *ptr) {
@@ -505,6 +529,10 @@ void CRenderDevice::on_idle()
 			rr = 1.f / ps_framelimiter;
 		else
 			rr = refresh_rate;
+
+		if (ps_framelimiter_sleep == 2 || (ps_framelimiter_sleep == 1 && (Device.Paused() || IsMainMenuActive())))
+			EcoRenderSleep(tlastf + std::chrono::duration_cast<std::chrono::high_resolution_clock::duration>(
+				std::chrono::duration<float>(rr)));
 
 		time_span = std::chrono::duration_cast<std::chrono::duration<float>>(tcurrentf - tlastf);
 		while (time_span.count() < rr)
