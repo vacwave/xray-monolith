@@ -69,6 +69,7 @@
 #include "PHDebug.h"
 #include "debug_text_tree.h"
 #endif
+#include "../xrEngine/mcp_perf.h"
 extern ENGINE_API bool g_dedicated_server;
 extern ENGINE_API BOOL	g_bootComplete;
 extern CUISequencer* g_tutorial;
@@ -1237,6 +1238,7 @@ void CLevel::script_gc()
 	if (!(psLua_ParallelGC && Device.LuaGC))
 	{
 		PROF_EVENT("CLevel::script_gc");
+		mcp_perf::gc_scope perf_gc(false);
 		lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLUA_GCSTEP);
 	}
 	
@@ -1255,6 +1257,7 @@ bool CLevel::Load(u32 dwNum)
 // demonized: called from Device, via Device.LuaGC pointer
 int CLevel::LuaGC()
 {
+    mcp_perf::gc_scope perf_gc(true);
     return lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLua_ParallelGCStep);
 }
 void CLevel::LuaGCDebug()

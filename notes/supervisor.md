@@ -24,3 +24,4 @@
 - game_teleport decisions: in-game `faction` only switches the community in place (noted in the result; clean faction start = game_restart + game_teleport); cross-level spot = start location, else a smart terrain's graph vertex (bases first), else with `position` the nearest graph vertex then set_actor_position; off-map positions snap to the nearest AI node within 30 m; a missing PDA is given (device_pda_1).
 - game_teleport waits: heartbeat `loading` false → lua probe level == target, `afterFirstUpdate`, alive; dead game → error with the crash reason; default timeout 600 s.
 - RaiseFailFastException exits 0xC0000602 (not 0xC0000409); a real `int 29h` gives 0xC0000409 with the fast fail code in ExceptionInformation[0].
+- `game_perf(instance, seconds=5)`: one contiguous block before `main()` (`perf_window`: perf.start, sleep, poll perf.report); fields in `perf.md`. `game_launch(exe=...)` already takes an exe path (used to test from `C:\Anomaly\bin_g9`).

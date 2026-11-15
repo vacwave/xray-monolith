@@ -38,6 +38,7 @@
 #include "CustomHUD.h"
 #include "EngineThreading.h"
 #include "IGame_Level.h"
+#include "mcp_perf.h"
 
 #include "Rain.h"
 
@@ -353,6 +354,7 @@ void CRenderDevice::on_idle()
 
 	if (g_loading_events.size())
 	{
+		mcp_perf::frame_cancel();
 		{
 			PROF_EVENT("Loading...");
 			if (g_loading_events.front()())
@@ -362,6 +364,7 @@ void CRenderDevice::on_idle()
 		pApp->LoadDraw();
 		return;
 	}
+	mcp_perf::frame_begin();
 
 	if (!Device.dwPrecacheFrame && !g_SASH.IsBenchmarkRunning() && g_bLoaded)
 	{
@@ -394,8 +397,10 @@ void CRenderDevice::on_idle()
 
 		Device.seqParallelBeforRender.clear();
 	}
+	mcp_perf::mark(mcp_perf::ph_before_frame);
 
 	FrameMove();
+	mcp_perf::mark(mcp_perf::ph_frame_move);
 
     if (g_pGamePersistent != nullptr)
     {
@@ -490,7 +495,8 @@ void CRenderDevice::on_idle()
 	Device.LuaGCCount = 0;
 
 	secondary_tasks.run(&XRay::Engine::GameThread);
-	
+	mcp_perf::mark(mcp_perf::ph_pre_render);
+
 #ifdef ECO_RENDER // ECO_RENDER START
 	if (Device.Paused() || IsMainMenuActive() || ps_framelimiter)
 	{
@@ -515,6 +521,7 @@ void CRenderDevice::on_idle()
 		tlastf = std::chrono::high_resolution_clock::now();
 	}
 #endif // ECO_RENDER END
+	mcp_perf::mark(mcp_perf::ph_limiter);
 
 #ifndef DEDICATED_SERVER
 	Statistic->RenderTOTAL_Real.FrameStart();
@@ -531,8 +538,10 @@ void CRenderDevice::on_idle()
 			PROF_EVENT("Draw statistics");
 			Statistic->Show();
 		}
+		mcp_perf::mark(mcp_perf::ph_render);
 
 		End();
+		mcp_perf::mark(mcp_perf::ph_present);
 		dwRenderedFrames++;
 	}
 	Statistic->RenderTOTAL_Real.End();
@@ -540,8 +549,10 @@ void CRenderDevice::on_idle()
 	Statistic->RenderTOTAL.accum = Statistic->RenderTOTAL_Real.accum;
 #endif 
 	Device.isRendering = false;
+	mcp_perf::mark(mcp_perf::ph_render);
 
 	secondary_tasks.wait();
+	mcp_perf::mark(mcp_perf::ph_wait_tasks);
 
 	if (psLua_ParallelGC_debug && psLua_ParallelGC && Device.LuaGCDebug)
 	{
@@ -557,6 +568,7 @@ void CRenderDevice::on_idle()
 #endif
 	if (!b_is_Active)
 		Sleep(1);
+	mcp_perf::mark(mcp_perf::ph_inactive_sleep);
 }
 
 #ifdef INGAME_EDITOR

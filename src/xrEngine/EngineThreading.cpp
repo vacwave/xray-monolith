@@ -9,6 +9,7 @@
 #include "Render.h"
 #include "Irenderable.h"
 #include "../../Include/xrRender/Kinematics.h"
+#include "mcp_perf.h"
 
 BOOL mt_Scheduler = TRUE;
 BOOL mt_SchedulerRT = FALSE;
@@ -124,7 +125,8 @@ int psLua_ParallelGC_CallAmount = 25;
 void XRay::Engine::GameThread()
 {
 	PROF_THREAD("Secondary Task 2")
-		
+	mcp_perf::task_scope perf_task(mcp_perf::tk_game_thread);
+
 	// we has granted permission to execute
 	if (g_hud)
 	{
@@ -143,6 +145,7 @@ void XRay::Engine::GameThread()
 		if (mt_Scheduler)
 		{
 			PROF_EVENT("Sheduler Deferred");
+			mcp_perf::task_scope perf_sched(mcp_perf::tk_scheduler);
             if (mt_SchedulerRT)
             {
                 ::Engine.Sheduler.Update();

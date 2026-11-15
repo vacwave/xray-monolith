@@ -183,6 +183,9 @@
     <ClInclude Include="x_ray.h">
       <Filter>General</Filter>
     </ClInclude>
+    <ClInclude Include="mcp_perf.h">
+      <Filter>General</Filter>
+    </ClInclude>
     <ClInclude Include="mcp_server.h">
       <Filter>General</Filter>
     </ClInclude>
@@ -517,6 +520,9 @@
       <Filter>General</Filter>
     </ClCompile>
     <ClCompile Include="x_ray.cpp">
+      <Filter>General</Filter>
+    </ClCompile>
+    <ClCompile Include="mcp_perf.cpp">
       <Filter>General</Filter>
     </ClCompile>
     <ClCompile Include="mcp_server.cpp">

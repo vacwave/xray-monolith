@@ -1418,6 +1418,44 @@ async def game_teleport(instance: str | None = None, faction: str | None = None,
     return await run(teleport, get(instance), faction, level, position, cvars, timeout)
 
 
+# ---------------------------------------------------------------- game_perf
+
+def perf_window(inst, seconds):
+    """perf.start, wait, then poll perf.report until the engine closes the window (first frame after `seconds`)."""
+    inst.call("perf.start", {"seconds": seconds}, timeout=15)
+    deadline = time.monotonic() + seconds + 30
+    time.sleep(seconds)
+    while True:
+        res = inst.call("perf.report", timeout=15)
+        if not res.get("running"):
+            return {"instance": inst.id, **res}
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"perf window still open after {res.get('elapsed_seconds')} s with {res.get('frames')} "
+                               "frames (main thread stalled or a level is loading)")
+        time.sleep(0.2)
+
+
+@tool
+async def game_perf(instance: str | None = None, seconds: float = 5) -> dict:
+    """Measure the game's main thread over a window of `seconds` (0.1..120) and return per-frame averages.
+
+    fps, frame_ms avg/p50/p95/p99/max/min, hitches (frames > max(2*p50, 33.3 ms)). Loading frames are excluded.
+    cap: capped/capped_by (r__framelimit, the menu/pause refresh cap, vsync), limiter_ms = busy-wait in the frame
+    limiter. main.busy_ms = frame time minus limiter and inactive sleep (the load to compare; busy_fps = 1000/busy).
+    main.phases (ms, pct of frame, lua_ms inside): before_frame, frame_move (seqFrame: level/actor/UI/scripts,
+    includes scheduler_rt), pre_render (particles, matrices, task submit), limiter, render (seqRender submit),
+    present (End/Present: GPU or vsync wait), wait_tasks (waiting for worker tasks: scheduler, GC), inactive_sleep,
+    other (message pump, rest). main.lua_ms = Lua entered via luabind calls/resumes plus explicit lua_gc steps on the
+    main thread; tasks.* = same for worker tasks (GameThread: deferred scheduler, seqFrameMT; parallel Lua GC).
+    Not covered: Lua run by raw lua_pcall (script loading, console run_string without a level, lua_exec itself),
+    and GC triggered implicitly by allocation (it counts as time of the Lua call that allocated).
+    memory: working set, private bytes, Lua heap (MB) and its growth per frame (lower bound), engine alloc calls."""
+    inst = get(instance)
+    if not 0.1 <= seconds <= 120:
+        raise ValueError("seconds must be 0.1..120")
+    return await run(perf_window, inst, seconds)
+
+
 def main():
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     w = wer_warning(DEFAULT_EXE.name)

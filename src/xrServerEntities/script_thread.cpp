@@ -16,6 +16,7 @@
 #include "script_engine.h"
 #include "script_thread.h"
 #include "ai_space.h"
+#include <luabind/detail/pcall.hpp>
 
 #define LUABIND_HAS_BUGS_WITH_LUA_THREADS
 
@@ -150,7 +151,7 @@ bool CScriptThread::update()
 	{
 		ai().script_engine().current_thread(this);
 
-		int l_iErrorCode = lua_resume(lua(), 0);
+		int l_iErrorCode = luabind::detail::resume_impl(lua(), 0, 0); // = lua_resume, timed by the perf hook
 
 		if (l_iErrorCode && (l_iErrorCode != LUA_YIELD))
 		{

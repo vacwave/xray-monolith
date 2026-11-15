@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "mcp_server.h"
+#include "mcp_perf.h"
 #include "IGame_Level.h"
 #include "XR_IOConsole.h"
 #include "x_ray.h"
@@ -626,6 +627,7 @@ void start(u16 port, LPCSTR version)
 	write_port_file(port);
 
 	register_builtins();
+	mcp_perf::register_methods();
 	Device.seqFrame.Add(&frame, REG_PRIORITY_LOW);
 	prev_crash_handler = Debug.get_crashhandler(); // chain: the console dumps its variables first
 	Debug.set_crashhandler(on_crash);

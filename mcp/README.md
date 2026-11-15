@@ -41,6 +41,7 @@ All tools take an optional `instance` (default: the last launched or attached on
 | `lua_exec` | Lua chunk or expression list → `results` + printed lines (`print` goes to the log during the call) |
 | `log_tail` | `n` (≤1000), `grep` regex, `since` seq, from the supervisor's 20k-line buffer |
 | `game_teleport` | playable session on a map: from the main menu a new game as `faction` (stock kit incl. PDA) on `level`; in game a level change and/or move to `position` [x,y,z]; then `cvars` (console commands). Returns when the actor is in control: level, position, faction, `load_s`, notes. Unknown level/faction → error with the valid list |
+| `game_perf` | `seconds` window (default 5): fps, frame-time percentiles, hitches, frame cap/limiter, main-thread phases with Lua share, worker-task Lua/GC, memory (see `notes/perf.md`) |
 
 Output safeguards: consecutive identical lines are collapsed to `line ×N`, long lines are clipped, each result is
 capped at 20k chars, and `omitted` says what was left out. The engine itself returns at most 500 lines per exec

@@ -3,6 +3,7 @@
 #include "../xrEngine/fmesh.h"
 #include "../xrEngine/xr_ioconsole.h"
 #include "../xrEngine/gamemtllib.h"
+#include "../xrEngine/mcp_perf.h"
 #include "../Include/xrRender/Kinematics.h"
 #include "profiler.h"
 #include "MainMenu.h"
@@ -153,6 +154,7 @@ void CGamePersistent::RegisterModel(IRenderVisual* V)
 extern void clean_game_globals();
 extern void init_game_globals();
 extern void mcp_register_lua();
+extern void mcp_register_perf();
 
 void CGamePersistent::OnAppStart()
 {
@@ -160,6 +162,7 @@ void CGamePersistent::OnAppStart()
 	GMLib.Load();
 	init_game_globals();
 	mcp_register_lua();
+	mcp_register_perf();
 	inherited::OnAppStart();
 	m_pUI_core = xr_new<ui_core>();
 	m_pMainMenu = xr_new<CMainMenu>();
@@ -798,6 +801,7 @@ void CGamePersistent::OnFrame()
 		if (!mt_Scheduler)
 		{
 			PROF_EVENT("Sheduler");
+			mcp_perf::section_scope perf_rt(mcp_perf::sc_scheduler_rt);
 			::Engine.Sheduler.Update();
 		}
 		else
@@ -805,6 +809,7 @@ void CGamePersistent::OnFrame()
             if (!mt_SchedulerRT)
             {
                 PROF_EVENT("Sheduler RT");
+                mcp_perf::section_scope perf_rt(mcp_perf::sc_scheduler_rt);
                 ::Engine.Sheduler.UpdateInit();
                 ::Engine.Sheduler.UpdateRT();
             }

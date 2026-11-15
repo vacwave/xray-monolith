@@ -26,8 +26,11 @@
 
 namespace luabind { namespace detail
 {
+	pcall_hook_fun pcall_hook = 0;
+
 	int pcall(lua_State *L, int nargs, int nresults)
 	{
+		pcall_hook_fun hook = pcall_hook;
 		pcall_callback_fun e = get_pcall_callback();
 		int en = 0;
 		if ( e )
@@ -37,7 +40,9 @@ namespace luabind { namespace detail
 			lua_insert(L, base);  // push pcall_callback under chunk and args
 			en = base;
   		}
+		if (hook) hook(true);
 		int result = lua_pcall(L, nargs, nresults, en);
+		if (hook) hook(false);
 		if ( en )
 			lua_remove(L, en);  // remove pcall_callback
 		return result;
@@ -45,7 +50,11 @@ namespace luabind { namespace detail
 
 	int resume_impl(lua_State *L, int nargs, int)
 	{
-		return lua_resume(L, nargs);
+		pcall_hook_fun hook = pcall_hook;
+		if (hook) hook(true);
+		int result = lua_resume(L, nargs);
+		if (hook) hook(false);
+		return result;
 	}
 
 }}
