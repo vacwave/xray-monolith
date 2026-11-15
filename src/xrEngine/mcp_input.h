@@ -20,6 +20,12 @@ namespace mcp_input
 
 	// Called by xrGame at app start; registers the methods (no-op without -mcp_port)
 	ENGINE_API void init(const game_hooks& hooks);
+	// Per-frame driver from xrGame (nav move_to): called in input frames only (frozen while MCP-paused outside steps)
+	// with the input clock delta, before held keys get their hold events
+	ENGINE_API void set_driver(void (*tick)(u32 dt_ms));
+	// Press / release a key through the held-key set (released by input.release_all and on client change)
+	ENGINE_API void hold_key(int dik, bool down);
+	ENGINE_API bool is_held(int dik);
 	// CInput::OnFrame hook
 	void on_frame();
 }

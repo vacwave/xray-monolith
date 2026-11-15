@@ -2050,6 +2050,299 @@ async def game_object(id: int, instance: str | None = None) -> dict:
     return await run(world_call, inst, "world.object", {"id": int(id)})
 
 
+# ---------------------------------------------------------------- game_nav / game_nav_map (AI map queries, overlay, top-down image)
+
+import base64  # noqa: E402
+import math  # noqa: E402
+import zlib  # noqa: E402
+
+NAV_QUERIES = ("info", "at", "around", "path", "nearest", "overlay")
+
+
+def nav_vec(v, name):
+    if v is None:
+        return None
+    if len(v) != 3:
+        raise ValueError(f"{name} must be [x, y, z]")
+    return ",".join(str(float(c)) for c in v)
+
+
+def nav_level_changers(inst):
+    """Level changers on this level (world.objects), for naming the exits of a route."""
+    res = world_call(inst, "world.objects", {"radius": "100000", "kinds": "level_changer", "limit": 100})
+    return res.get("objects", []) if res.get("available") else []
+
+
+def nav_query(inst, query, p):
+    method = {"info": "nav.info", "at": "nav.at", "around": "nav.around", "path": "nav.path",
+              "nearest": "nav.nearest", "overlay": "nav.overlay"}[query]
+    res = world_call(inst, method, p)
+    if not res.get("available", True):
+        return res
+    if query == "info" and "exits" in res:
+        ch = nav_level_changers(inst)
+        res["level_changers"] = [{k: o.get(k) for k in ("id", "name", "destination", "position", "distance", "bearing")}
+                                 for o in ch]
+    return res
+
+
+@tool
+async def game_nav(query: str = "at", instance: str | None = None, position: list[float] | None = None,
+                   to: list[float] | None = None, to_level: str | None = None, radius: float | None = None,
+                   rays: int = 16, grid: bool = True, grid_cell: float = 2, grid_radius: float | None = None,
+                   orient: str = "view", max_nodes: int | None = None, max_waypoints: int = 64,
+                   show: bool = False, random_radius: float | None = None, count: int = 1, on: bool | None = None,
+                   path: list[list[float]] | None = None, markers: list[list[float]] | None = None,
+                   clear: bool = False) -> dict:
+    """Where can the actor walk? Read-only queries on the level AI map (the navmesh NPCs path on: a grid of ~0.7 m
+    walkable cells linked to their neighbours) and the cross-level game graph. Origin = `position` [x,y,z] or the actor.
+
+    query:
+      info     level AI map: nodes, cell_size, box, game_vertices, exits (game-graph edges to other levels: to_level,
+               position) and level_changers (world objects with destination).
+      at       is the point on the navmesh? on_mesh (a node under x/z within 1.5 m vertically), node {id, position,
+               horizontal, vertical, distance} (nearest node when off-mesh), height_above_node, plane_y, links (walkable
+               neighbours 0-4), cover {high, low}, game_vertex, actor_node (= Lua db.actor:level_vertex_id()).
+      around   walkable space nearby: `rays` (default 16) straight walks along the navmesh at bearings relative to the
+               camera (0 = ahead, +90 = right; game_input look convention) up to `radius` (30 m): distance, open
+               (reached radius), end point; nodes_in_radius, reachable (linked to the origin node within radius),
+               reachable_box; grid = ASCII map (top = camera forward, orient "north" = +z up), grid_cell metres per
+               char (2), grid_radius (min(radius, 30)): '@' origin, '.' reachable, 'o' walkable but not reachable within
+               radius, '#' no AI node (walls, water, cliffs, off-map).
+      path     level route from the origin (or `position`) to `to`: found, length (along corners), straight, nodes,
+               visited, waypoints (corner points: position, distance, heading = world yaw, bearing = turn from the
+               current camera yaw, turn = change from the previous leg), reason when not found (no_route: unreachable,
+               target_isolated: target in a closed area, search_limit: truncated, off_mesh) + closest_reachable;
+               to_snapped when `to` is off the mesh. Engine A* (NPC parameters, 65500 nodes) with an mcp A* fallback
+               for longer searches (max_nodes, default 400000). show=true draws it on the overlay. With `to_level`
+               (another level, `to` optional on it): game-graph route: legs [{level, enter, exit}], level_changer that
+               leads there (match destination_vertex = its destination is the next leg, nearest = closest changer to
+               that level) and to_exit (level path from the origin to that changer).
+      nearest  nearest navmesh point to `position` (spawn/teleport placement); random_radius: `count` random reachable
+               points within that radius.
+      overlay  3D debug draw in the game view (visible in game_screenshot): on (true/false), radius (20 m, max 60):
+               AI nodes around the actor as squares on the ground (green = reachable from the actor's node, orange =
+               not), path [[x,y,z],...] as a yellow line with cyan posts, markers as magenta posts; clear drops
+               path/markers. Off by default, reset when the supervisor disconnects.
+    Outside a level: {available: false, reason: no_level/loading/no_actor/no_ai_map}. cost_ms = engine time."""
+    inst = get(instance)
+    if query not in NAV_QUERIES:
+        raise ValueError(f"query must be one of {NAV_QUERIES}")
+    if orient not in ("view", "north"):
+        raise ValueError('orient must be "view" or "north"')
+    p = {}
+    if query == "path":
+        if position is not None:
+            p["from"] = nav_vec(position, "position")
+        if to is None and not to_level:
+            raise ValueError("path needs to [x, y, z] and/or to_level")
+        if to is not None:
+            p["to"] = nav_vec(to, "to")
+        if to_level:
+            p["to_level"] = to_level
+        if max_nodes:
+            p["max_nodes"] = int(max_nodes)
+        p["max_waypoints"] = int(max_waypoints)
+        if show:
+            p["overlay"] = 1
+    elif position is not None:
+        p["position"] = nav_vec(position, "position")
+    if radius is not None:
+        p["radius"] = str(float(radius))
+    if query == "around":
+        p.update({"rays": int(rays), "grid": int(grid), "grid_cell": str(float(grid_cell)), "orient": orient})
+        if grid_radius is not None:
+            p["grid_radius"] = str(float(grid_radius))
+    if query == "nearest" and random_radius:
+        p.update({"random_radius": str(float(random_radius)), "count": int(count)})
+    if query == "overlay":
+        if on is not None:
+            p["on"] = int(on)
+        if clear:
+            p["clear"] = 1
+        for key, pts in (("path", path), ("markers", markers)):
+            if pts is not None:
+                p[key] = ";".join(nav_vec(v, key) for v in pts)
+    res = await run(nav_query, inst, query, p)
+    if query == "path" and show and res.get("found"):
+        await run(world_call, inst, "nav.overlay", {"on": 1})
+        res["overlay"] = True
+    return res
+
+
+NAV_KIND_COLORS = {"stalker": (60, 200, 255), "monster": (255, 50, 50), "corpse": (150, 150, 150),
+                   "level_changer": (255, 0, 255), "container": (170, 110, 60), "anomaly": (255, 140, 0),
+                   "campfire": (255, 200, 80), "weapon": (255, 255, 120), "ammo": (255, 255, 120),
+                   "artefact": (255, 255, 120), "item": (255, 255, 120)}
+
+
+def nav_png(w, h, rgb):
+    """Minimal 8-bit RGB PNG (stdlib zlib)."""
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    stride = w * 3
+    raw = b"".join(b"\x00" + bytes(rgb[y * stride:(y + 1) * stride]) for y in range(h))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+
+
+def nav_map(inst, position, radius, cell, orient, path_to, objects, max_px):
+    p = {"radius": str(float(radius)), "orient": orient, "max_px": int(max_px)}
+    if position is not None:
+        p["position"] = nav_vec(position, "position")
+    if cell:
+        p["cell"] = str(float(cell))
+    g = world_call(inst, "nav.grid", p)
+    if not g.get("available"):
+        return [TextContent(type="text", text=json.dumps(g))]
+    n, c, yaw = g["width"], g["cell"], math.radians(g["yaw"])
+    ox, oy, oz = g["origin"]
+    data = base64.b64decode(g.pop("data"))
+    s = max(1, 640 // n)
+    W = n * s
+    img = bytearray(W * W * 3)
+    for r in range(n):
+        for col in range(n):
+            v = data[r * n + col]
+            if not v:
+                rgb = (28, 28, 32)
+            else:
+                f = min(1.6, max(0.45, 1 + ((v & 0x7f) - 64) * 0.04))
+                base = (50, 165, 70) if v & 0x80 else (190, 105, 45)
+                rgb = tuple(min(255, int(x * f)) for x in base)
+            px = bytes(rgb) * s
+            for dy in range(s):
+                o = ((r * s + dy) * W + col * s) * 3
+                img[o:o + 3 * s] = px
+
+    def to_px(pt):
+        dx, dz = pt[0] - ox, pt[2] - oz
+        right = dx * math.cos(yaw) - dz * math.sin(yaw)
+        fwd = dx * math.sin(yaw) + dz * math.cos(yaw)
+        return ((right / c + (n - 1) / 2 + 0.5) * s, ((n - 1) / 2 - fwd / c + 0.5) * s)
+
+    def dot(x, y, rgb, rad):
+        for yy in range(int(y - rad), int(y + rad) + 1):
+            for xx in range(int(x - rad), int(x + rad) + 1):
+                if 0 <= xx < W and 0 <= yy < W and (xx - x) ** 2 + (yy - y) ** 2 <= rad * rad:
+                    o = (yy * W + xx) * 3
+                    img[o:o + 3] = bytes(rgb)
+
+    def line(a, b, rgb, rad=1.0):
+        steps = int(max(abs(b[0] - a[0]), abs(b[1] - a[1]))) + 1
+        for i in range(steps + 1):
+            t = i / steps
+            dot(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, rgb, rad)
+
+    meta = {k: v for k, v in g.items() if k != "encoding"}
+    meta["scale_px_per_cell"] = s
+    meta["image"] = {"width": W, "height": W, "metres_per_px": round(c / s, 3),
+                     "up": "north (+z)" if orient == "north" else "camera forward",
+                     "legend": "green = walkable and reachable from the origin (brighter = higher), orange = walkable "
+                               "but not linked, dark = no AI node; white arrow = actor/camera, yellow = path, "
+                               "dots: cyan stalker, red monster, grey corpse, magenta level changer, yellow loot, "
+                               "orange anomaly, brown container"}
+    if objects:
+        ob = world_call(inst, "world.objects", {"radius": str(float(radius) * 1.42), "limit": 100,
+                                                "position": ",".join(str(v) for v in g["origin"])})
+        shown = 0
+        for o in ob.get("objects", []):
+            x, y = to_px(o["position"])
+            if 0 <= x < W and 0 <= y < W:
+                dot(x, y, NAV_KIND_COLORS.get(o["kind"], (230, 230, 230)), max(2.0, s * 0.6))
+                shown += 1
+        meta["objects_drawn"] = shown
+    if path_to is not None:
+        pp = {"to": nav_vec(path_to, "path_to"), "max_waypoints": 500}
+        if position is not None:
+            pp["from"] = nav_vec(position, "position")
+        pr = world_call(inst, "nav.path", pp)
+        meta["path"] = {k: pr.get(k) for k in ("found", "length", "straight", "nodes", "reason", "search_ms")}
+        if pr.get("found"):
+            pts = [pr["from"]] + [w["position"] for w in pr["waypoints"]]
+            for a, b in zip(pts, pts[1:]):
+                line(to_px(a), to_px(b), (255, 230, 0), max(1.0, s * 0.35))
+        dot(*to_px(path_to), (255, 230, 0), max(3.0, s * 0.9))
+    # actor / camera arrow at the origin (or the actor's projected position)
+    cx, cy = to_px(g["origin"])
+    head = math.radians(g["camera_yaw"]) - yaw  # 0 = up in the image
+    L = max(8.0, s * 3)
+    tip = (cx + math.sin(head) * L, cy - math.cos(head) * L)
+    left = (cx + math.sin(head - 2.5) * L * 0.6, cy - math.cos(head - 2.5) * L * 0.6)
+    right = (cx + math.sin(head + 2.5) * L * 0.6, cy - math.cos(head + 2.5) * L * 0.6)
+    for a, b in ((tip, left), (tip, right), (left, right), ((cx, cy), tip)):
+        line(a, b, (255, 255, 255), 1.0)
+    png = nav_png(W, W, img)
+    meta["bytes"] = len(png)
+    return [TextContent(type="text", text=json.dumps({"instance": inst.id, **meta})),
+            ImageContent(type="image", data=base64.b64encode(png).decode(), mime_type="image/png")]
+
+
+@tool
+async def game_nav_map(instance: str | None = None, position: list[float] | None = None, radius: float = 40,
+                       cell: float | None = None, orient: str = "view", path_to: list[float] | None = None,
+                       objects: bool = True, max_px: int = 400) -> list[TextContent | ImageContent]:
+    """Top-down PNG of the AI map around the actor (or `position`): walkable cells (green = reachable from the
+    origin, orange = walkable but not linked, dark = no AI node; brighter = higher), the actor as a white arrow
+    (camera direction), nearby objects from game_objects as coloured dots, and with path_to [x,y,z] the nav path to
+    it in yellow. radius metres (40, max 1000), cell metres per grid sample (default the AI cell ~0.7, coarsened to fit
+    max_px samples per side), orient "view" (camera forward up, matches game_input bearings) or "north" (+z up).
+    Metadata: origin, yaw used, cell, scale, objects_drawn, path {found, length, ...}."""
+    inst = get(instance)
+    if orient not in ("view", "north"):
+        raise ValueError('orient must be "view" or "north"')
+    return await run(nav_map, inst, position, radius, cell, orient, path_to, objects, max_px)
+
+
+def nav_move(inst, p, wait, wait_timeout):
+    res = world_call(inst, "nav.move_to", p)
+    if res.get("available") is False or res.get("done") or not wait:
+        return res
+    deadline = time.monotonic() + wait_timeout
+    while time.monotonic() < deadline:
+        time.sleep(0.1)
+        try:
+            res = inst.call("nav.move_status", {}, timeout=5)
+        except TimeoutError:
+            continue  # level load: the mover aborts itself (level_change)
+        if res.get("done"):
+            return {"instance": inst.id, **res}
+    return {"instance": inst.id, **res, "note": f"still running after {wait_timeout} s of wall time (paused or "
+                                                 "stepping?); poll game_move_to(status=True) or stop=True"}
+
+
+@tool
+async def game_move_to(instance: str | None = None, position: list[float] | None = None, id: int | None = None,
+                       stop_distance: float | None = None, timeout: float = 120, sprint: bool = False,
+                       wait: bool = True, wait_timeout: float = 300, status: bool = False,
+                       stop: bool = False) -> dict:
+    """Walk the actor to `position` [x,y,z] or to an online object `id` (followed while it moves) along the AI-map
+    path, like a player: the engine turns the camera toward the next path corner and holds the forward key each input
+    frame (same injected input as game_input), so it respects MCP pause / game_step (no progress while paused; stepped
+    frames advance it). No teleporting. sprint: tap sprint_toggle while running straight.
+    stop_distance (m, horizontal): default 1 (1.5 for objects). timeout: seconds of input time (game time while MCP
+    time control is used). Stuck (no progress for 1 s while holding forward): tap use (opens doors; facing an NPC it
+    may open a talk -> aborted dialog), then jump, then replan, then give up.
+    Result: state reached / stuck (stuck_at) / timeout / no_path (reason) / aborted (reason: dialog, actor_dead,
+    level_change, keys_released = game_input_release or supervisor disconnect, target_gone, replaced, stopped),
+    distance_left, position, path_length, travelled, elapsed_ms, frames, waypoint/waypoints. Keys are released at the
+    end. wait=False returns at once ({id, state: running}); status=True polls the current/last move, stop=True aborts
+    it. With game_nav overlay on, the path is drawn."""
+    inst = get(instance)
+    if status or stop:
+        return {"instance": inst.id, **await run(world_call, inst, "nav.move_status", {"stop": int(stop)})}
+    if (position is None) == (id is None):
+        raise ValueError("give exactly one of position [x, y, z] or id")
+    p = {"timeout_ms": int(timeout * 1000), "sprint": int(sprint)}
+    if position is not None:
+        p["to"] = nav_vec(position, "position")
+    else:
+        p["id"] = int(id)
+    if stop_distance is not None:
+        p["stop_distance"] = str(float(stop_distance))
+    return await run(nav_move, inst, p, wait, wait_timeout)
+
+
 # ---------------------------------------------------------------- game_input
 
 def input_run(inst, steps, wait, timeout):

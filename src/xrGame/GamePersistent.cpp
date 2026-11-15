@@ -160,6 +160,7 @@ extern void mcp_register_lua();
 extern void mcp_register_perf();
 extern void mcp_register_events();
 extern void mcp_register_ui();
+extern void mcp_register_nav();
 
 void CGamePersistent::OnAppStart()
 {
@@ -173,6 +174,7 @@ void CGamePersistent::OnAppStart()
 	mcp_register_perf();
 	mcp_register_events();
 	mcp_register_ui();
+	mcp_register_nav();
 	inherited::OnAppStart();
 	m_pUI_core = xr_new<ui_core>();
 	m_pMainMenu = xr_new<CMainMenu>();

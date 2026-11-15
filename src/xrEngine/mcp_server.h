@@ -22,7 +22,7 @@ namespace mcp
 	ENGINE_API bool get_int_param(LPCSTR params, LPCSTR key, s64& out);
 	ENGINE_API xr_string to_json_string(LPCSTR s);
 	// Id of the connected client, 0 when none (changes on every reconnect)
-	u32 client_id();
+	ENGINE_API u32 client_id();
 
 	// Start buffering engine log lines for log events / log.tail (call as early as possible)
 	void capture_log();

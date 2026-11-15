@@ -1280,6 +1280,7 @@ extern bool use_reshade;
 extern void render_reshade_effects();
 
 extern int ps_r4_hdr10_pda; // NOTE: this is a hack to avoid double HDR tonemapping the PDA
+extern void mcp_nav_render();
 
 void CLevel::OnRender()
 {
@@ -1356,6 +1357,7 @@ void CLevel::OnRender()
 	HUD().RenderUI();
 
 	ScriptDebugRender();
+	mcp_nav_render();
 
 	for (u32 I = 0; I < Level().Objects.o_count(); I++)
 	{

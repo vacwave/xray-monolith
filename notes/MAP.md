@@ -14,3 +14,4 @@
 - Time control (MCP pause, fixed-dt frame step, time factor, game clock rate; game_time/game_step) → `xrEngine/mcp_time.*`, hook in `device.cpp` FrameMove, `mcp_input.cpp` clock → `time.md`
 - UI driving (virtual MCP cursor, input.run cursor step, ui.tree, game_ui / game_ui_click, talk options, inventory cells, main menu / options / PDA quirks) → `xrGame/UICursor.*`, `xrGame/mcp_ui.cpp`, `xrEngine/mcp_input.*` (cursor op), `mcp/anomaly_mcp.py` block `UI tools` → `ui.md`
 - Wait / sync primitive (game_wait: conditions on events, log, state, objects, Lua, time; fail_on; push wake + batched polls; lua.exec quiet) → `mcp/anomaly_mcp.py` block `game_wait`, `xrGame/mcp_lua.cpp` → `wait.md`
+- Navigation (AI map / game graph queries, nav overlay, top-down nav map, move_to; MCP nav.*, game_nav / game_nav_map / game_move_to) → `xrGame/mcp_nav.cpp`, `level_graph*.h`, `graph_engine.h`, hook in `Level.cpp` OnRender, `xrEngine/mcp_input.*` (set_driver/hold_key) → `nav.md`

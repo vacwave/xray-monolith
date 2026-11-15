@@ -70,6 +70,7 @@ namespace
 	};
 
 	game_hooks hooks{};
+	void (*driver)(u32 dt_ms) = nullptr;
 	bool enabled = false;
 	u32 next_id = 1;
 	xr_list<sequence> seqs;
@@ -561,6 +562,24 @@ void init(const game_hooks& h)
 	mcp::register_method("input.release_all", input_release_all);
 }
 
+void set_driver(void (*tick)(u32 dt_ms))
+{
+	driver = tick;
+}
+
+void hold_key(int dik, bool down)
+{
+	if (down)
+		press(dik);
+	else
+		release(dik);
+}
+
+bool is_held(int dik)
+{
+	return std::any_of(held.begin(), held.end(), [dik](const held_key& h) { return h.dik == dik; });
+}
+
 void on_frame()
 {
 	if (!enabled)
@@ -611,6 +630,9 @@ void on_frame()
 		frame_yaw = frame_pitch = 0;
 		frame_cursor_failed = false;
 	}
+
+	if (driver)
+		driver(delta);
 
 	IInputReceiver* ir = pInput->CurrentIR();
 	if (frame_dx || frame_dy)
