@@ -1552,6 +1552,66 @@ async def game_teleport(instance: str | None = None, faction: str | None = None,
     return with_error_hint(inst, await run(teleport, inst, faction, level, position, cvars, timeout))
 
 
+# ---------------------------------------------------------------- game_state
+
+STATE_SECTIONS = ("inventory", "tasks", "stats")
+
+
+def game_state_get(inst, sections):
+    """state.get on the main thread; while a level loads (main thread blocked) or the game is hung, the answer comes
+    from engine.heartbeat (net thread) / the hang monitor instead, so the call never waits for the load."""
+    if inst.dead:
+        raise RuntimeError(f"instance {inst.id} is not running (exit code {inst.exit_code})")
+    t0 = time.perf_counter()
+
+    def quick(mode, **kw):
+        return {"instance": inst.id, "mode": mode, "source": "supervisor", **kw}
+
+    if inst.hung:
+        return quick("hung", frame_stall_s=inst.stall_s, loading=inst.loading)
+    hb = inst.call("engine.heartbeat", timeout=5)
+    if hb.get("loading"):
+        return quick("loading", frame=hb.get("frame"))
+    try:
+        res = inst.call("state.get", {"sections": ",".join(sections)} if sections else {}, timeout=3)
+    except TimeoutError:
+        hb = inst.call("engine.heartbeat", timeout=5)
+        if hb.get("loading"):
+            return quick("loading", frame=hb.get("frame"))
+        raise TimeoutError("state.get: no reply in 3 s and no level is loading (main thread stalled; see game_status)")
+    res["call_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    return {"instance": inst.id, **res}
+
+
+@tool
+async def game_state(instance: str | None = None, sections: list[str] | None = None) -> dict:
+    """Where am I and what is the game doing: one cheap structured snapshot (no screenshot / lua_exec needed).
+
+    mode: main_menu (no game), loading, in_game, in_game_menu (ESC menu over a game), dialog (a UI window owns input,
+    see ui.dialog), dead, paused, tutorial, console (console open; under_console = the mode beneath), hung.
+    ui: main_menu, console, paused, cursor, input_receiver (engine class on top of the input stack), actor_control
+    (the actor takes movement/fire input now), dialog / menu_dialog {kind: actor_menu (menu_mode inventory / trade /
+    upgrade / loot_body / loot_box) | pda | talk | message_box | script | other, class, script_class (Lua class of
+    script windows, e.g. sleep), partner_id/name/section}, tutorial, input_disabled.
+    In a level: actor {id, name, position, yaw/pitch (deg; yaw 0 = +z, +90 = +x, i.e. + = turned right like
+    game_input look; pitch + = up), level_vertex, game_vertex, alive, health, stamina, radiation, bleeding,
+    psy_health, satiety, thirst/sleepiness (0..1, Anomaly scripts), move (stand/run/walk/sprint/crouch/crouch_low/
+    jump/landing/climb), speed (m/s), weight/max_weight/max_walk_weight, money, community, rank, reputation, god_mode,
+    outfit, helmet}; hands {active_slot, item {section, name, condition, state (idle/showing/hiding/hidden/fire/
+    reload/misfire/...), ammo, mag_size, ammo_type, spare_ammo, fire_mode (-1 = auto), zoomed, jammed}, torch,
+    night_vision, detector {working}}; target (crosshair) {distance, id, section, object, name, alive, relation};
+    world {level, game_time, game_time_factor, time_factor, weather, surge, psi_storm, in_cover}.
+    sections (optional, cheap but bigger): "inventory" (slots, belt, backpack grouped by section; capped at 100),
+    "tasks" (active tasks: id, title, type, active), "stats" (frame, fps, frame_ms, times); ["all"] = all of them.
+    Fields that do not apply are absent. While a level loads the answer is {mode: loading, source: supervisor}."""
+    inst = get(instance)
+    sections = sections or []
+    bad = [s for s in sections if s not in STATE_SECTIONS + ("all",)]
+    if bad:
+        raise ValueError(f"unknown sections {bad}; valid: {list(STATE_SECTIONS)} or ['all']")
+    return await run(game_state_get, inst, sections)
+
+
 # ---------------------------------------------------------------- game_input
 
 def input_run(inst, steps, wait, timeout):
