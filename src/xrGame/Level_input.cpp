@@ -137,7 +137,8 @@ void CLevel::IR_OnMouseMove(int dx, int dy)
     p.x = Device.clientWidth / 2;
     p.y = Device.clientHeight / 2;
     ClientToScreen(Device.m_hWnd, &p);
-    SetCursorPos(p.x, p.y);
+    if (!hidden_mode())
+        SetCursorPos(p.x, p.y);
 }
 
 // Обработка нажатия клавиш

@@ -632,6 +632,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release-AVX|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="xrDebugNew.cpp" />
+    <ClCompile Include="xrHiddenMode.cpp" />
     <ClCompile Include="xrMemory.cpp" />
     <ClCompile Include="xrMemory_align.cpp" />
     <ClCompile Include="xrMemory_debug.cpp" />
@@ -699,6 +700,7 @@
     </CustomBuild>
     <ClInclude Include="Lock.hpp" />
     <ClInclude Include="log.h" />
+    <ClInclude Include="xrHiddenMode.h" />
     <ClInclude Include="lzhuf.h" />
     <ClInclude Include="lzo_compressor.h" />
     <ClInclude Include="memory_monitor.h" />

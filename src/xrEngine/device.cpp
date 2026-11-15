@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "hidden_mode.h"
 #include "../xrCDB/frustum.h"
 #include "xr_ioconsole.h"
 #include "xr_input.h"
@@ -647,7 +648,10 @@ void CRenderDevice::Run()
 	seqAppStart.Process(rp_AppStart);
 
 	//m_pRender->ClearTarget();
-	SetForegroundWindow(m_hWnd);
+	if (hidden_mode())
+		hidden_mode_start();
+	else
+		SetForegroundWindow(m_hWnd);
 	message_loop();
 
 	seqAppEnd.Process(rp_AppEnd);
@@ -801,6 +805,8 @@ void CRenderDevice::OnWM_Activate(WPARAM wParam, LPARAM lParam)
 	u16 fActive = LOWORD(wParam);
 	BOOL fMinimized = (BOOL)HIWORD(wParam);
 	BOOL bActive = ((fActive != WA_INACTIVE) && (!fMinimized)) ? TRUE : FALSE;
+	if (hidden_mode())
+		return; // stays active (set in hidden_mode_start), never touches the cursor
 
 	if (psDeviceFlags2.test(rsAlwaysActive) && g_screenmode != 2)
 	{

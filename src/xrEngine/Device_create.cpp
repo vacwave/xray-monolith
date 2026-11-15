@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "hidden_mode.h"
 
 //#include "resourcemanager.h"
 #include "../Include/xrRender/DrawUtils.h"
@@ -181,6 +182,8 @@ PROTECT_API void CRenderDevice::Create()
 		psCurrentVidMode[0] = w;
 		psCurrentVidMode[1] = h;
 	}
+	if (hidden_mode())
+		hidden_mode_vid_mode(psCurrentVidMode[0], psCurrentVidMode[1]);
 
 	DWORD style;
 	if (g_screenmode == 0)
@@ -236,8 +239,10 @@ PROTECT_API void CRenderDevice::Create()
 	clientWidth = winRect.right;
 	clientHeight = winRect.bottom;
 	MapWindowPoints(m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
-	ClipCursor(&winRect);
-	SetActiveWindow(m_hWnd);
+	if (!hidden_mode())
+		ClipCursor(&winRect);
+	if (!hidden_mode())
+		SetActiveWindow(m_hWnd);
 
 	string_path fname;
 	FS.update_path(fname, "$game_data$", "shaders.xr");

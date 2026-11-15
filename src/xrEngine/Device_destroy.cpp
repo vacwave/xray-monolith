@@ -120,7 +120,8 @@ void CRenderDevice::Reset(bool precache)
 	clientWidth = winRect.right;
 	clientHeight = winRect.bottom;
 	MapWindowPoints(m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
-	ClipCursor(&winRect);
+	if (!hidden_mode())
+		ClipCursor(&winRect);
 #endif
 
 	m_imgui.OnDeviceResetEnd();
@@ -195,7 +196,8 @@ bool CRenderDevice::ChangeOutputMonitor(HMONITOR hTargetMon)
 	clientWidth  = winRect.right;
 	clientHeight = winRect.bottom;
 	MapWindowPoints(m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
-	ClipCursor(&winRect);
+	if (!hidden_mode())
+		ClipCursor(&winRect);
 #endif
 
 	m_imgui.OnDeviceResetEnd();

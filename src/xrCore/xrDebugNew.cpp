@@ -239,6 +239,7 @@ void xrDebug::gather_info(const char* expression, const char* description, const
 void xrDebug::do_exit(const std::string& message)
 {
 	xrLogger::FlushLog();
+	hidden_mode_exit(1);
 	MessageBox(NULL, message.c_str(), "Error", MB_OK | MB_ICONERROR | MB_SYSTEMMODAL);
 	TerminateProcess(GetCurrentProcess(), 1);
 }
@@ -277,6 +278,7 @@ void xrDebug::backend(const char* expression, const char* description, const cha
     if (IsDebuggerPresent())
         DebugBreak();
 
+	hidden_mode_exit(1);
 	ShowCursor(true);
 	ShowWindow(GetActiveWindow(), SW_FORCEMINIMIZE);
 	MessageBox(
@@ -863,6 +865,7 @@ LONG WINAPI UnhandledFilter(_EXCEPTION_POINTERS* pExceptionInfo)
     if (IsDebuggerPresent())
         DebugBreak();
 
+	hidden_mode_exit(3);
 	ShowCursor(true);
 	ShowWindow(GetActiveWindow(), SW_FORCEMINIMIZE);
 	MessageBox(

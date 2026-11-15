@@ -619,6 +619,8 @@ public:
 
 	virtual void Execute(LPCSTR args)
 	{
+		if (hidden_mode())
+			return; // stays borderless, the window is never shown
 		u32 prev_mode = g_screenmode;
 		CCC_Token::Execute(args);
 

@@ -195,6 +195,9 @@
     <ClCompile Include="xrDebugNew.cpp">
       <Filter>Debug core</Filter>
     </ClCompile>
+    <ClCompile Include="xrHiddenMode.cpp">
+      <Filter>Debug core</Filter>
+    </ClCompile>
     <ClCompile Include="blackbox\BlackBoxUI.cpp">
       <Filter>Debug core\BlackBox</Filter>
     </ClCompile>
@@ -443,6 +446,9 @@
     </ClInclude>
     <ClInclude Include="log.h">
       <Filter>FS</Filter>
+    </ClInclude>
+    <ClInclude Include="xrHiddenMode.h">
+      <Filter>Debug core</Filter>
     </ClInclude>
     <ClInclude Include="net_utils.h">
       <Filter>FS</Filter>

@@ -166,7 +166,7 @@ namespace xr_imgui
             if (imgui_metrics)  ImGui::ShowMetricsWindow(&imgui_metrics);
         }
 
-        if (io.WantSetMousePos)
+        if (io.WantSetMousePos && !hidden_mode())
         {
             POINT pos = { (int)io.MousePos.x, (int)io.MousePos.y };
             ClientToScreen(Device.m_hWnd, &pos);

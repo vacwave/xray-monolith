@@ -558,7 +558,8 @@ void CMainMenu::OnDeviceCreate()
 	RECT winRect;
 	GetClientRect(Device.m_hWnd, &winRect);
 	MapWindowPoints(Device.m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
-	ClipCursor(&winRect);
+	if (!hidden_mode())
+		ClipCursor(&winRect);
 }
 
 
