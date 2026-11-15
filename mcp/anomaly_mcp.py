@@ -27,6 +27,7 @@ from pathlib import Path
 import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ImageContent, TextContent
 
 log = logging.getLogger("anomaly-mcp")
 
@@ -1547,6 +1548,57 @@ async def game_teleport(instance: str | None = None, faction: str | None = None,
     Unknown level/faction -> error listing the valid ones. Result: level, position, faction, load_s, notes."""
     inst = get(instance)
     return with_error_hint(inst, await run(teleport, inst, faction, level, position, cvars, timeout))
+
+
+# ---------------------------------------------------------------- game_screenshot
+
+def screenshot(inst, max_width, fmt, quality, save_path, timeout):
+    """screenshot.begin, then poll screenshot.get (captured at the end of the next rendered frame, encoded off-thread)."""
+    if inst.call("engine.heartbeat", timeout=5).get("loading"):
+        raise RuntimeError("a level is loading: the loading screen cannot be captured (the main thread is blocked); "
+                           "retry once game_status shows the level")
+    params = {"max_width": max_width, "format": fmt, "quality": quality}
+    if save_path:
+        p = Path(save_path)
+        p = (p if p.is_absolute() else RUN_DIR / inst.id / "screenshots" / p).resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        params["save_path"] = str(p)
+    t0 = time.monotonic()
+    deadline = t0 + timeout
+    rid = inst.call("screenshot.begin", params, timeout=timeout)["id"]
+    while True:
+        res = inst.call("screenshot.get", {"id": rid}, timeout=max(1.0, deadline - time.monotonic()))
+        if not res.get("pending"):
+            break
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"no screenshot after {timeout} s (stage {res.get('stage')}: no frame rendered, "
+                               "or the main thread is stalled)")
+        time.sleep(0.01)
+    data = res.pop("data")
+    res["total_ms"] = round((time.monotonic() - t0) * 1000, 1)
+    res = {"instance": inst.id, **{k: round(v, 1) if isinstance(v, float) else v for k, v in res.items()}}
+    return [TextContent(type="text", text=json.dumps(res)),
+            ImageContent(type="image", data=data, mime_type="image/png" if fmt == "png" else "image/jpeg")]
+
+
+@tool
+async def game_screenshot(instance: str | None = None, max_width: int = 1024, format: str = "jpeg", quality: int = 70,
+                          save_path: str | None = None, timeout: float = 10) -> list[TextContent | ImageContent]:
+    """Capture what a player would see (3D view + HUD/UI/menus) and return it as an image plus JSON metadata.
+
+    The frame is the presented back buffer of the next rendered frame (works minimized/silent and with -showwindow).
+    max_width: downscale the returned image to this width (aspect kept; 0 = full size). format: "jpeg" (default,
+    quality 1..100) or "png". Default (1024 px JPEG q70) is ~50-200 KB. save_path: also write the FULL-resolution
+    frame to this file (.jpg/.jpeg = JPEG q95, anything else PNG); relative paths go to .mcp-run/<id>/screenshots/.
+    Metadata: width/height (returned image), orig_width/orig_height, frame and level when captured (level null in the
+    main menu), readback_frame, bytes (returned image), saved_path/saved_bytes, capture/encode/save/total ms.
+    Fails cleanly while a level is loading (the loading screen is not capturable) and with HDR10 output on."""
+    inst = get(instance)
+    if format not in ("jpeg", "png"):
+        raise ValueError('format must be "jpeg" or "png"')
+    if not 1 <= quality <= 100 or max_width < 0:
+        raise ValueError("quality must be 1..100 and max_width >= 0")
+    return await run(screenshot, inst, max_width, format, quality, save_path, timeout)
 
 
 # ---------------------------------------------------------------- game_perf

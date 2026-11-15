@@ -12,8 +12,6 @@ void CRenderTarget::DoAsyncScreenshot()
 	//	TODO: fox that later
 	if (RImplementation.m_bMakeAsyncSS)
 	{
-		HRESULT hr;
-
 		//	HACK: unbind RT. CopyResourcess needs src and targetr to be unbound.
 		//u_setrt				( Device.dwWidth,Device.dwHeight,HW.pBaseRT,NULL,NULL,HW.pBaseZB);
 
@@ -25,10 +23,13 @@ void CRenderTarget::DoAsyncScreenshot()
 
 
 		//HW.pDevice->CopyResource( t_ss_async, pTex );
-		ID3DTexture2D* pBuffer;
-		hr = HW.m_pSwapChain->GetBuffer(0, __uuidof( ID3D10Texture2D), (LPVOID*)&pBuffer);
+		// The back buffer behind the base RT (GetBuffer with the D3D10 uuid failed on DX11 and copied nothing)
+		ID3DResource* pBuffer = nullptr;
+		HW.pBaseRT->GetResource(&pBuffer);
 		// TODO: this won't work in DX11 with HDR due to texture format incompat
-		HW.pContext->CopyResource(t_ss_async, pBuffer);
+		if (pBuffer)
+			HW.pContext->CopyResource(t_ss_async, pBuffer);
+		_RELEASE(pBuffer);
 
 
 		RImplementation.m_bMakeAsyncSS = false;

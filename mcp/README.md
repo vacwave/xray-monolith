@@ -42,6 +42,7 @@ All tools take an optional `instance` (default: the last launched or attached on
 | `log_tail` | `n` (≤1000), `grep` regex, `since` seq, from the supervisor's 20k-line buffer |
 | `game_teleport` | playable session on a map: from the main menu a new game as `faction` (stock kit incl. PDA) on `level`; in game a level change and/or move to `position` [x,y,z]; then `cvars` (console commands). Returns when the actor is in control: level, position, faction, `load_s`, notes. Unknown level/faction → error with the valid list |
 | `game_perf` | `seconds` window (default 5): fps, frame-time percentiles, hitches, frame cap/limiter, main-thread phases with Lua share, worker-task Lua/GC, memory (see `notes/perf.md`) |
+| `game_screenshot` | the presented frame incl. HUD/UI/menus as inline image + JSON metadata; `max_width` (1024, 0 = full), `format` jpeg (`quality` 70) / png, `save_path` writes the full-res frame (.jpg = JPEG q95, else PNG; relative → `.mcp-run/<id>/screenshots/`); errors while a level loads |
 | `game_events` | structured events from the 5k buffer, oldest first: `script_error` (kind, fatal, message, file, line, traceback, count, since_last), `level_loaded`/`level_unloaded`, `actor_spawned`/`actor_died` (killer), `game_saved`/`game_loaded`, `menu_opened`/`menu_closed`, `task_given`/`task_completed`/`task_failed`; `since` seq, `types` (fnmatch), `limit` (≤500) |
 
 `game_status` adds `events` (new events / script errors since the last status call); `console_exec`, `lua_exec` and

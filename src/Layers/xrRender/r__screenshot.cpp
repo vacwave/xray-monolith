@@ -438,35 +438,43 @@ void CRender::ScreenshotAsyncEnd(CMemoryWriter& memory_writer)
 {
 	VERIFY(!m_bMakeAsyncSS);
 
+	// The HDR10 back buffer cannot be copied into the 8-bit staging texture: write nothing
+	if (ps_r4_hdr10_on)
+		return;
+
 	//	Don't own. No need to release.
 	ID3DTexture2D* pTex = Target->t_ss_async;
 
 	D3D_MAPPED_TEXTURE2D MappedData;
 
 #ifdef USE_DX11
-	HW.pContext->Map(pTex, 0, D3D_MAP_READ, 0, &MappedData);
+	if (FAILED(HW.pContext->Map(pTex, 0, D3D_MAP_READ, 0, &MappedData)))
+		return;
 #else
-	pTex->Map(0, D3D_MAP_READ, 0, &MappedData);
+	if (FAILED(pTex->Map(0, D3D_MAP_READ, 0, &MappedData)))
+		return;
 #endif
 
 	{
-		u32* pPixel = (u32*)MappedData.pData;
-		u32* pEnd = pPixel + (Device.dwWidth * Device.dwHeight);
-
-		//	Kill alpha and swap r and b.
-		for (; pPixel != pEnd; pPixel++)
-		{
-			u32 p = *pPixel;
-			*pPixel = color_xrgb(
-				color_get_B(p),
-				color_get_G(p),
-				color_get_R(p)
-			);
-		}
-
 		memory_writer.w(&Device.dwWidth, sizeof(Device.dwWidth));
 		memory_writer.w(&Device.dwHeight, sizeof(Device.dwHeight));
-		memory_writer.w(MappedData.pData, (Device.dwWidth * Device.dwHeight) * 4);
+
+		//	Kill alpha and swap r and b, row by row (rows are RowPitch apart)
+		xr_vector<u32> row(Device.dwWidth);
+		for (u32 y = 0; y < Device.dwHeight; y++)
+		{
+			const u32* pPixel = (const u32*)((const u8*)MappedData.pData + y * MappedData.RowPitch);
+			for (u32 x = 0; x < Device.dwWidth; x++)
+			{
+				u32 p = pPixel[x];
+				row[x] = color_xrgb(
+					color_get_B(p),
+					color_get_G(p),
+					color_get_R(p)
+				);
+			}
+			memory_writer.w(row.data(), Device.dwWidth * 4);
+		}
 	}
 
 #ifdef USE_DX11
