@@ -33,6 +33,7 @@
 #include "xrSash.h"
 #include "MonitorList.h"
 #include "renderdoc_integration.h"
+#include "mcp_server.h"
 
 extern "C" void XR_EARLY_INIT();
 
@@ -661,6 +662,16 @@ void Startup()
 	//Discord Rich Presence - Rezy
 	Init_Discord();
 
+	if (Core.ParamsData.test(ECoreParams::mcp_port))
+	{
+		LPCSTR p = strstr(Core.Params, "-mcp_port ");
+		int port = p ? atoi(p + xr_strlen("-mcp_port ")) : 0;
+		if (port > 0 && port < 65536)
+			mcp::start((u16)port, make_string("%s (build %d, %s)", XRAY_MONOLITH_VERSION, build_id, build_date).c_str());
+		else
+			Msg("! [MCP] -mcp_port: invalid or missing port");
+	}
+
 	//Reshade
 	use_reshade = init_reshade();
 	if (use_reshade)
@@ -673,6 +684,8 @@ void Startup()
 	//Memory.mem_usage();
 
 	Device.Run();
+
+	mcp::stop();
 
 	// Discord
 	clearDiscordPresence();

@@ -1,8 +1,16 @@
 # MCP layer
 - Decided: agent ⇄ MCP stdio ⇄ Python supervisor (`mcp/`, official `mcp` SDK, PyInstaller single exe later) ⇄ TCP newline-delimited JSON-RPC ⇄ engine.
 - Decided: engine server is localhost-only, one client, off unless `-mcp_port N` is passed.
-- Decided: engine JSON = nlohmann/json single header in `src/3rd party/nlohmann/` (no vcxproj include edit needed).
 - Decided: net thread only parses/queues; all game/Lua/console work runs on the main thread in a pureFrame.
 - Decided: engine pushes every log line as an event so the supervisor survives crashes with full history.
 - Decided: MT branch only (`dev-mt-mcp`); supervisor lives here permanently, no non-MT port.
 - Planned methods: `ping`, `engine.info` (incl. protocol_version), `log.tail`, `console.exec`, `lua.exec`; events: `log`, `crash`.
+- Engine server: `src/xrEngine/mcp_server.{h,cpp}` (namespace `mcp`); started in `Startup` (x_ray.cpp) after `Init_Discord` when `-mcp_port N` (`ECoreParams::mcp_port`), `mcp::stop()` right after `Device.Run()`.
+- Protocol v1: one JSON object per line. Req `{"id","method","params"}` → `{"id","result"}` / `{"id","error":{"code","message"}}`; events `{"event","data"}`. Codes: -32700 parse, -32600 invalid, -32601 no method, -32603 handler error.
+- Net thread (std::thread) owns all socket I/O: accept → select(5ms) loop that flushes outbox then recv; one client, re-accepts after disconnect. Max line 1 MB.
+- Main thread: `frame_hook` on `Device.seqFrame` (REG_PRIORITY_LOW) drains inbox, runs handlers. `AddSeqFrame`/`RemoveSeqFrame` are private to CRenderDevice.
+- `mcp::register_method(name, handler)`: handler `bool(LPCSTR params_json, xr_string& out)`; true → out is result JSON text, false → out is error message. Main thread only. ENGINE_API, so xrGame can add methods.
+- `mcp::send_event(name, data_json)`: thread-safe, queued to the net thread; dropped with no client. Responses are tagged with a connection id so a stale client's replies are dropped.
+- Builtins: `ping` → "pong"; `engine.info` → protocol_version, version ("X-Ray Monolith vX (build N, date)"), mt:true, level (`g_pGameLevel->name()` or null).
+- Gotcha: xrEngine builds with exceptions off → nlohmann auto-uses abort-on-throw; only use non-throwing APIs (`parse(s,nullptr,false)`, `find`, `is_*` checks, `dump(..., error_handler_t::replace)`).
+- nlohmann/json v3.12.0 vendored at `src/3rd party/nlohmann/json.hpp` (+ LICENSE.MIT); include only in .cpp files.
