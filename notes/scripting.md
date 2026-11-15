@@ -5,3 +5,7 @@
 - Engine→Lua calls: `script_engine().functor("module.func", f)` script_engine.h:155 (e.g. Level_input.cpp:188).
 - LuaSocket exists (3rd party/lua-extensions/luasocket) but only opened with `lua_debug` (script_storage.cpp:449-464).
 - Gotcha: script engine is in xrGame, not xrEngine — engine-side server needs an xrGame-registered handler for Lua.
+- Lua threading: no Lua lock exists. Phase guarantee: worker Lua (GameThread scheduler/seqParallel/seqFrameMT, parallel LuaGC) is submitted after `FrameMove` and joined by `secondary_tasks.wait()` at the end of `on_idle`, so seqFrame handlers (incl. MCP) own the state exclusively.
+- `lua.exec` (xrGame/mcp_lua.cpp): readiness = `g_ai_space && ai().script_engine().lua()` (never call `ai()` blindly: it creates CAI_Space). Compiles `return (function(...) return ... end)(<code>\n)` first (keeps the chunk frame; plain `return f()` is a tail call that drops error position/traceback), else `<code>`; chunk name `=lua.exec`; `lua_pcall` with `debug.traceback` (C `luaL_traceback` fallback); `lua_settop` restores the stack. Raw pcall bypasses luabind pcall callback/`Debug.fatal`; errors inside engine→Lua callbacks triggered by the code still use the engine paths.
+- `print` is LuaJIT's base print (stdout), not the log → nothing in `lines`; use `printf` (Anomaly's printf only substitutes `%s`).
+- debug lib is open (luaL_openlibs; USE_LUAJIT_ONE undefined).

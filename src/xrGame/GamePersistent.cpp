@@ -152,12 +152,14 @@ void CGamePersistent::RegisterModel(IRenderVisual* V)
 
 extern void clean_game_globals();
 extern void init_game_globals();
+extern void mcp_register_lua();
 
 void CGamePersistent::OnAppStart()
 {
 	// load game materials
 	GMLib.Load();
 	init_game_globals();
+	mcp_register_lua();
 	inherited::OnAppStart();
 	m_pUI_core = xr_new<ui_core>();
 	m_pMainMenu = xr_new<CMainMenu>();

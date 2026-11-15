@@ -1,11 +1,13 @@
 #include "stdafx.h"
 #include "mcp_server.h"
 #include "IGame_Level.h"
+#include "XR_IOConsole.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 #include <atomic>
 #include <algorithm>
 #include <nlohmann/json.hpp>
@@ -70,6 +72,14 @@ namespace
 	xr_deque<log_line> log_ring;
 	u64 last_seq = 0;
 	bool log_captured = false;
+
+	// run_logged brackets its work with "* [MCP] exec #<id>" / "... done" lines and waits for the logger
+	// thread to print the end marker (the logger queue is FIFO, so every line queued between them is in the ring)
+	enum { mark_wait_ms = 2000 };
+	const char mark_prefix[] = "* [MCP] exec #";
+	std::condition_variable mark_cv;
+	u64 mark_id = 0, mark_begin = 0, mark_end = 0; // guarded by log_lock
+	u64 last_mark_id = 0; // main thread
 
 	xr_map<xr_string, handler> handlers;
 	xr_string engine_version;
@@ -137,12 +147,40 @@ namespace
 		return out;
 	}
 
+	// UTF-8 -> cp1251 (unmappable characters become '?')
+	xr_string from_utf8(const std::string& s)
+	{
+		if (s.empty())
+			return xr_string();
+		std::wstring w(s.size(), L'\0');
+		int wn = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], (int)w.size());
+		std::string out(wn, '\0');
+		int n = WideCharToMultiByte(1251, 0, w.data(), wn, &out[0], (int)out.size(), "?", nullptr);
+		out.resize(n > 0 ? n : 0);
+		return out.c_str();
+	}
+
 	// Logger thread, under logCallbackGuard: only short local locks, no I/O, no Msg
 	void on_log(const char* line)
 	{
 		std::string utf8 = to_utf8(line);
 		std::lock_guard<std::mutex> lock(log_lock);
 		u64 seq = ++last_seq;
+		if (mark_id && !strncmp(line, mark_prefix, sizeof(mark_prefix) - 1))
+		{
+			u64 id = 0;
+			int n = 0;
+			if (sscanf(line + sizeof(mark_prefix) - 1, "%llu%n", &id, &n) == 1 && id == mark_id)
+			{
+				if (!xr_strcmp(line + sizeof(mark_prefix) - 1 + n, " done"))
+				{
+					mark_end = seq;
+					mark_cv.notify_all();
+				}
+				else if (!line[sizeof(mark_prefix) - 1 + n])
+					mark_begin = seq;
+			}
+		}
 		if (conn_id)
 			queue_event({ { "event", "log" }, { "data", { { "seq", seq }, { "line", utf8 } } } });
 		log_ring.push_back({ seq, std::move(utf8) });
@@ -315,7 +353,7 @@ namespace
 				xr_string out;
 				if (!it->second(req.params.c_str(), out))
 				{
-					queue_error(req.conn, req.id, err_internal, out.c_str());
+					queue_error(req.conn, req.id, err_internal, to_utf8(out.c_str()).c_str());
 					continue;
 				}
 
@@ -393,6 +431,24 @@ namespace
 			out = dump({ { "lines", std::move(arr) }, { "first_seq", first }, { "last_seq", last } }).c_str();
 			return true;
 		});
+
+		// {"cmd":"..."} -> {"lines":[...]} log lines printed while the command ran
+		register_method("console.exec", [](LPCSTR params, xr_string& out)
+		{
+			xr_string cmd;
+			if (!get_string_param(params, "cmd", cmd))
+			{
+				out = "expected params {\"cmd\":\"...\"}";
+				return false;
+			}
+			if (!Console)
+			{
+				out = "console is not ready";
+				return false;
+			}
+			out = "{\"lines\":" + run_logged([&]() { Console->Execute(cmd.c_str()); }) + "}";
+			return true;
+		});
 	}
 }
 
@@ -409,6 +465,53 @@ void send_event(LPCSTR name, LPCSTR data_json)
 	if (data.is_discarded())
 		data = nullptr;
 	queue_event({ { "event", name }, { "data", data } });
+}
+
+xr_string run_logged(const std::function<void()>& f)
+{
+	u64 id = ++last_mark_id;
+	{
+		std::lock_guard<std::mutex> lock(log_lock);
+		mark_id = log_captured ? id : 0;
+		mark_begin = mark_end = 0;
+	}
+	Msg("%s%llu", mark_prefix, id);
+	f();
+	Msg("%s%llu done", mark_prefix, id);
+
+	json arr = json::array();
+	bool complete;
+	{
+		// Bounded wait: the logger thread only takes log_lock briefly and never waits on the main thread
+		std::unique_lock<std::mutex> lock(log_lock);
+		complete = mark_id && mark_cv.wait_for(lock, std::chrono::milliseconds(mark_wait_ms), [] { return mark_end != 0; });
+		if (mark_begin)
+		{
+			u64 end = complete ? mark_end : last_seq + 1;
+			for (const auto& l : log_ring)
+				if (l.seq > mark_begin && l.seq < end)
+					arr.push_back(l.line);
+		}
+		mark_id = 0;
+	}
+	if (!complete)
+		Msg("! [MCP] exec #%llu: log lines incomplete (logger did not catch up in %u ms)", id, (u32)mark_wait_ms);
+	return dump(arr).c_str();
+}
+
+bool get_string_param(LPCSTR params, LPCSTR key, xr_string& out)
+{
+	json p = json::parse(params, nullptr, false);
+	auto it = p.is_object() ? p.find(key) : p.end();
+	if (it == p.end() || !it->is_string())
+		return false;
+	out = from_utf8(it->get_ref<const std::string&>());
+	return true;
+}
+
+xr_string to_json_string(LPCSTR s)
+{
+	return dump(json(to_utf8(s))).c_str();
 }
 
 void capture_log()

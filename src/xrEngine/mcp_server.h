@@ -14,6 +14,12 @@ namespace mcp
 	// Thread-safe; data_json must be valid JSON text. Dropped when no client is connected
 	ENGINE_API void send_event(LPCSTR name, LPCSTR data_json);
 
+	// Main thread only: runs f and returns the log lines printed meanwhile (any thread) as a JSON array of strings
+	ENGINE_API xr_string run_logged(const std::function<void()>& f);
+	// JSON helpers for handlers outside xrEngine; engine strings are cp1251, JSON is UTF-8
+	ENGINE_API bool get_string_param(LPCSTR params, LPCSTR key, xr_string& out);
+	ENGINE_API xr_string to_json_string(LPCSTR s);
+
 	// Start buffering engine log lines for log events / log.tail (call as early as possible)
 	void capture_log();
 	void start(u16 port, LPCSTR version);

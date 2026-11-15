@@ -4,7 +4,7 @@
 - Decided: net thread only parses/queues; all game/Lua/console work runs on the main thread in a pureFrame.
 - Decided: engine pushes every log line as an event so the supervisor survives crashes with full history.
 - Decided: MT branch only (`dev-mt-mcp`); supervisor lives here permanently, no non-MT port.
-- Planned methods: `ping`, `engine.info` (incl. protocol_version), `log.tail`, `console.exec`, `lua.exec`; events: `log`, `crash`.
+- Methods: `ping`, `engine.info`, `log.tail`, `console.exec`, `lua.exec`; events: `log` (planned: `crash`).
 - Engine server: `src/xrEngine/mcp_server.{h,cpp}` (namespace `mcp`); started in `Startup` (x_ray.cpp) after `Init_Discord` when `-mcp_port N` (`ECoreParams::mcp_port`), `mcp::stop()` right after `Device.Run()`.
 - Protocol v1: one JSON object per line. Req `{"id","method","params"}` → `{"id","result"}` / `{"id","error":{"code","message"}}`; events `{"event","data"}`. Codes: -32700 parse, -32600 invalid, -32601 no method, -32603 handler error.
 - Net thread (std::thread) owns all socket I/O: accept → select(5ms) loop that flushes outbox then recv; one client, re-accepts after disconnect. Max line 1 MB.
@@ -25,3 +25,7 @@
 - Backpressure: outbox is a deque; `queue_event` drops the oldest queued event beyond `max_queued_events` (10000); responses never dropped. Net thread sends outside out_lock, so a slow client never blocks the logger. Client recovers gaps via log.tail.
 - Reconnect recipe (verified): connect, read events, call `log.tail {"since":<last seen or 0>}`, union by seq → gapless. "* [MCP] Client connected" is the first streamed line of a connection.
 - Fixed: `engine.info` crashed while a level was loading (`g_pGameLevel->name()` is empty, so json(null c_str)); it now returns level null until the name is set.
+- `console.exec {"cmd"}` → `{"lines":[...]}` (xrEngine builtin, `Console->Execute`, i.e. no history/echo). `lua.exec {"code"}` → `{"results":[tostring each, nil→"nil"],"lines":[...]}`; registered from xrGame (`xrGame/mcp_lua.cpp`, `mcp_register_lua()` in `CGamePersistent::OnAppStart`). Errors → -32603 with message (+ traceback).
+- Line capture: `mcp::run_logged(f)` (ENGINE_API) logs `* [MCP] exec #<id>` before f and `... done` after, then waits (cv on log_lock, max 2 s) until on_log sees the end marker; returns ring lines strictly between (FIFO logger queue ⇒ all lines printed during f). Lines from other threads in that window are included. Timeout → partial lines + `! [MCP] exec #N: log lines incomplete`. Markers stay in the log/ring/events.
+- ENGINE_API JSON helpers for xrGame (keeps nlohmann out of xrGame): `get_string_param(params,key,out)` (UTF-8→cp1251), `to_json_string(s)` (cp1251→UTF-8 quoted). Handler error messages are converted cp1251→UTF-8.
+- Gotcha: console `help` crashes the stock engine (`CCC_Token::Info` with null tokens, xr_ioc_cmd.h:266) — not MCP; use cvar queries for smoke tests.

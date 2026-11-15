@@ -1,5 +1,5 @@
 # MAP
-- MCP architecture/protocol → `mcp/` (supervisor, Python), engine IPC server `src/xrEngine/mcp_server.*` → `mcp.md`
+- MCP architecture/protocol → `mcp/` (supervisor, Python), engine IPC server `src/xrEngine/mcp_server.*`, xrGame methods `src/xrGame/mcp_lua.cpp` (lua.exec) → `mcp.md`
 - Main loop, threading, startup/shutdown, cmdline flags, multi-instance (-appdata, presence mutex, focus), silent window (-showwindow) → `xrEngine/device.cpp`, `Device_create.cpp`, `Layers/xrRenderDX10/dx10HW.cpp`, `EngineThreading.cpp`, `x_ray.cpp`, `xrCore/xrParams.*`, `xrCore/LocatorAPI.cpp` → `engine.md`
 - Console, logging, crash handler/minidumps → `xrEngine/XR_IOConsole.cpp`, `xrCore/log.cpp`, `xrCore/xrDebugNew.cpp` → `logging.md`
 - Lua scripting from C++ → `xrServerEntities/script_engine.*`, `script_process.cpp`, `xrGame/console_commands.cpp` (CCC_ScriptCommand) → `scripting.md`
