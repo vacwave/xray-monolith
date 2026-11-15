@@ -7,6 +7,8 @@
 #include		"../../xrEngine/SkeletonMotions.h"
 
 #include		"../../Include/xrRender/KinematicsAnimated.h"
+#include		<mutex>
+#include		<string_view>
 
 //*** Bone Instance *******************************************************************************
 #pragma pack(push,8)
@@ -87,6 +89,15 @@ private:
 	MotionsSlotVec m_Motions;
 
 	CPartition* m_Partition;
+
+	// cycle name -> MotionID of the last slot defining it; built on first use, shared with Copy()'d instances
+	struct SCycleLookup
+	{
+		std::once_flag built;
+		xr_unordered_flat_map<std::string_view, MotionID> cycles;
+	};
+	xr_shared_ptr<SCycleLookup> m_cycle_lookup;
+	MotionID FindCycle(const char* N);
 
 	IBlendDestroyCallback* m_blend_destroy_callback;
 	IUpdateTracksCallback* m_update_tracks_callback;
