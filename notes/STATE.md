@@ -1,10 +1,10 @@
 # STATE
 Scope: MT only (`dev-mt-mcp`; non-MT dropped). Agent ⇄ Python MCP supervisor (`mcp/anomaly_mcp.py`, server `anomaly` via `.mcp.json`) ⇄ TCP JSON-lines ⇄ engine (`-mcp_port`).
 
-Done (all pushed): 0 notes · 1 IPC server 757d973c · 2 multi-instance 5ac6faea · 3 log streaming 6045689a · 4 silent runs 8795fb14 · 5 console/lua exec ca66329c · 6 supervisor dd980ff1 · 7 crash capture + hang detection + WER dumps 08b0cd0e.
+Done (all pushed): 0 notes · 1 IPC server 757d973c · 2 multi-instance 5ac6faea · 3 log streaming 6045689a · 4 silent runs 8795fb14 · 5 console/lua exec ca66329c · 6 supervisor dd980ff1 · 7 crash capture + hang detection + WER dumps 08b0cd0e · 8 game_teleport f74782d1.
 
 Queue (planned 2026-11-15, not started — wait for user go-ahead; sequential). User priority: analysing Lua (mods) choking the main thread.
-- 8 `game_teleport(faction, level, cvars, position)` single tool: from main menu starts a new game as faction on that level; in-game teleports (same or other level); applies cvars (e.g. `g_god on`); returns when actor in control. Dev investigates: headless new-game path, direct spawn vs jump, inventory wipe (ensure PDA/basic kit).
+- In flight (2 parallel devs, worktrees, unattended): 9 game_perf, 11 events (10 waits for 9's instrumentation). Devs test from `C:\Anomalyin_g<N>`, never `C:\Anomalyin`.
 - 9 `game_perf`: FPS, frame-time percentiles, memory over a window, main-thread breakdown (how much of the frame is Lua vs engine). 10 Lua profiler (separate tool): time + call counts per script/function/callback, top offenders, GC steps/pause time/heap; start/stop/report; dev checks for existing engine profiler hooks first. 11 Lua error + event capture as structured events (script errors, actor death, level change, tasks).
 - 12 screenshots (`ScreenshotAsyncBegin/End`, inline downscaled + optional full-res file, must work silent). 13 input: actions press/hold/release (`level.press_action`), raw keys, mouse-look in C++, no focus. 14 `game_state` (actor, level, time, UI state). 15 world queries: objects/NPCs/items within radius param (id, section, pos, dist, faction, alive/hostile) + look-at target.
 - 16 save/load (`game_save`/`game_load`, returns when in control; covers the register_object crash). 17 spawn/debug: items, NPCs/enemies/squads, give item, weather, time, emission/psi-storm. 18 time control: pause, step N frames, time_factor. 19 UI interaction (cursor move/click, top window). 20 wait/sync (`wait_for`).
