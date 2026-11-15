@@ -243,7 +243,7 @@ private:
 		Sect*& CurrentOverride,
 		string_path currentFileName
 	);
-	Items EvaluateSection(
+	const Items& EvaluateSection(
 		shared_str SectionName,
 		EvaluationsContext& Evaluations,
 		string_path currentFileName
