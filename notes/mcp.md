@@ -49,3 +49,4 @@
 - Registration from xrGame: `mcp_register_input()` (xrGame/mcp_input.cpp, OnAppStart) → `mcp_input::init(hooks)` (ENGINE_API; no-op without -mcp_port).
 - `world.objects` / `world.object` (nearby objects, one object's detail) -> see world.md; registered from xrGame/mcp_world.cpp.
 - `state.get` (game state snapshot) -> see gamestate.md; registered from xrGame/mcp_state.cpp. JSON built with a local flat-object builder (`jobj`) over `mcp::to_json_string` (no nlohmann in xrGame).
+- `time.get` / `time.pause` / `time.step` / `time.factor` (MCP pause, fixed-dt steps, time_factor; reset on client change) -> see time.md; registered in `mcp::start`.

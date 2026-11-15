@@ -39,6 +39,7 @@
 #include "EngineThreading.h"
 #include "IGame_Level.h"
 #include "mcp_perf.h"
+#include "mcp_time.h"
 
 #include "Rain.h"
 
@@ -721,6 +722,7 @@ void CRenderDevice::FrameMove()
 		dwTimeGlobal = TimerGlobal.GetElapsed_ms();
 		dwTimeDelta = dwTimeGlobal - _old_global;
 	}
+	mcp_time::on_frame_time();
 
 	// Frame move
 	Statistic->EngineTOTAL.Begin();

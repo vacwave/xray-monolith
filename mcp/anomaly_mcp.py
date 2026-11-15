@@ -1563,7 +1563,7 @@ async def game_teleport(instance: str | None = None, faction: str | None = None,
     community in place. cvars: console commands applied after arrival (e.g. ["g_god on"]).
     Unknown level/faction -> error listing the valid ones. Result: level, position, faction, load_s, notes."""
     inst = get(instance)
-    return with_error_hint(inst, await run(teleport, inst, faction, level, position, cvars, timeout))
+    return with_error_hint(inst, await run(paused_around, inst, teleport, inst, faction, level, position, cvars, timeout))
 
 
 # ---------------------------------------------------------------- game_save / game_load / game_saves
@@ -1883,7 +1883,7 @@ async def game_load(name: str, instance: str | None = None, timeout: float = 600
     the crash record and, when the log shows skipped objects ("Can't create entity"), missing_sections: the save was
     made with mods whose sections this game does not have. Timeout -> error; the load may still finish later."""
     inst = get(instance)
-    return with_error_hint(inst, await run(game_load_run, inst, name, timeout))
+    return with_error_hint(inst, await run(paused_around, inst, game_load_run, inst, name, timeout))
 
 
 @tool
@@ -2153,6 +2153,175 @@ async def game_screenshot(instance: str | None = None, max_width: int = 1024, fo
     if not 1 <= quality <= 100 or max_width < 0:
         raise ValueError("quality must be 1..100 and max_width >= 0")
     return await run(screenshot, inst, max_width, format, quality, save_path, timeout)
+
+
+# ---------------------------------------------------------------- game_time / game_step
+# Engine time.* (xrEngine/mcp_time.cpp): an MCP pause on top of the device pause, fixed-dt step frames, the simulation
+# time factor. The game clock rate (in-game time per simulation second) is the level's game time factor (Lua).
+# All engine-side time state resets when the supervisor disconnects (the game resumes, time_factor is restored).
+
+# level.get_time_factor / game.time crash (C++ AV, not a Lua error) without a level, so check level.present() first
+TIME_CLOCK_LUA = "if not level.present() then return -1, -1 end return game.time(), level.get_time_factor()"
+# surge_manager's main_loop resets the level time factor to its local normal_time_factor (alife.ltx) every second
+# outside surges/psi storms, so that upvalue is set too (reset by the next Lua state: level change / load).
+TIME_RATE_LUA = r'''
+if not level.present() then return -1 end
+local function up(f, name)
+    for i = 1, 255 do
+        local n, v = debug.getupvalue(f, i)
+        if not n then return end
+        if n == name then return i, v end
+    end
+end
+local b, x, sticky = level.get_time_factor(), %f, false
+local sm = rawget(_G, "surge_manager")
+local _, ml = up(sm and sm.on_game_start or function() end, "main_loop")
+local i = ml and up(ml, "normal_time_factor")
+if i then debug.setupvalue(ml, i, x) sticky = true end
+level.set_time_factor(x)
+return b, sticky
+'''
+
+
+def time_clock(inst):
+    """Engine time state + game clock: time.get, then game time ms / game time factor via Lua (both main thread)."""
+    st = inst.call("time.get", timeout=10)
+    gt, f = (float(x) for x in inst.call("lua.exec", {"code": TIME_CLOCK_LUA}, timeout=10)["results"][:2])
+    st.update(game_time_ms=None if gt < 0 else int(gt), clock_rate=None if f < 0 else f)
+    return st
+
+
+def time_wait(inst, pred, timeout, what):
+    deadline = time.monotonic() + timeout
+    while True:
+        st = inst.call("time.get", timeout=max(1.0, deadline - time.monotonic()))
+        if pred(st):
+            return st
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"{what}: not done after {timeout} s (state {st})")
+        time.sleep(0.005)
+
+
+def time_pause(inst, on, timeout=10):
+    """time.pause, then wait until the engine applied it (the next frame)."""
+    inst.call("time.pause", {"on": bool(on)}, timeout=10)
+    return time_wait(inst, lambda s: s["applied"] == bool(on), timeout, "pause" if on else "resume")
+
+
+def time_run(inst, pause, sim_speed, clock_rate):
+    if inst.call("engine.heartbeat", timeout=5).get("loading"):
+        raise RuntimeError("a level is loading; retry when it is done")
+    out = {}
+    if sim_speed is not None:
+        if not 0.01 <= sim_speed <= 100:
+            raise ValueError("sim_speed must be 0.01..100")
+        inst.call("time.factor", {"value": float(sim_speed)}, timeout=10)
+    if clock_rate is not None:
+        if not 0 <= clock_rate <= 10000:
+            raise ValueError("clock_rate must be 0..10000")
+        res = inst.call("lua.exec", {"code": TIME_RATE_LUA % float(clock_rate)}, timeout=10)["results"]
+        if float(res[0]) < 0:
+            raise RuntimeError("clock_rate needs a loaded level")
+        out["clock_rate_before"] = float(res[0])
+        if res[1] != "true":
+            out["clock_rate_note"] = "surge_manager's normal_time_factor not found: the game may reset the rate"
+    if pause is not None:
+        time_pause(inst, pause)
+    return {"instance": inst.id, **time_clock(inst), **out}
+
+
+@tool
+async def game_time(instance: str | None = None, pause: bool | None = None, sim_speed: float | None = None,
+                    clock_rate: float | None = None) -> dict:
+    """Freeze / resume the game and set its speed. No arguments = report only.
+
+    pause=True: MCP pause - world, AI, physics, scripts' updates and sounds stop; frames keep running, so
+    game_screenshot / game_state / game_objects / lua_exec / console_exec keep working on the frozen world. game_input
+    steps do not advance while MCP-paused (they run during game_step frames). Independent of the game's own pauses:
+    the ESC menu over an MCP pause keeps it after closing; the game resuming on purpose (pause key, console `load`)
+    ends it. Loads/level changes end it (game_teleport / game_load re-pause afterwards themselves). Resumes by itself
+    when the supervisor disconnects. sim_speed: simulation speed (engine time_factor: 0.25 = slow motion, 4 = fast;
+    physics/AI get unreliable far from 1, sound pitch follows; restored on disconnect). clock_rate: game clock rate
+    = in-game seconds per simulation second (level time factor; Anomaly default 6 from alife.ltx; surges/psi storms
+    use their own and restore it; back to the default after a level change or load; not restored on disconnect;
+    clock_rate_before is returned). Result: mcp_paused, applied (in effect), paused (any
+    pause), main_menu, frame, time_global / time_async (simulation ms), time_factor (= sim_speed), game_time_ms,
+    clock_rate, step_id / step_done / steps_left / step_dt_ms."""
+    inst = get(instance)
+    return await run(time_run, inst, pause, sim_speed, clock_rate)
+
+
+def paused_around(inst, fn, *args):
+    """Run a level load/change with the MCP pause lifted (loads need a running simulation), then pause again."""
+    was = inst.call("time.get", timeout=10).get("mcp_paused")
+    if was:
+        time_pause(inst, False)
+    out = fn(*args)
+    if was:
+        time_pause(inst, True, timeout=30)
+        if isinstance(out, dict):
+            out["mcp_paused"] = True
+    return out
+
+
+def step_run(inst, frames, ms, dt_ms, steps, screenshot_opts, state, timeout):
+    if (frames is None) == (ms is None):
+        raise ValueError("give frames or ms")
+    if not 1 <= dt_ms <= 100:
+        raise ValueError("dt_ms must be 1..100")
+    n = int(frames) if frames is not None else max(1, round(ms / dt_ms))
+    if not 1 <= n <= 100000:
+        raise ValueError("1..100000 frames")
+    t0 = time.perf_counter()
+    if inst.call("engine.heartbeat", timeout=5).get("loading"):
+        raise RuntimeError("a level is loading; retry when it is done")
+    if not inst.call("time.get", timeout=10)["applied"]:
+        time_pause(inst, True)
+    before = time_clock(inst)
+    rid = inst.call("input.run", {"steps": steps}, timeout=10)["id"] if steps else None
+    sid = inst.call("time.step", {"frames": n, "dt_ms": int(dt_ms)}, timeout=10)["step_id"]
+    time_wait(inst, lambda s: s["step_done"] >= sid, timeout or n * 0.5 + 30, f"step of {n} frames")
+    after = time_clock(inst)
+    out = {"instance": inst.id, "frames": n, "dt_ms": int(dt_ms), "sim_ms": n * int(dt_ms),
+           "cancelled": after.get("step_cancelled"),
+           "before": {k: before[k] for k in ("frame", "time_global", "game_time_ms")},
+           "after": {k: after[k] for k in ("frame", "time_global", "game_time_ms")},
+           "time_global_delta": after["time_global"] - before["time_global"],
+           "game_time_delta_ms": None if before["game_time_ms"] is None or after["game_time_ms"] is None
+           else (after["game_time_ms"] - before["game_time_ms"]) % 2 ** 32}
+    if rid is not None:
+        out["input"] = inst.call("input.status", {"id": rid}, timeout=10)
+    if state:
+        out["state"] = game_state_get(inst, [])
+    out["wall_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    if not screenshot_opts:
+        return [TextContent(type="text", text=json.dumps(out))]
+    shot = screenshot(inst, *screenshot_opts)
+    out["screenshot"] = json.loads(shot[0].text)
+    out["wall_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    return [TextContent(type="text", text=json.dumps(out)), shot[1]]
+
+
+@tool
+async def game_step(instance: str | None = None, frames: int | None = None, ms: float | None = None,
+                    dt_ms: int = 20, input: list | None = None, screenshot: bool = False, state: bool = True,
+                    max_width: int = 1024, format: str = "jpeg", quality: int = 70, save_path: str | None = None,
+                    timeout: float | None = None) -> list[TextContent | ImageContent]:
+    """Advance a paused game by a fixed amount of simulation time, then stay paused: the agent loop
+    (look -> think -> act -> step). Pauses first if needed (see game_time).
+
+    frames: number of frames, or ms: simulation time (frames = ms / dt_ms, rounded). Every step frame advances the
+    simulation by exactly dt_ms (default 20 = 50 fps), independent of wall time and sim_speed, so runs are
+    reproducible. input: game_input steps queued before stepping; their ms are simulation ms here (a tap needs 2 step
+    frames, a hold of 500 ms needs 500 ms of steps; unfinished input continues on the next step). screenshot=True
+    adds the frozen frame after the step (max_width/format/quality/save_path as game_screenshot); state=True adds
+    game_state. Returns JSON: frames, sim_ms, before/after {frame, time_global, game_time_ms}, time_global_delta,
+    game_time_delta_ms, cancelled (main menu opened / resumed meanwhile), input (status), state, wall_ms."""
+    inst = get(instance)
+    if format not in ("jpeg", "png") or not 1 <= quality <= 100 or max_width < 0:
+        raise ValueError('format "jpeg"/"png", quality 1..100, max_width >= 0')
+    shot = (max_width, format, quality, save_path, 10) if screenshot else None
+    return await run(step_run, inst, frames, ms, dt_ms, input, shot, state, timeout)
 
 
 # ---------------------------------------------------------------- game_perf

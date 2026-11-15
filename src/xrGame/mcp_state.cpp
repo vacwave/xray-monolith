@@ -1,5 +1,6 @@
 #include "pch_script.h"
 #include "../xrEngine/mcp_server.h"
+#include "../xrEngine/mcp_time.h"
 #include "../xrEngine/x_ray.h"
 #include "../xrEngine/XR_IOConsole.h"
 #include "../xrEngine/xr_input.h"
@@ -436,7 +437,7 @@ namespace
 
 		IInputReceiver* ir = pInput ? pInput->CurrentIR() : nullptr;
 		jobj ui;
-		ui.b("main_menu", menu).b("console", console).b("paused", Device.Paused()).b("loading", loading);
+		ui.b("main_menu", menu).b("console", console).b("paused", Device.Paused()).b("mcp_paused", mcp_time::paused()).b("loading", loading);
 		ui.b("cursor", g_pGamePersistent && GamePersistent().m_pUI_core && GetUICursor().IsVisible());
 		ui.str("input_receiver", ir ? class_name(typeid(*ir)).c_str() : nullptr);
 		if (top)

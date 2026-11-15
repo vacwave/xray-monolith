@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "mcp_input.h"
 #include "mcp_server.h"
+#include "mcp_time.h"
 #include "xr_input.h"
 #include "IInputReceiver.h"
 
@@ -70,6 +71,7 @@ namespace
 	xr_list<sequence> seqs;
 	xr_vector<held_key> held;
 	u32 last_conn = 0;
+	u32 clock = 0, last_wall = 0; // input time: wall ms, or simulation ms while MCP time control is in use
 
 	// accumulated for this frame and delivered once
 	int frame_dx = 0, frame_dy = 0, frame_wheel = 0;
@@ -227,7 +229,7 @@ namespace
 
 	json seq_status(const sequence& s)
 	{
-		u32 now = Device.dwTimeContinual, frame = Device.dwFrame;
+		u32 now = clock, frame = Device.dwFrame;
 		json r = {
 			{ "id", s.id },
 			{ "done", s.done },
@@ -533,10 +535,15 @@ void on_frame()
 			release_all();
 		}
 	}
-	if (Device.dwPrecacheFrame)
+	u32 wall = Device.dwTimeContinual, delta;
+	bool run = mcp_time::input_delta(last_wall ? wall - last_wall : 0, delta);
+	last_wall = wall;
+	if (run)
+		clock += delta;
+	if (Device.dwPrecacheFrame || !run)
 		return;
 
-	u32 now = Device.dwTimeContinual;
+	u32 now = clock;
 	frame_dx = frame_dy = frame_wheel = 0;
 	frame_yaw = frame_pitch = 0;
 	for (auto& s : seqs)

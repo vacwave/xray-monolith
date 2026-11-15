@@ -192,6 +192,9 @@
     <ClInclude Include="mcp_screenshot.h">
       <Filter>General</Filter>
     </ClInclude>
+    <ClInclude Include="mcp_time.h">
+      <Filter>General</Filter>
+    </ClInclude>
     <ClInclude Include="mcp_server.h">
       <Filter>General</Filter>
     </ClInclude>
@@ -535,6 +538,9 @@
       <Filter>General</Filter>
     </ClCompile>
     <ClCompile Include="mcp_screenshot.cpp">
+      <Filter>General</Filter>
+    </ClCompile>
+    <ClCompile Include="mcp_time.cpp">
       <Filter>General</Filter>
     </ClCompile>
     <ClCompile Include="mcp_server.cpp">

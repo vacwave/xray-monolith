@@ -1017,6 +1017,7 @@
     <ClInclude Include="mcp_perf.h" />
     <ClInclude Include="mcp_screenshot.h" />
     <ClInclude Include="mcp_server.h" />
+    <ClInclude Include="mcp_time.h" />
     <ClInclude Include="_d3d_extensions.h" />
   </ItemGroup>
   <ItemGroup>
@@ -1145,6 +1146,7 @@
     <ClCompile Include="mcp_perf.cpp" />
     <ClCompile Include="mcp_screenshot.cpp" />
     <ClCompile Include="mcp_server.cpp" />
+    <ClCompile Include="mcp_time.cpp" />
     <ClCompile Include="_scripting.cpp" />
   </ItemGroup>
   <ItemGroup>
