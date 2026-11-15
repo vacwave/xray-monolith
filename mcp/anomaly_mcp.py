@@ -1934,7 +1934,7 @@ async def game_state(instance: str | None = None, sections: list[str] | None = N
 
     mode: main_menu (no game), loading, in_game, in_game_menu (ESC menu over a game), dialog (a UI window owns input,
     see ui.dialog), dead, paused, tutorial, console (console open; under_console = the mode beneath), hung.
-    ui: main_menu, console, paused, cursor, input_receiver (engine class on top of the input stack), actor_control
+    ui: main_menu, console, paused, cursor, cursor_pos {x, y (UI units 1024x768), visible, mcp_owned}, input_receiver (engine class on top of the input stack), actor_control
     (the actor takes movement/fire input now), dialog / menu_dialog {kind: actor_menu (menu_mode inventory / trade /
     upgrade / loot_body / loot_box) | pda | talk | message_box | script | other, class, script_class (Lua class of
     script windows, e.g. sleep), partner_id/name/section}, tutorial, input_disabled.
@@ -2069,7 +2069,8 @@ def input_run(inst, steps, wait, timeout):
 
 
 @tool
-async def game_input(steps: list, instance: str | None = None, wait: bool = True, timeout: float = 120) -> dict:
+async def game_input(steps: list, instance: str | None = None, wait: bool = True, timeout: float = 120,
+                     image_size: list[int] | None = None) -> dict:
     """Play keyboard/mouse input like a human, timed per frame by the engine (works silent/minimized, no focus).
 
     Input goes where real input goes (level, main menu, dialogs, inventory, PDA, console). steps is a timed script:
@@ -2084,6 +2085,14 @@ async def game_input(steps: list, instance: str | None = None, wait: bool = True
       {"look_at": [x, y, z], "ms": 300} / {"look_dir": [dx, dy, dz]}  aim the camera at a world point / direction.
       {"mouse": {"dx": 40, "dy": 0}, "ms": 200}  raw mouse move in pixels (UI cursor; in game scaled by sensitivity).
       {"wheel": 1}                      mouse wheel notches (+ = up).   {"wait": 500}  pause 500 ms.
+    UI cursor steps (menus, inventory, dialogs; never moves the real Windows cursor). Points [x, y] are pixels of the
+    last game_screenshot image (or of image_size [w, h] / a step's "image": [w, h]); "space": "ui" = UI units
+    (1024x768), "norm" = 0..1. Before any screenshot the default image is 1024 px wide (game_screenshot's default).
+      {"cursor": [x, y], "ms": 200}     move the cursor there (glide over ms; hover highlights follow).
+      {"click": [x, y], "button": "left"|"right"|"middle", "double": true, "hover": 400}  move + click
+                                        (double-click; hover = ms to rest before clicking, main menu needs ~400).
+      {"drag": {"from": [x, y], "to": [x, y]}, "ms": 300}  press at from, glide to to, release (drag and drop).
+      {"wheel": -3, "at": [x, y]}       scroll at a point.   {"cursor": "release"}  hand the cursor back (-showwindow).
     Example "walk 2 s while turning 90 deg, then use":
       [[{"action": "forward", "ms": 2000}, {"look": {"yaw": 90}, "ms": 2000}], {"action": "use"}]
     Actions: forward back lstrafe rstrafe jump crouch accel sprint_toggle llookout rlookout wpn_fire wpn_zoom
@@ -2094,7 +2103,7 @@ async def game_input(steps: list, instance: str | None = None, wait: bool = True
     {id} at once. steps=[] returns the status: running sequences and held keys. Keys are released on
     game_input_release, when the supervisor disconnects, and on timeout (seconds)."""
     inst = get(instance)
-    return await run(input_run, inst, steps, wait, timeout)
+    return await run(lambda: input_run(inst, ui_expand_steps(inst, steps, image_size), wait, timeout))
 
 
 @tool
@@ -2130,6 +2139,7 @@ def screenshot(inst, max_width, fmt, quality, save_path, timeout):
         time.sleep(0.01)
     data = res.pop("data")
     res["total_ms"] = round((time.monotonic() - t0) * 1000, 1)
+    ui_note_screenshot(inst, res)
     res = {"instance": inst.id, **{k: round(v, 1) if isinstance(v, float) else v for k, v in res.items()}}
     return [TextContent(type="text", text=json.dumps(res)),
             ImageContent(type="image", data=data, mime_type="image/png" if fmt == "png" else "image/jpeg")]
@@ -2145,7 +2155,8 @@ async def game_screenshot(instance: str | None = None, max_width: int = 1024, fo
     quality 1..100) or "png". Default (1024 px JPEG q70) is ~50-200 KB. save_path: also write the FULL-resolution
     frame to this file (.jpg/.jpeg = JPEG q95, anything else PNG); relative paths go to .mcp-run/<id>/screenshots/.
     Metadata: width/height (returned image), orig_width/orig_height, frame and level when captured (level null in the
-    main menu), readback_frame, bytes (returned image), saved_path/saved_bytes, capture/encode/save/total ms.
+    main menu), readback_frame, bytes (returned image), saved_path/saved_bytes, capture/encode/save/total ms, coords
+    (pixel x,y of this image are the default coordinates of game_input cursor/click/drag steps and of game_ui px rects).
     Fails cleanly while a level is loading (the loading screen is not capturable) and with HDR10 output on."""
     inst = get(instance)
     if format not in ("jpeg", "png"):
@@ -2322,6 +2333,372 @@ async def game_step(instance: str | None = None, frames: int | None = None, ms: 
         raise ValueError('format "jpeg"/"png", quality 1..100, max_width >= 0')
     shot = (max_width, format, quality, save_path, 10) if screenshot else None
     return await run(step_run, inst, frames, ms, dt_ms, input, shot, state, timeout)
+
+
+# ---------------------------------------------------------------- UI tools (game_ui, game_ui_click, cursor steps)
+# Coordinates: the engine works in UI space (1024x768 stretched over the whole back buffer); agents use pixels of
+# the last game_screenshot image (inst.ui_image), so px = ui * image / (1024, 768).
+
+UI_W, UI_H = 1024.0, 768.0
+UI_INTERACTIVE = ("button", "check", "tab", "edit", "track", "combo", "list_item", "cell", "question", "menu_item")
+UI_COLOR_RE = re.compile(r"%c\[[^\]]*\]")
+UI_MENU_HOVER_MS = 400
+
+
+def ui_note_screenshot(inst, res):
+    """Remember the returned image size: it is the default pixel space of cursor steps and game_ui px rects."""
+    w, h = res.get("width"), res.get("height")
+    if w and h:
+        inst.ui_image = (int(w), int(h))
+        res["coords"] = (f"pixels of this {w}x{h} image are the default coordinates of game_input cursor/click/drag "
+                         f"steps and game_ui px rects (UI space = x*1024/{w}, y*768/{h})")
+
+
+def ui_image_size(inst, image_size=None):
+    if image_size:
+        if len(image_size) != 2 or min(image_size) <= 0:
+            raise ValueError("image_size must be [width, height] > 0")
+        return float(image_size[0]), float(image_size[1])
+    if getattr(inst, "ui_image", None):
+        return tuple(float(v) for v in inst.ui_image)
+    sw, sh = getattr(inst, "ui_screen", None) or inst.call("ui.tree", {"max_nodes": 1}, timeout=5)["screen"]
+    inst.ui_screen = (sw, sh)
+    return 1024.0, float(round(1024 * sh / sw)) if sw else 576.0
+
+
+def ui_point(inst, p, space, image, image_size):
+    """[x, y] in px (screenshot pixels) / ui / norm -> UI-space [x, y]."""
+    if not isinstance(p, (list, tuple)) or len(p) != 2 or not all(isinstance(v, (int, float)) for v in p):
+        raise ValueError(f"expected a point [x, y], got {p!r}")
+    space = space or "px"
+    if space == "ui":
+        return [float(p[0]), float(p[1])]
+    if space == "norm":
+        return [p[0] * UI_W, p[1] * UI_H]
+    if space != "px":
+        raise ValueError('"space" must be "px", "ui" or "norm"')
+    w, h = ui_image_size(inst, image or image_size)
+    return [round(p[0] * UI_W / w, 2), round(p[1] * UI_H / h, 2)]
+
+
+def ui_px(inst, v, image_size=None):
+    """UI-space rect/point list -> pixel space of the current image."""
+    w, h = ui_image_size(inst, image_size)
+    return [round(c * (w / UI_W if i % 2 == 0 else h / UI_H)) for i, c in enumerate(v)]
+
+
+UI_BUTTONS = {"left": "LMB", "right": "RMB", "middle": "MMB"}
+
+
+def ui_click_steps(at, button="left", double=False, ms=None, hover=None):
+    key = UI_BUTTONS.get(button or "left")
+    if not key:
+        raise ValueError('"button" must be left, right or middle')
+    out = [{"cursor": at, **({"ms": ms} if ms else {})}] + ([{"wait": hover}] if hover else []) + [{"key": key}]
+    if double:
+        out += [{"wait": 40}, {"key": key}]
+    return out
+
+
+def ui_expand_steps(inst, steps, image_size, parallel=False):
+    """Supervisor-side cursor verbs -> engine steps ({"cursor": [ux, uy]} + mouse keys). A verb that becomes several
+    steps is spliced into a sequence, or wrapped in a list (= sequence) inside a parallel list."""
+    if not isinstance(steps, list):
+        return steps
+    out = []
+    for s in steps:
+        if isinstance(s, list):
+            out.append(ui_expand_steps(inst, s, image_size, not parallel))
+            continue
+        if not isinstance(s, dict) or not any(k in s for k in ("cursor", "click", "drag", "at")):
+            out.append(s)
+            continue
+        s = dict(s)
+        space, image = s.pop("space", None), s.pop("image", None)
+        pt = lambda p: ui_point(inst, p, space, image, image_size)  # noqa: E731
+        if s.get("cursor") == "release":
+            seq = [s]
+        elif "cursor" in s:
+            seq = [{**s, "cursor": pt(s["cursor"])}]
+        elif "click" in s:
+            extra = set(s) - {"click", "button", "double", "ms", "hover"}
+            if extra:
+                raise ValueError(f"click: unknown fields {sorted(extra)}")
+            seq = ui_click_steps(pt(s["click"]), s.get("button"), s.get("double"), s.get("ms"), s.get("hover"))
+        elif "drag" in s:
+            d = s["drag"]
+            if not isinstance(d, dict) or "from" not in d or "to" not in d:
+                raise ValueError('drag: expected {"from": [x, y], "to": [x, y]}')
+            key = UI_BUTTONS.get(s.get("button") or "left")
+            if not key:
+                raise ValueError('"button" must be left, right or middle')
+            seq = [{"cursor": pt(d["from"])}, {"key": key, "state": "down"}, {"wait": 60},
+                   {"cursor": pt(d["to"]), "ms": s.get("ms", 300)}, {"wait": 60}, {"key": key, "state": "up"}]
+        else:  # wheel at a point
+            if "wheel" not in s:
+                raise ValueError('"at" only goes with "wheel"')
+            seq = [{"cursor": pt(s.pop("at"))}, s]
+        if len(seq) == 1:
+            out.append(seq[0])
+        elif parallel:
+            out.append(seq)
+        else:
+            out.extend(seq)
+    return out
+
+
+def ui_text(n):
+    t = n.get("text")
+    return UI_COLOR_RE.sub("", t).replace("\\n", "\n").strip() if isinstance(t, str) else None
+
+
+def ui_names(n):
+    """What a widget can be found by: shown text, label, inventory item name / section."""
+    it = n.get("item") or {}
+    return [v for v in (ui_text(n), n.get("label"), it.get("name"), it.get("section")) if v]
+
+
+def ui_labels(nodes):
+    """An interactive widget without text (check box, radio) is labelled by the text window right after it."""
+    by_parent = {}
+    for n in nodes:
+        by_parent.setdefault(n["p"], []).append(n)
+    for sib in by_parent.values():
+        for a, b in zip(sib, sib[1:]):
+            if a["kind"] in UI_INTERACTIVE and not ui_text(a) and b["kind"] in ("text", "static") and ui_text(b):
+                a["label"] = ui_text(b)
+                b["label_of"] = a["i"]
+
+
+def ui_tree(inst, root="all"):
+    if inst.dead:
+        raise RuntimeError(f"instance {inst.id} is not running (exit code {inst.exit_code})")
+    if inst.hung:
+        return {"loading": True, "reason": "hung", "nodes": [], "dialogs": []}
+    if inst.call("engine.heartbeat", timeout=5).get("loading"):
+        return {"loading": True, "nodes": [], "dialogs": [], "source": "supervisor"}
+    res = inst.call("ui.tree", {"root": root}, timeout=5)
+    inst.ui_screen = tuple(res.get("screen") or (0, 0)) or None
+    ui_labels(res.get("nodes", []))
+    return res
+
+
+def ui_node_out(inst, n, image_size):
+    o = {"path": n["path"], "kind": n["kind"]}
+    for k in ("name", "script_class"):
+        if k in n:
+            o[k] = n[k]
+    if n["kind"] in ("window", "static", "text") or "script_class" in n:
+        o["class"] = n["class"]
+    t = ui_text(n)
+    if t:
+        o["text"] = t if len(t) <= 300 else t[:300] + "..."
+    for k in ("label", "num", "speaker", "checked", "active", "pushed", "selected", "focus", "value", "tab_id", "active_tab",
+              "scroll", "item", "enabled", "hover", "clip"):
+        if k in n:
+            o[k] = n[k]
+    r = n["rect"]
+    o["rect"] = ui_px(inst, r, image_size)
+    o["center"] = ui_px(inst, [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2], image_size)
+    return o
+
+
+def ui_talk(inst, nodes, image_size):
+    qs = [n for n in nodes if n["kind"] == "question" and n.get("clip") != "out"]
+    ans = [n for n in nodes if n["kind"] == "answer"]
+    if not qs and not ans:
+        return None
+    return {"phrases": [{"speaker": a.get("speaker"), "text": ui_text(a)} for a in ans[-6:]],
+            "options": [{"index": i + 1, "text": ui_text(q), "path": q["path"],
+                         "center": ui_node_out(inst, q, image_size)["center"]} for i, q in enumerate(qs)]}
+
+
+def ui_match(pattern, value):
+    if value is None:
+        return False
+    p, v = pattern.casefold(), value.casefold()
+    return fnmatch.fnmatchcase(v, p) if any(c in p for c in "*?[") else v == p
+
+
+def game_ui_run(inst, view, root, text, name, kind, limit, image_size, include_clipped):
+    t0 = time.perf_counter()
+    res = ui_tree(inst, root)
+    nodes = res.get("nodes", [])
+    out = {"instance": inst.id, "dialogs": res.get("dialogs", []), "image_size": list(ui_image_size(inst, image_size))}
+    if res.get("loading"):
+        out["loading"] = True
+        return out
+    cur = res.get("cursor")
+    if cur:
+        out["cursor"] = {**cur, "px": ui_px(inst, [cur["x"], cur["y"]], image_size)}
+    talk = ui_talk(inst, nodes, image_size)
+    if talk:
+        out["talk"] = talk
+    sel = nodes
+    if not include_clipped:
+        sel = [n for n in sel if n.get("clip") != "out"]
+    if view == "interactive":
+        sel = [n for n in sel if n["kind"] in UI_INTERACTIVE or "item" in n]
+    elif view == "text":
+        sel = [n for n in sel if ui_text(n)]
+    if text:
+        sel = [n for n in sel if any(ui_match(p, v) for p in (text, f"*{text}*") for v in ui_names(n))]
+    if name:
+        sel = [n for n in sel if ui_match(name, n.get("name"))]
+    if kind:
+        sel = [n for n in sel if n["kind"] in kind]
+    out["count"] = len(sel)
+    if len(sel) > limit:
+        out["omitted"] = len(sel) - limit
+    if view == "tree":
+        out["nodes"] = [{"d": n["d"], **ui_node_out(inst, n, image_size)} for n in sel[:limit]]
+    else:
+        out["nodes"] = [ui_node_out(inst, n, image_size) for n in sel[:limit]]
+    clipped = sum(1 for n in nodes if n.get("clip") == "out")
+    if clipped and not include_clipped:
+        out["clipped_out"] = clipped
+    if res.get("truncated"):
+        out["truncated"] = res["truncated"]
+    out["engine_ms"] = res.get("ms")
+    out["call_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    return out
+
+
+def ui_find(inst, nodes, text, name, path, option, kind, nth):
+    by_i = {n["i"]: n for n in nodes}
+
+    def interactive_ancestor(n):
+        if "label_of" in n:
+            return by_i.get(n["label_of"])
+        while n is not None:
+            if n["kind"] in UI_INTERACTIVE:
+                return n
+            n = by_i.get(n["p"])
+        return None
+
+    if option is not None:
+        qs = [n for n in nodes if n["kind"] == "question" and n.get("clip") != "out"]
+        if not 1 <= option <= len(qs):
+            raise ValueError(f"option {option} not available: {len(qs)} answer option(s) "
+                             f"{[ui_text(q) for q in qs]}")
+        return qs[option - 1]
+    cands = nodes
+    if path is not None:
+        cands = [n for n in cands if n["path"] == path]
+    if text is not None:
+        cands = [n for n in cands if any(ui_match(text, v) for v in ui_names(n))]
+    if name is not None:
+        cands = [n for n in cands if ui_match(name, n.get("name"))]
+    if kind:
+        cands = [n for n in cands if n["kind"] in kind]
+    # a matching text inside a button/list item/option clicks that widget
+    mapped = []
+    for n in cands:
+        a = interactive_ancestor(n) or n
+        if a not in mapped:
+            mapped.append(a)
+
+    def has_ancestor_in(n, ids):
+        p = by_i.get(n["p"])
+        while p is not None:
+            if p["i"] in ids:
+                return True
+            p = by_i.get(p["p"])
+        return False
+
+    ids = {n["i"] for n in mapped}
+    mapped = [n for n in mapped if not has_ancestor_in(n, ids)]  # e.g. a talk option and its caption button
+    # script inventories handle cells by cursor position, inside windows flagged disabled
+    usable = [n for n in mapped if n.get("clip") != "out" and (n.get("enabled", True) or n["kind"] == "cell")
+              and n["rect"][2] > n["rect"][0] and n["rect"][3] > n["rect"][1]]
+    inter = [n for n in usable if n["kind"] in UI_INTERACTIVE]
+    usable = inter or usable
+    if not usable:
+        why = "" if not mapped else f" ({len(mapped)} match(es) are disabled, hidden by scrolling or empty)"
+        texts = sorted({ui_text(n) for n in nodes if ui_text(n) and n.get("clip") != "out"})
+        hint = difflib.get_close_matches(text, texts, 8, 0.4) if text else texts[:40]
+        raise ValueError(f"no visible enabled widget matches{why}; visible texts: {hint}")
+    if len(usable) > 1 and nth is None:
+        raise ValueError("ambiguous, pass nth (1-based) or path: " + json.dumps(
+            [{"path": n["path"], "kind": n["kind"], "text": ui_text(n), "name": n.get("name"),
+              "rect_ui": n["rect"]} for n in usable[:20]], ensure_ascii=False))
+    if nth is not None and not 1 <= nth <= len(usable):
+        raise ValueError(f"nth {nth} out of range 1..{len(usable)}")
+    return usable[(nth or 1) - 1]
+
+
+def game_ui_click_run(inst, text, name, path, option, kind, button, double, root, nth, settle_ms, image_size):
+    res = ui_tree(inst, root)
+    if res.get("loading"):
+        raise RuntimeError("the game is loading (or hung): no UI to click")
+    if not res.get("dialogs"):
+        raise RuntimeError(f"no menu or dialog is open (root {root!r}): nothing to click")
+    n = ui_find(inst, res.get("nodes", []), text, name, path, option, kind, nth)
+    r = n["rect"]
+    at = [round((r[0] + r[2]) / 2, 2), round((r[1] + r[3]) / 2, 2)]
+    # main menu entries (CUIMMShniaga) take a click only after the hover highlight slid onto them
+    hover = UI_MENU_HOVER_MS if n["kind"] == "menu_item" and not n.get("hover") else None
+    inp = input_run(inst, ui_click_steps(at, button, double, hover=hover), True, 10)
+    time.sleep(max(0, settle_ms) / 1000)
+    st = game_state_get(inst, [])
+    ui = st.get("ui", {})
+    out = {"instance": inst.id, "clicked": ui_node_out(inst, n, image_size), "at_ui": at,
+           "at_px": ui_px(inst, at, image_size), "mode": st.get("mode")}
+    for k in ("dialog", "menu_dialog"):
+        if k in ui:
+            out[k] = ui[k]
+    if inp.get("warning"):
+        out["warning"] = inp["warning"]
+    return out
+
+
+@tool
+async def game_ui(instance: str | None = None, view: str = "interactive", root: str = "top", text: str | None = None,
+                  name: str | None = None, kind: list[str] | None = None, limit: int = 80,
+                  image_size: list[int] | None = None, include_clipped: bool = False) -> dict:
+    """What is on screen, structured: the visible windows of the top input-owning dialog, to click by meaning.
+
+    view: "interactive" (default: buttons, check boxes, tabs, edits, track bars, combos, list items, item cells,
+    talk answer options, menu_item = main/ESC menu entries), "text" (every visible text: labels, phrases, descriptions), "tree" (all visible windows
+    with depth d), "all" (flat, everything). root: "top" (main menu dialog when the menu is up, else the game's top
+    dialog), "menu", "game", "hud" (in-game HUD), "all" (menu + game + hud).
+    text: filter, case-insensitive exact / glob / substring of the shown text; name: window name (exact or glob);
+    kind: list of kinds. limit caps the nodes (count = all matches, omitted = the rest).
+    Per node: path (stable id while the UI is unchanged; use with game_ui_click(path=)), kind, text (as shown,
+    colour codes stripped), name, rect [l,t,r,b] and center [x,y] in pixels of the last game_screenshot image
+    (or image_size [w,h]; image_size in the result), state when set: checked, active (tab), pushed, selected, focus
+    (edit), value (track bar), scroll [pos,min,max], enabled false, hover (cursor over it), clip ("partial";
+    windows scrolled out of view are skipped: clipped_out counts them), item {section, name, id, count, container}
+    for inventory/trade cells. class / script_class for plain windows and script windows.
+    talk (talk window open): phrases (last 6 {speaker, text}) and options [{index (1-based), text, path, center}].
+    cursor {x, y (UI units), px, visible, mcp_owned}. dialogs: [{root, class, script_class}]. During a load:
+    loading true and no nodes. text also matches a widget's label (the text next to a check box) and an item
+    cell's item name / section. 3D PDA (default): its UI is drawn onto the device, so px rects do not match the
+    screenshot (game_ui_click still hits, it works in UI space) and its widgets stay enabled:false until the
+    first click on the PDA (a game_input {"key": "LMB"} focuses it)."""
+    inst = get(instance)
+    if view not in ("interactive", "text", "tree", "all"):
+        raise ValueError('view must be "interactive", "text", "tree" or "all"')
+    return await run(game_ui_run, inst, view, root, text, name, kind, max(1, int(limit)), image_size, include_clipped)
+
+
+@tool
+async def game_ui_click(instance: str | None = None, text: str | None = None, name: str | None = None,
+                        path: str | None = None, option: int | None = None, kind: list[str] | None = None,
+                        button: str = "left", double: bool = False, root: str = "top", nth: int | None = None,
+                        settle_ms: int = 300, image_size: list[int] | None = None) -> dict:
+    """Click a visible, enabled widget by meaning: moves the UI cursor to its centre and clicks through the normal
+    mouse path (hover, focus, callbacks as for a human). Pick by text (shown text, case-insensitive exact or glob
+    like "new*"), name (window name), path (from game_ui), or option (talk window answer option, 1-based as listed
+    in game_ui talk.options). A text inside a button / list item / option clicks that widget. Ambiguous -> error
+    listing the candidates (use nth or path); no match -> error with the visible texts.
+    button: left / right / middle; double: double-click (e.g. use/equip an inventory item).
+    Returns clicked (node), at_ui / at_px, and after settle_ms the resulting mode and ui dialog (game_state)."""
+    inst = get(instance)
+    if text is None and name is None and path is None and option is None:
+        raise ValueError("pass text, name, path or option")
+    return await run(game_ui_click_run, inst, text, name, path, option, kind, button, double, root, nth, settle_ms,
+                     image_size)
 
 
 # ---------------------------------------------------------------- game_perf

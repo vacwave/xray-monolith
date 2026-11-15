@@ -12,6 +12,10 @@ namespace mcp_input
 		LPCSTR (*key_name)(int dik);
 		// rotate the actor camera (radians, + = right / up); false when there is no actor
 		bool (*look)(float yaw, float pitch);
+		// MCP UI cursor in UI space (1024x768): current position; move there like a real mouse move; give it back
+		bool (*cursor_get)(float& x, float& y);
+		bool (*cursor_move)(float x, float y);
+		void (*cursor_release)();
 	};
 
 	// Called by xrGame at app start; registers the methods (no-op without -mcp_port)

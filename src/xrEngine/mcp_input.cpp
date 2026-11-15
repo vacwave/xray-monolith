@@ -14,6 +14,8 @@ using json = nlohmann::json;
 //   {"action":"forward"|"key":"ESCAPE", "ms":N, "state":"down"|"up"}  no ms/state = tap (1 frame), ms = hold N ms
 //   {"text":"abc"}  {"wheel":N}  {"wait":N}  {"look":{"yaw":deg,"pitch":deg},"ms":N}  {"look_at":[x,y,z],"ms":N}
 //   {"look_dir":[x,y,z],"ms":N}  {"mouse":{"dx":px,"dy":px},"ms":N}
+//   {"cursor":[x,y],"ms":N}  UI cursor to UI-space x,y (1024x768), gliding over ms, done a frame later at the earliest
+//   {"cursor":"release"}  give the UI cursor back to the Windows mouse (no-op in silent runs)
 namespace mcp_input
 {
 namespace
@@ -29,7 +31,7 @@ namespace
 		wheel_notch = 120, // DirectInput wheel delta per notch
 	};
 
-	enum op_kind { o_seq, o_par, o_key, o_wheel, o_wait, o_look, o_look_at, o_mouse };
+	enum op_kind { o_seq, o_par, o_key, o_wheel, o_wait, o_look, o_look_at, o_mouse, o_cursor };
 	enum key_mode { km_tap, km_down, km_up };
 
 	struct op
@@ -48,6 +50,8 @@ namespace
 		u32 t0 = 0, frame0 = 0, idx = 0;
 		float done_yaw = 0, done_pitch = 0;
 		int done_dx = 0, done_dy = 0;
+		bool cursor_release = false, cursor_failed = false; // cursor: target.x/y = destination, from = start
+		Fvector2 from{};
 	};
 
 	struct sequence
@@ -76,6 +80,7 @@ namespace
 	// accumulated for this frame and delivered once
 	int frame_dx = 0, frame_dy = 0, frame_wheel = 0;
 	float frame_yaw = 0, frame_pitch = 0;
+	bool frame_cursor_failed = false;
 
 	std::string dump(const json& j) { return j.dump(-1, ' ', false, json::error_handler_t::replace); }
 
@@ -162,6 +167,16 @@ namespace
 			o.pitch = d.getP() - c.getP();
 			break;
 		}
+		case o_cursor:
+			o.done_yaw = -1.f; // last moved progress
+			if (o.cursor_release)
+			{
+				if (hooks.cursor_release)
+					hooks.cursor_release();
+			}
+			else if (!hooks.cursor_get || !hooks.cursor_get(o.from.x, o.from.y))
+				o.cursor_failed = true;
+			break;
 		default:
 			break;
 		}
@@ -212,6 +227,19 @@ namespace
 			done = progress(o, now, o.dx, o.done_dx, frame_dx);
 			progress(o, now, o.dy, o.done_dy, frame_dy);
 			break;
+		case o_cursor:
+		{
+			float p = o.ms ? std::min(1.f, float(now - o.t0) / float(o.ms)) : 1.f;
+			if (!o.cursor_release && !o.cursor_failed && p > o.done_yaw)
+			{
+				o.done_yaw = p;
+				if (!hooks.cursor_move || !hooks.cursor_move(o.from.x + (o.target.x - o.from.x) * p, o.from.y + (o.target.y - o.from.y) * p))
+					o.cursor_failed = true;
+			}
+			frame_cursor_failed |= o.cursor_failed;
+			done = Device.dwFrame > o.frame0 && p >= 1.f;
+			break;
+		}
 		default:
 			break;
 		}
@@ -258,6 +286,8 @@ namespace
 				s.frame1 = Device.dwFrame;
 				cancelled++;
 			}
+		if (hooks.cursor_release)
+			hooks.cursor_release();
 		return { { "released", released }, { "cancelled", cancelled } };
 	}
 
@@ -362,7 +392,7 @@ namespace
 			if (!j.is_object())
 				return fail(path, "a step must be an object or an array");
 
-			static const char* verbs[] = { "action", "key", "text", "wheel", "wait", "look", "look_at", "look_dir", "mouse" };
+			static const char* verbs[] = { "action", "key", "text", "wheel", "wait", "look", "look_at", "look_dir", "mouse", "cursor" };
 			const char* verb = nullptr;
 			for (const char* v : verbs)
 				if (j.contains(v))
@@ -372,7 +402,7 @@ namespace
 					verb = v;
 				}
 			if (!verb)
-				return fail(path, "expected one of action, key, text, wheel, wait, look, look_at, look_dir, mouse");
+				return fail(path, "expected one of action, key, text, wheel, wait, look, look_at, look_dir, mouse, cursor");
 			for (auto& kv : j.items())
 				if (kv.key() != verb && kv.key() != "ms" && kv.key() != "state")
 					return fail(path, "unknown field \"" + xr_string(kv.key().c_str()) + "\"");
@@ -441,6 +471,19 @@ namespace
 				o.target_dir = verb[5] == 'd';
 				if (!get_vec(v, o.target))
 					return fail(vp, "expected [x,y,z]");
+				return true;
+			}
+			if (!strcmp(verb, "cursor"))
+			{
+				o.kind = o_cursor;
+				if (v == "release")
+				{
+					o.cursor_release = true;
+					return true;
+				}
+				if (!v.is_array() || v.size() != 2 || !v[0].is_number() || !v[1].is_number())
+					return fail(vp, "expected [x,y] in UI space (0..1024, 0..768) or \"release\"");
+				o.target.set(v[0].get<float>(), v[1].get<float>(), 0.f);
 				return true;
 			}
 			// mouse
@@ -563,7 +606,10 @@ void on_frame()
 		}
 		if ((frame_yaw || frame_pitch) && (!hooks.look || !hooks.look(frame_yaw, frame_pitch)))
 			s.warning = "look skipped: no actor";
+		if (frame_cursor_failed)
+			s.warning = "cursor skipped: no UI";
 		frame_yaw = frame_pitch = 0;
+		frame_cursor_failed = false;
 	}
 
 	IInputReceiver* ir = pInput->CurrentIR();

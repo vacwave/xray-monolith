@@ -102,7 +102,12 @@ namespace
 	}
 }
 
+// xrGame/mcp_ui.cpp
+bool mcp_ui_cursor_get(float& x, float& y);
+bool mcp_ui_cursor_move(float x, float y);
+void mcp_ui_cursor_release();
+
 void mcp_register_input()
 {
-	mcp_input::init({ resolve, key_name, look });
+	mcp_input::init({ resolve, key_name, look, mcp_ui_cursor_get, mcp_ui_cursor_move, mcp_ui_cursor_release });
 }

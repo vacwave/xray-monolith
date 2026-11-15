@@ -50,6 +50,7 @@
 // come from a small guarded Lua chunk and are simply absent when a mod lacks them.
 extern bool g_bDisableAllInput;
 extern CUISequencer* g_tutorial;
+xr_string mcp_ui_cursor_json(); // xrGame/mcp_ui.cpp
 
 namespace
 {
@@ -439,6 +440,7 @@ namespace
 		jobj ui;
 		ui.b("main_menu", menu).b("console", console).b("paused", Device.Paused()).b("mcp_paused", mcp_time::paused()).b("loading", loading);
 		ui.b("cursor", g_pGamePersistent && GamePersistent().m_pUI_core && GetUICursor().IsVisible());
+		ui.raw("cursor_pos", mcp_ui_cursor_json());
 		ui.str("input_receiver", ir ? class_name(typeid(*ir)).c_str() : nullptr);
 		if (top)
 			ui.raw("dialog", dialog_info(top).done());

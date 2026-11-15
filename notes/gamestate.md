@@ -28,3 +28,4 @@
 - Gotcha: the death tutorial `game_over` runs `main_menu on` from its stop callback (xr_effects.on_tutor_gameover_stop); a `load` while it runs stops it mid-load and the menu window then crashes in CUIWindow::SendMessage (CMainMenu::OnFrame). Stop it first (`game.stop_tutorial()`), then load from the menu it opens.
 - `CSavedGameWrapper(name)` (Lua): level_name/game_time/actor_health; decompresses the save and parses the actor, R_ASSERTs (fatal) when the file is not in the FS cache: check `valid_saved_game(name)` first. Files copied in from outside need `getFS():rescan_path("$game_saves$")` + `rescan_pathes()` first.
 - `state.get` ui.mcp_paused = MCP pause requested (`mcp_time::paused()`); mode stays `paused` (Device.Paused) while it is in effect.
+- `ui.cursor_pos` {x, y (UI units), visible, mcp_owned} from `mcp_ui_cursor_json()` (xrGame/mcp_ui.cpp).

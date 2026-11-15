@@ -8,8 +8,9 @@
 #define C_DEFAULT	D3DCOLOR_XRGB(0xff,0xff,0xff)
 
 CUICursor::CUICursor()
-	: m_static(NULL), m_b_use_win_cursor(false)
+	: m_static(NULL), m_b_use_win_cursor(false), m_mcp_owned(Device.IsSilent()), m_mcp_pending(false)
 {
+	m_mcp_target.set(0.f, 0.f);
 	bVisible = false;
 	vPrevPos.set(0.0f, 0.0f);
 	vPos.set(0.f, 0.f);
@@ -105,7 +106,12 @@ void CUICursor::UpdateCursorPosition(int _dx, int _dy)
 {
 	Fvector2 p;
 	vPrevPos = vPos;
-	if (m_b_use_win_cursor)
+	if (m_mcp_owned && m_mcp_pending)
+	{
+		vPos = m_mcp_target;
+		m_mcp_pending = false;
+	}
+	else if (m_b_use_win_cursor && !m_mcp_owned)
 	{
 		Ivector2 pti;
 		IInputReceiver::IR_GetMousePosReal(pti);
@@ -127,10 +133,30 @@ void CUICursor::UpdateCursorPosition(int _dx, int _dy)
 void CUICursor::SetUICursorPosition(Fvector2 pos)
 {
 	vPos = pos;
+	if (m_mcp_owned)
+	{
+		m_mcp_pending = false;
+		return;
+	}
 	POINT p;
 	p.x = iFloor(vPos.x / (UI_BASE_WIDTH / (float)Device.clientWidth));
 	p.y = iFloor(vPos.y / (UI_BASE_HEIGHT / (float)Device.clientHeight));
 	if (m_b_use_win_cursor)
 		ClientToScreen(Device.m_hWnd, (LPPOINT)&p);
 	SetCursorPos(p.x, p.y);
+}
+
+void CUICursor::McpMoveTo(Fvector2 pos)
+{
+	clamp(pos.x, 0.f, UI_BASE_WIDTH);
+	clamp(pos.y, 0.f, UI_BASE_HEIGHT);
+	m_mcp_owned = true;
+	m_mcp_pending = true;
+	m_mcp_target = pos;
+}
+
+void CUICursor::McpRelease()
+{
+	m_mcp_pending = false;
+	m_mcp_owned = Device.IsSilent();
 }
