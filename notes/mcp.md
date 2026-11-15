@@ -51,3 +51,4 @@
 - `state.get` (game state snapshot) -> see gamestate.md; registered from xrGame/mcp_state.cpp. JSON built with a local flat-object builder (`jobj`) over `mcp::to_json_string` (no nlohmann in xrGame).
 - `time.get` / `time.pause` / `time.step` / `time.factor` (MCP pause, fixed-dt steps, time_factor; reset on client change) -> see time.md; registered in `mcp::start`.
 - `ui.tree` (flat dump of visible windows) registered from xrGame/mcp_ui.cpp (`mcp_register_ui()` in OnAppStart); input.run `cursor` step drives the virtual UI cursor -> see ui.md.
+- `lua.exec {"code","quiet":1}`: runs without run_logged (no exec marker lines, `lines` empty); used by game_wait polls.

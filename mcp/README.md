@@ -64,12 +64,22 @@ All tools take an optional `instance` (default: the last launched or attached on
 | `game_kill` | `ids` (creatures or squads → online members), `by_actor` → engine kill path (death callbacks, corpses, squad bookkeeping); offline → use release |
 | `game_release` | `ids` and/or `spawned` (everything game_spawn made in this game process; ids checked against their section) → alife_release (squads with members) |
 | `game_weather` | no args → current + valid weathers (cycles {cycle: [presets]}, other files); `weather` cycle/preset via level_weathers (sticks for a weather period) or any weather file; `time` 'HH:MM' (advances the clock), `advance_hours` → before/after weather, cycle, preset, time, day |
+| `game_wait` | block until `until` holds (at once if it already does), `timeout_s` (30): readiness (`in_control`, `loaded`, `main_menu`), `mode`, `dialog` open/closed, next `event` (type glob + `where` fields, `since` seq), `log` regex, `sim_ms` / `frames` / `game_clock`, `state` path ops, `has_item`, `object` (exists/gone/alive/dead, within R, field ops), `count` of a game_objects filter, `lua` predicate, `all`/`any`/`not`; `fail_on` list (crash/exit always ends it) → `met`, `failed_on`, `timed_out`, elapsed s/frames/sim ms/game s, `conditions` with values (evidence or last observed), `event_seq`/`log_seq` for chaining. Events/log wake it at once; state/object/Lua conditions are polled (`poll_ms` 50, one batched frame). sim_ms/game_clock while MCP-paused are refused |
 | `game_emission` | `kind` surge/psi_storm, `action` start/stop/status via surge_manager / psi_storm_manager (real scripted effects) → before/after started, elapsed_s, duration, weather_fx, time_factor; skip reasons in notes |
 
 `game_status` adds `events` (new events / script errors since the last status call); `console_exec`, `lua_exec` and
 `game_teleport` add `script_errors` when script errors arrived since the last such call; `game_last_crash` adds the
 last fatal `script_error`. Script errors repeating within 5 s are coalesced by the engine (one event per 5 s with
 `since_last` = occurrences folded in, `count` = total). Lua errors inside engine callbacks are fatal in this engine.
+
+`game_wait` examples (`until` values):
+
+- `"in_control"` or `{"in_control": "l02_garbage"}` — after a teleport/load issued elsewhere
+- `{"event": "task_given", "where": {"id": "my_task"}}` with `fail_on: ["script_error", "actor_died"]`; next wait `since` = returned `event_seq`
+- `{"state": "actor.position", "within": 2, "of": [-100, 0.4, 12]}`, `{"state": "hands.item.ammo", "eq": 0}`
+- `{"dialog": "inventory"}` / `{"dialog": "talk", "open": false}`
+- `{"count": {"kinds": ["monster"], "radius": 50, "alive": true, "hostile_only": true}, "eq": 0}`, `{"object": 1234, "is": "dead"}`
+- `{"any": [{"lua": "db.actor:money() >= 5000"}, {"log": "Quest .* done"}, {"sim_ms": 10000}]}`
 
 Output safeguards: consecutive identical lines are collapsed to `line ×N`, long lines are clipped, each result is
 capped at 20k chars, and `omitted` says what was left out. The engine itself returns at most 500 lines per exec

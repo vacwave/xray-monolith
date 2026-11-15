@@ -415,6 +415,7 @@ class Instance:
         self.ring = deque(maxlen=RING_SIZE)  # (seq, line, arrival time or 0 for gap fills)
         self.last_seq = 0
         self.events = EventBuffer()  # engine "game" events
+        self.wake = threading.Condition()  # notified on every log line / game event / disconnect (game_wait)
         self.lock = threading.Lock()
         self.sock = None
         self.wfile_lock = threading.Lock()
@@ -535,6 +536,9 @@ class Instance:
                     if p:
                         p[1] = msg
                         p[0].set()
+                    continue
+                with self.wake:
+                    self.wake.notify_all()
         except OSError:
             pass
         finally:
@@ -547,6 +551,8 @@ class Instance:
                 pass
             for p in list(self.pending.values()):
                 p[0].set()
+            with self.wake:
+                self.wake.notify_all()
             log.info("[%s] disconnected", self.id)
             if self.crash_event is not None:
                 self.collect_crash()
@@ -3531,6 +3537,607 @@ async def game_emission(kind: str = "surge", action: str = "status", instance: s
         raise ValueError("action must be start, stop or status")
     return with_error_hint(inst, {"instance": inst.id,
                                   **await run(sc_exec, inst, SC_EMISSION, {"kind": kind, "action": action})})
+
+
+# ---------------------------------------------------------------- game_wait
+# One JSON condition tree evaluated supervisor-side. Events and log lines are push-based (the reader notifies
+# inst.wake); state / object / Lua leaves share one pipelined request batch per poll (the engine answers all of them
+# in the same frame). Lua runs with lua.exec quiet (no exec marker lines in the log).
+
+WT_EVENT_TYPES = ("script_error", "level_loaded", "level_unloaded", "actor_spawned", "actor_died", "game_saved",
+                  "game_loaded", "menu_opened", "menu_closed", "task_given", "task_completed", "task_failed",
+                  "task_in_progress")
+WT_OPS = ("eq", "ne", "lt", "le", "gt", "ge", "in", "match", "exists", "within")
+WT_LEAVES = {  # leaf key -> extra keys it accepts (besides the comparison ops where marked by "ops")
+    "in_control": (), "loaded": (), "mode": (), "dialog": ("open",), "event": ("where",), "log": (),
+    "sim_ms": (), "frames": (), "game_clock": (), "state": ("ops",), "has_item": ("ops",),
+    "object": ("is", "field", "ops"), "count": ("ops",), "lua": (), "hung": (), "crash": ()}
+WT_OBJECT_IS = ("exists", "gone", "alive", "dead", "online", "offline")
+WT_COUNT_KEYS = ("kinds", "pattern", "radius", "alive", "hostile_only", "visible_only", "position", "offline")
+WT_LUA = r'''local f = loadstring("return " .. @E@)
+local e
+if not f then f, e = loadstring(@E@) end
+if not f then return "E", e end
+local ok, v = pcall(f)
+if not ok then return "E", tostring(v) end
+return "V", (v ~= nil and v ~= false) and "1" or "0", tostring(v)'''
+
+
+class WaitAbort(Exception):
+    pass
+
+
+def wt_luastr(s):
+    """Lua long-bracket literal (no escapes needed)."""
+    eq = 0
+    while f"]{'=' * eq}]" in s:
+        eq += 1
+    return f"[{'=' * eq}[{s}]{'=' * eq}]"
+
+
+def wt_compile(spec, where="until"):
+    """Validate a condition and turn it into a node {k, spec, of?} (shorthand strings expanded)."""
+    if isinstance(spec, list):
+        if not spec:
+            raise ValueError(f"{where}: empty condition list")
+        return {"k": "all", "spec": "all", "of": [wt_compile(s, where) for s in spec]}
+    if isinstance(spec, str):
+        if spec in ("in_control", "loaded", "hung", "crash"):
+            spec = {spec: True}
+        elif spec == "main_menu":
+            spec = {"mode": "main_menu"}
+        elif any(fnmatch.fnmatchcase(t, spec) for t in WT_EVENT_TYPES):
+            spec = {"event": spec}
+        else:
+            raise ValueError(f"{where}: unknown condition {spec!r}; strings: in_control, loaded, main_menu, hung, crash "
+                             f"or an event type/glob {list(WT_EVENT_TYPES)}; else use an object like "
+                             '{"state": "actor.health", "lt": 0.5}')
+    if not isinstance(spec, dict):
+        raise ValueError(f"{where}: a condition is a string, an object or a list, not {spec!r}")
+    keys = [k for k in spec if k in WT_LEAVES or k in ("all", "any", "not")]
+    if len(keys) != 1:
+        raise ValueError(f"{where}: {json.dumps(spec)} needs exactly one of {list(WT_LEAVES) + ['all', 'any', 'not']}")
+    k = keys[0]
+    n = {"k": k, "spec": spec, "met": False, "value": None}
+    if k in ("all", "any"):
+        if not isinstance(spec[k], list) or not spec[k] or len(spec) != 1:
+            raise ValueError(f"{where}: {k} takes a non-empty list of conditions")
+        n["of"] = [wt_compile(s, where) for s in spec[k]]
+        return n
+    if k == "not":
+        n["of"] = [wt_compile(spec[k], where)]
+        return n
+    extra = WT_LEAVES[k]
+    allowed = {k, *(x for x in extra if x != "ops"), *(WT_OPS + ("of",) if "ops" in extra else ())}
+    bad = [x for x in spec if x not in allowed]
+    if bad:
+        raise ValueError(f"{where}: {k} does not take {bad}; it takes {sorted(allowed - {k})}")
+    v = spec[k]
+    if k in ("sim_ms", "frames") and not (isinstance(v, (int, float)) and v >= 0):
+        raise ValueError(f"{where}: {k} must be a number >= 0")
+    if k == "game_clock":
+        m = re.match(r"^(\d{1,2}):(\d{2})$", str(v))
+        if not m or int(m[1]) > 23 or int(m[2]) > 59:
+            raise ValueError(f"{where}: game_clock must be 'HH:MM'")
+        n["target_ms"] = (int(m[1]) * 60 + int(m[2])) * 60000
+    if k == "log":
+        n["rx"] = re.compile(v)
+    if k == "event":
+        if not isinstance(v, str):
+            raise ValueError(f"{where}: event takes a type name or glob, e.g. 'task_*'")
+        if not any(fnmatch.fnmatchcase(t, v) for t in WT_EVENT_TYPES):
+            raise ValueError(f"{where}: event {v!r} matches no event type {list(WT_EVENT_TYPES)}")
+        if not isinstance(spec.get("where", {}), dict):
+            raise ValueError(f"{where}: where must be an object of data fields")
+    if k in ("mode", "dialog", "has_item", "state", "lua") and not isinstance(v, (str, list) if k == "mode" else str):
+        raise ValueError(f"{where}: {k} takes a string" + (" or a list" if k == "mode" else ""))
+    if k == "object":
+        if not isinstance(v, int) or not 0 <= v < 0xffff:
+            raise ValueError(f"{where}: object takes an id 0..65534")
+        if spec.get("is", "exists") not in WT_OBJECT_IS:
+            raise ValueError(f"{where}: object is must be one of {list(WT_OBJECT_IS)}")
+    if k == "count":
+        if not isinstance(v, dict) or [x for x in v if x not in WT_COUNT_KEYS]:
+            raise ValueError(f"{where}: count takes a game_objects filter object with keys {list(WT_COUNT_KEYS)}")
+        bk = [x for x in v.get("kinds") or [] if x not in WORLD_KINDS]
+        if bk:
+            raise ValueError(f"{where}: unknown kinds {bk}; valid: {list(WORLD_KINDS)}")
+        p = {"radius": str(float(v.get("radius", 100))), "summary": 1}
+        if v.get("kinds"):
+            p["kinds"] = ",".join(v["kinds"])
+        if v.get("pattern"):
+            p["pattern"] = v["pattern"]
+        if v.get("alive") is not None:
+            p["alive"] = int(bool(v["alive"]))
+        for f in ("hostile_only", "visible_only", "offline"):
+            if v.get(f):
+                p[f] = 1
+        if v.get("position") is not None:
+            p["position"] = ",".join(str(float(c)) for c in v["position"])
+        n["params"] = p
+    if "within" in spec:
+        o = spec.get("of")
+        if not (o == "actor" or isinstance(o, int) or (isinstance(o, list) and len(o) == 3)):
+            raise ValueError(f'{where}: within needs of = [x,y,z], "actor" or an object id')
+    return n
+
+
+def wt_nodes(n):
+    yield n
+    for c in n.get("of") or []:
+        yield from wt_nodes(c)
+
+
+def wt_needs(nodes):
+    need = {"state": None, "probe": False, "objects": set(), "counts": {}, "lua": set(), "hb": False, "time": False}
+
+    def state(*secs):
+        need["state"] = (need["state"] or set()) | set(secs)
+    for n in nodes:
+        k, sp = n["k"], n["spec"]
+        if k in ("in_control", "loaded", "mode", "dialog", "sim_ms", "game_clock"):
+            state()
+        if k == "in_control":
+            need["probe"] = True
+        if k in ("sim_ms", "game_clock"):
+            need["time"] = True
+        if k == "frames":
+            need["hb"] = True
+        if k == "state":
+            sec = sp["state"].split(".")[0]
+            state(*([sec] if sec in STATE_SECTIONS else []))
+        if k == "has_item":
+            state("inventory")
+        if k == "object":
+            need["objects"].add(sp["object"])
+        if k == "count":
+            need["counts"][json.dumps(n["params"], sort_keys=True)] = n["params"]
+        if k == "lua":
+            need["lua"].add(sp["lua"])
+        if isinstance(n["spec"], dict) and "within" in sp:
+            if sp.get("of") == "actor":
+                state()
+            elif isinstance(sp.get("of"), int):
+                need["objects"].add(sp["of"])
+    need["polled"] = bool(need["state"] is not None or need["probe"] or need["objects"] or need["counts"]
+                          or need["lua"] or need["hb"])
+    return need
+
+
+def wt_batch(inst, calls, timeout):
+    """Send all requests at once (one engine frame answers them), then collect: result or Exception per call."""
+    if not calls:
+        return []
+    s = inst.sock
+    if s is None:
+        return [RuntimeError("not connected")] * len(calls)
+    rids, data = [], []
+    for m, p in calls:
+        rid = next(inst.ids)
+        inst.pending[rid] = [threading.Event(), None]
+        rids.append(rid)
+        data.append(json.dumps({"id": rid, "method": m, "params": p}) + "\n")
+    out = []
+    try:
+        with inst.wfile_lock:
+            s.sendall("".join(data).encode())
+        deadline = time.monotonic() + timeout
+        for rid, (m, _) in zip(rids, calls):
+            p = inst.pending[rid]
+            if not p[0].wait(max(0.0, deadline - time.monotonic())):
+                out.append(TimeoutError(f"{m}: no reply in {timeout:.1f} s"))
+            elif p[1] is None:
+                out.append(RuntimeError(f"{m}: connection lost"))
+            elif "error" in p[1]:
+                out.append(RuntimeError(f"{m}: {p[1]['error'].get('message')}"))
+            else:
+                out.append(p[1].get("result"))
+    except OSError as e:
+        out += [RuntimeError(f"send failed: {e}")] * (len(calls) - len(out))
+    finally:
+        for rid in rids:
+            inst.pending.pop(rid, None)
+    return out
+
+
+def wt_poll(inst, need, budget, clock):
+    """heartbeat (net thread), then unless loading/hung one batch of main-thread calls."""
+    snap = {"hb": None, "loading": None, "error": None, "state": None, "probe": None, "objects": {}, "counts": {},
+            "lua": {}}
+    try:
+        snap["hb"] = inst.call("engine.heartbeat", timeout=max(0.2, min(5.0, budget)))
+        snap["loading"] = bool(snap["hb"].get("loading"))
+    except Exception as e:
+        snap["error"] = f"{type(e).__name__}: {e}"
+        return snap
+    if snap["loading"] or inst.hung:
+        return snap
+    calls = []
+    if need["state"] is not None or clock:
+        calls.append(("state", None, "state.get", {"sections": ",".join(sorted((need["state"] or set()) | {"stats"}))}))
+    if need["probe"]:
+        calls.append(("probe", None, "lua.exec", {"code": TP_PROBE, "quiet": 1}))
+    for i in sorted(need["objects"]):
+        calls.append(("objects", i, "world.object", {"id": i}))
+    for key, p in need["counts"].items():
+        calls.append(("counts", key, "world.objects", p))
+    for code in need["lua"]:
+        calls.append(("lua", code, "lua.exec", {"code": WT_LUA.replace("@E@", wt_luastr(code)), "quiet": 1}))
+    res = wt_batch(inst, [(m, p) for _, _, m, p in calls], max(0.2, min(3.0, budget)))
+    for (slot, key, _, _), r in zip(calls, res):
+        if key is None:
+            snap[slot] = r
+        else:
+            snap[slot][key] = r
+    return snap
+
+
+def wt_clock(snap):
+    st = snap["state"] if isinstance(snap["state"], dict) else {}
+    stats = st.get("stats") or {}
+    return {"frame": (snap["hb"] or {}).get("frame"), "time_global_ms": stats.get("time_global_ms"),
+            "game_time_ms": stats.get("game_time_ms"), "mode": st.get("mode")}
+
+
+def wt_path(obj, path):
+    for part in path.split(".") if path else []:
+        if isinstance(obj, dict):
+            obj = obj.get(part)
+        elif isinstance(obj, list) and part.lstrip("-").isdigit() and -len(obj) <= int(part) < len(obj):
+            obj = obj[int(part)]
+        else:
+            return None
+    return obj
+
+
+def wt_pos(v):
+    if isinstance(v, dict):
+        v = [v.get("x"), v.get("y"), v.get("z")]
+    if isinstance(v, list) and len(v) == 3 and all(isinstance(c, (int, float)) for c in v):
+        return v
+    return None
+
+
+def wt_obj(r):
+    """world.object result -> (object dict or None, problem string or None)."""
+    if isinstance(r, Exception):
+        return None, f"{type(r).__name__}: {r}"
+    if not isinstance(r, dict) or not r.get("available"):
+        return None, (r or {}).get("reason", "unavailable") if isinstance(r, dict) else "unavailable"
+    return r.get("object"), None
+
+
+def wt_ops(n, v, snap):
+    """Apply the comparison ops of a leaf to its value; no op = truthy."""
+    sp = n["spec"]
+    ops = [o for o in WT_OPS if o in sp]
+    if not ops:
+        return bool(v)
+    num = isinstance(v, (int, float)) and not isinstance(v, bool)
+    for o in ops:
+        a = sp[o]
+        if o == "exists":
+            ok = (v is not None) == bool(a)
+        elif o == "eq":
+            ok = v == a
+        elif o == "ne":
+            ok = v != a
+        elif o == "in":
+            ok = isinstance(a, list) and v in a
+        elif o == "match":
+            ok = isinstance(v, str) and fnmatch.fnmatch(v.lower(), str(a).lower())
+        elif o == "within":
+            of = sp["of"]
+            if of == "actor":
+                ref = wt_pos(wt_path(snap["state"] if isinstance(snap["state"], dict) else None, "actor.position"))
+            elif isinstance(of, int):
+                o2, _ = wt_obj(snap["objects"].get(of))
+                ref = wt_pos((o2 or {}).get("position"))
+            else:
+                ref = wt_pos(of)
+            p = wt_pos(v)
+            n["distance"] = round(sum((a - b) ** 2 for a, b in zip(p, ref)) ** 0.5, 2) if p and ref else None
+            ok = n["distance"] is not None and n["distance"] <= a
+        else:
+            ok = num and isinstance(a, (int, float)) and {"lt": v < a, "le": v <= a, "gt": v > a, "ge": v >= a}[o]
+        if not ok:
+            return False
+    return True
+
+
+def wt_items(inv, pattern):
+    """Count of inventory items whose section matches the glob (backpack groups count their items)."""
+    total = 0
+    for group in ("slots", "belt", "backpack"):
+        for it in (inv or {}).get(group) or []:
+            if isinstance(it, dict) and fnmatch.fnmatch(str(it.get("section", "")).lower(), pattern.lower()):
+                total += it.get("count", 1)
+    return total
+
+
+def wt_eval(n, snap, ctx):
+    """Evaluate a node; polled leaves keep their last result when snap is None (no poll this round)."""
+    k, sp = n["k"], n["spec"]
+    if k in ("all", "any", "not"):
+        r = [wt_eval(c, snap, ctx) for c in n["of"]]
+        n["met"] = all(r) if k == "all" else any(r) if k == "any" else not r[0]
+        return n["met"]
+    inst = ctx["inst"]
+    if k == "event":
+        if "hit" not in n:
+            where = sp.get("where") or {}
+            for e in inst.events.select(since=ctx["ev_since"]):
+                if not fnmatch.fnmatchcase(e.get("type", ""), sp["event"]):
+                    continue
+                d = e.get("data") or {}
+                if all(f in d and (fnmatch.fnmatch(str(d[f]).lower(), w.lower()) if isinstance(w, str) else d[f] == w)
+                       for f, w in where.items()):
+                    n["hit"] = e
+                    break
+        n["met"] = "hit" in n
+        n["value"] = event_out(n["hit"]) if n["met"] else None
+        return n["met"]
+    if k == "log":
+        if "hit" not in n:
+            items = inst.lines(since=n.get("pos", ctx["log_since"]))
+            for seq, line, _ in items:
+                if n["rx"].search(line):
+                    n["hit"] = {"seq": seq, "line": line[:MAX_LINE_CHARS]}
+                    break
+            if items and "hit" not in n:
+                n["pos"] = items[-1][0]
+        n["met"] = "hit" in n
+        n["value"] = n.get("hit")
+        return n["met"]
+    if k == "hung":
+        n["met"], n["value"] = inst.hung, {"frame_stall_s": inst.stall_s} if inst.hung else None
+        return n["met"]
+    if k == "crash":
+        c = inst.crash_event is not None or inst.crash is not None
+        n["met"], n["value"] = c, wt_crash(inst) if c else None
+        return n["met"]
+    if snap is None:
+        return n["met"]
+    if k == "frames":
+        f = (snap["hb"] or {}).get("frame")
+        if f is not None:
+            n.setdefault("base", f)
+            n["value"] = f - n["base"]
+        n["met"] = n["value"] is not None and n["value"] >= sp["frames"]
+        return n["met"]
+    if snap["error"] or snap["loading"] or inst.hung:
+        n["met"], n["value"] = False, snap["error"] or ("loading" if snap["loading"] else "hung")
+        return False
+    st = snap["state"]
+    if isinstance(st, Exception):
+        st = None
+        n["value"] = f"state.get failed: {snap['state']}"
+    mode = (st or {}).get("mode")
+    if k == "in_control":
+        pr = snap["probe"]
+        if st is None or mode in ("loading", "main_menu") or isinstance(pr, Exception) or not pr:
+            n["met"] = False
+            n["value"] = {"mode": mode, "probe": str(pr) if isinstance(pr, Exception) else None}
+            return False
+        r = (pr.get("results") or []) + ["", "", ""]
+        n["value"] = {"mode": mode, "level": r[0] or None, "first_update": r[1] == "true", "alive": r[2] == "true"}
+        n["met"] = bool(r[0]) and r[1] == "true" and r[2] == "true" and (sp["in_control"] in (True, r[0]))
+        return n["met"]
+    if k in ("loaded", "mode", "dialog", "sim_ms", "game_clock", "state", "has_item") and st is None:
+        n["met"] = False
+        return False
+    if k == "loaded":
+        n["met"], n["value"] = mode != "loading", mode
+    elif k == "mode":
+        want = sp["mode"] if isinstance(sp["mode"], list) else [sp["mode"]]
+        n["value"] = mode if mode != "console" else f"console (under: {st.get('under_console')})"
+        n["met"] = any(fnmatch.fnmatchcase(str(mode), w) for w in want)
+    elif k == "dialog":
+        d = wt_path(st, "ui.dialog")
+        hit = isinstance(d, dict) and any(isinstance(x, str) and fnmatch.fnmatch(x.lower(), sp["dialog"].lower())
+                                          for x in d.values())
+        n["value"] = d
+        n["met"] = hit if sp.get("open", True) else not hit
+    elif k in ("sim_ms", "game_clock"):
+        key = "time_global_ms" if k == "sim_ms" else "game_time_ms"
+        t = wt_path(st, f"stats.{key}")
+        if t is None:
+            n["met"], n["value"] = False, "no level" if k == "game_clock" else None
+            return False
+        if "base" not in n or t < n["base"]:  # earlier save loaded: count from here
+            n["base"] = t
+            if k == "game_clock":
+                n["need"] = (n["target_ms"] - t % 86400000) % 86400000
+        if k == "sim_ms":
+            n["value"] = t - n["base"]
+            n["met"] = n["value"] >= sp["sim_ms"]
+        else:
+            n["value"] = (wt_path(st, "world.game_time") or "")[11:16] or None
+            n["met"] = t - n["base"] >= n["need"]
+    elif k == "state":
+        n["value"] = wt_path(st, sp["state"])
+        n["met"] = wt_ops(n, n["value"], snap)
+    elif k == "has_item":
+        n["value"] = wt_items(st.get("inventory"), sp["has_item"])
+        n["met"] = wt_ops(n, n["value"], snap)
+    elif k == "object":
+        o, problem = wt_obj(snap["objects"].get(sp["object"]))
+        if problem:
+            n["met"], n["value"] = False, problem
+            return False
+        n["value"] = {f: o.get(f) for f in ("id", "kind", "section", "name", "alive", "position", "distance", "offline")
+                      if f in o} if o else None
+        how = sp.get("is")
+        if "field" in sp or any(x in sp for x in WT_OPS):
+            v = wt_path(o, sp["field"]) if "field" in sp else (o or {}).get("position")
+            if "field" in sp:
+                n["value"] = {"id": sp["object"], sp["field"]: v}
+            n["met"] = o is not None and wt_ops(n, v, snap) and (how is None or wt_is(o, how))
+        else:
+            n["met"] = wt_is(o, how or "exists")
+    elif k == "count":
+        r = snap["counts"].get(json.dumps(n["params"], sort_keys=True))
+        if isinstance(r, Exception) or not isinstance(r, dict) or not r.get("available"):
+            n["met"] = False
+            n["value"] = str(r) if isinstance(r, Exception) else (r or {}).get("reason")
+            return False
+        total = r.get("total", 0) + (r.get("offline_total") or 0)
+        n["value"] = {"total": total, "counts": r.get("counts")}
+        n["met"] = wt_ops(n, total, snap)
+    elif k == "lua":
+        r = snap["lua"].get(sp["lua"])
+        if isinstance(r, Exception):
+            if "script engine is not ready" in str(r):
+                n["met"], n["value"] = False, "script engine not ready"
+                return False
+            raise WaitAbort(str(r))
+        res = (r or {}).get("results") or []
+        if res[:1] == ["E"]:
+            raise WaitAbort(res[1] if len(res) > 1 else "error")
+        n["value"] = res[2] if len(res) > 2 else None
+        n["met"] = res[1:2] == ["1"]
+    return n["met"]
+
+
+def wt_is(o, how):
+    if how == "gone":
+        return o is None
+    if o is None:
+        return False
+    return {"exists": True, "alive": o.get("alive") is True, "dead": o.get("alive") is False,
+            "online": not o.get("offline"), "offline": bool(o.get("offline"))}[how]
+
+
+def wt_crash(inst):
+    c = inst.crash or {}
+    ev = inst.crash_event or {}
+    return {"reason": c.get("reason") or ev.get("reason"), "exit_code": inst.exit_code,
+            "exit_code_name": c.get("exit_code_name") or (exit_code_name(inst.exit_code) if inst.dead else None),
+            "stack": (c.get("stack") or compact_stack(ev.get("stack") or ""))[:3000] or None,
+            "dump": c.get("dump") or ev.get("dump"), "note": "full record: game_last_crash"}
+
+
+def wt_leaves(n, negated=False):
+    if n["k"] in ("all", "any", "not"):
+        return [x for c in n["of"] for x in wt_leaves(c, negated != (n["k"] == "not"))]
+    return [{"cond": n["spec"], "met": n["met"], "value": n["value"],
+             **({"distance": n["distance"]} if "distance" in n else {}), **({"negated": True} if negated else {})}]
+
+
+def wait_run(inst, until, fail_on, timeout_s, since, log_since, poll_ms):
+    if not 0 <= timeout_s <= 3600:
+        raise ValueError("timeout_s must be 0..3600")
+    if not 10 <= poll_ms <= 5000:
+        raise ValueError("poll_ms must be 10..5000")
+    root = wt_compile(until)
+    fails = [wt_compile(f, "fail_on") for f in (fail_on or [])]
+    nodes = [x for r in [root, *fails] for x in wt_nodes(r)]
+    need = wt_needs(nodes)
+    ctx = {"inst": inst, "ev_since": inst.events.last_seq if since is None else int(since),
+           "log_since": inst.last_seq if log_since is None else int(log_since)}
+    t0 = time.perf_counter()
+    deadline, poll_s = t0 + timeout_s, poll_ms / 1000
+    start = last = None
+    polls, last_poll = 0, -1e9
+
+    def result(met, failed=None, timed_out=False):
+        end = last
+        if not inst.dead and inst.crash_event is None and (end is None or time.perf_counter() - last_poll > poll_s):
+            end = wt_clock(wt_poll(inst, {"state": None, "probe": False, "objects": (), "counts": {}, "lua": ()},
+                                   1.0, True))
+        out = {"instance": inst.id, "met": met, "failed_on": failed, "timed_out": timed_out,
+               "elapsed_s": round(time.perf_counter() - t0, 3), "polls": polls}
+        for key, name, scale in (("frame", "frames", 1), ("time_global_ms", "sim_ms", 1),
+                                 ("game_time_ms", "game_s", 1000)):
+            a, b = (start or {}).get(key), (end or {}).get(key)
+            out[name] = None if a is None or b is None else round((b - a) / scale, 3) if scale > 1 else b - a
+        out["mode"] = (end or {}).get("mode")
+        out["conditions"] = wt_leaves(root)
+        hits = [x["hit"]["seq"] for x in nodes if x["k"] == "event" and x["met"] and "hit" in x]
+        out["event_seq"] = max(hits) if hits and (met or failed) else max(ctx["ev_since"], ctx.get("ev_end", 0))
+        lh = [x["hit"]["seq"] for x in nodes if x["k"] == "log" and x["met"] and "hit" in x]
+        out["log_seq"] = max(lh) if lh and (met or failed) else max(ctx["log_since"], ctx.get("log_end", 0))
+        return out
+
+    while True:
+        crashed = inst.crash_event is not None or inst.dead
+        snap = None
+        if not crashed and (need["polled"] or start is None) and time.perf_counter() - last_poll >= poll_s:
+            snap = wt_poll(inst, need, deadline - time.perf_counter(), start is None)
+            polls, last_poll = polls + 1, time.perf_counter()
+            clk = wt_clock(snap)
+            if clk["frame"] is not None:
+                last = {**(last or {}), **{k: v for k, v in clk.items() if v is not None}}
+                if start is None:
+                    start = clk
+                    st = snap["state"] if isinstance(snap["state"], dict) else {}
+                    if need["time"] and wt_path(st, "ui.mcp_paused"):
+                        tg = inst.call("time.get", timeout=5)
+                        if tg.get("applied") and not tg.get("steps_left"):
+                            raise ValueError("the game is MCP-paused: simulation / game time does not advance, so a "
+                                             "sim_ms or game_clock wait would never end; use game_step(ms=...) or "
+                                             "game_time(pause=false) first")
+        ctx["ev_end"], ctx["log_end"] = inst.events.last_seq, inst.last_seq
+        try:
+            failed = next((f for f in fails if wt_eval(f, snap, ctx)), None)
+            met = failed is None and wt_eval(root, snap, ctx)
+        except WaitAbort as e:
+            return result(False, {"cond": "lua_error", "error": str(e)[:4000]})
+        if failed:
+            return result(False, {"cond": failed["spec"], "conditions": wt_leaves(failed)})
+        if met:
+            return result(True)
+        if crashed:
+            return result(False, {"cond": "crash" if inst.crash_event is not None or inst.crash else "exit",
+                                  "value": wt_crash(inst)})
+        now = time.perf_counter()
+        if now >= deadline:
+            return result(False, timed_out=True)
+        wait = (poll_s - (now - last_poll)) if need["polled"] else 0.25
+        with inst.wake:  # the reader notifies under this lock after updating the buffers: no missed wake-up
+            if inst.events.last_seq == ctx["ev_end"] and inst.last_seq == ctx["log_end"]:
+                inst.wake.wait(max(0.001, min(wait, deadline - now)))
+
+
+@tool
+async def game_wait(until: str | dict | list, instance: str | None = None, timeout_s: float = 30,
+                    fail_on: list | None = None, since: int | None = None, log_since: int | None = None,
+                    poll_ms: int = 50) -> dict:
+    """Block until a condition holds (or at once if it already does), instead of sleeping and looking.
+
+    until: a condition. Strings: "in_control" (level loaded, actor alive, first update done, no load - what
+    game_teleport waits for), "loaded" (no load in progress), "main_menu", "hung", "crash", or an event type / glob
+    (next such event, e.g. "actor_died", "task_*"). Objects (exactly one main key each):
+    {"in_control": "l01_escape"} (on that level; a new game is in control on fake_start first) | {"mode": "dialog"} or a list of modes (game_state mode: in_game,
+    dialog, dead, paused, main_menu, in_game_menu, console, tutorial, loading) | {"dialog": "talk"} (a dialog whose
+    kind/class/script_class/script_mode/menu_mode matches the glob is open; "open": false = none is) |
+    {"event": "task_given", "where": {"id": "my_task"}} (data fields; strings are globs) | {"log": "regex"} |
+    {"sim_ms": 5000} (simulation time; follows game_time sim_speed and game_step) | {"frames": 100} |
+    {"game_clock": "21:00"} (game clock reaches HH:MM, next day if already past) |
+    {"state": "actor.health", "lt": 0.5} (any game_state path, sections inventory./tasks./stats. fetched as needed) |
+    {"has_item": "wpn_ak74*"} (inventory count; ops apply, default >= 1) |
+    {"object": 1234, "is": "dead"} (exists, gone, alive, dead, online, offline; default exists) |
+    {"object": 1234, "within": 5, "of": [x,y,z] | "actor" | id} | {"object": 1234, "field": "health", "lt": 0.3} |
+    {"count": {"kinds": ["monster"], "radius": 50, "alive": true, "hostile_only": true}, "eq": 0} (game_objects
+    filter: kinds, pattern, radius, alive, hostile_only, visible_only, position, offline) |
+    {"lua": "db.actor:money() > 5000"} (expression or chunk with return; truthy = met; value = tostring; a Lua
+    error aborts the wait with failed_on lua_error) |
+    {"all": [...]} / {"any": [...]} / {"not": {...}}; a plain list = all.
+    Ops for state/has_item/object/count: eq, ne, lt, le, gt, ge, in (list), match (glob), exists (bool),
+    within (metres, with of); no op = truthy.
+    fail_on: conditions that abort with met false and failed_on, e.g. ["script_error", "actor_died", "hung"]. A crash
+    or game exit always ends the wait at once (failed_on crash/exit with the crash record).
+    since: event seq; event conditions only match events with seq > since (default: the newest when the call starts).
+    Chain waits with the returned event_seq (the matched event's seq) so nothing is missed. log_since / log_seq: the
+    same for log lines. timeout_s (30, max 3600): a timeout is a normal result: met false, timed_out true,
+    conditions with the last observed values. poll_ms (50): state/object/Lua conditions are polled (one batched
+    engine round trip, one frame); events and log lines are pushed and wake the wait at once. During a level load
+    polled conditions read "loading" and the wait goes on. sim_ms / game_clock while MCP-paused (no game_step
+    running) is refused: time would never advance.
+    Result: met, failed_on, timed_out, elapsed_s, frames, sim_ms, game_s, polls, mode, conditions [{cond, met, value,
+    distance?}] (the evidence), event_seq, log_seq."""
+    inst = get(instance)
+    return await run(wait_run, inst, until, fail_on, float(timeout_s), since, log_since, int(poll_ms))
 
 
 def main():

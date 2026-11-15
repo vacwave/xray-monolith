@@ -122,7 +122,14 @@ namespace
 		xr_vector<xr_string> results;
 		xr_string error;
 		bool ok = false;
-		xr_string lines = mcp::run_logged([&]() { ok = run(L, code, results, error); });
+		// quiet: no exec markers / line capture (game_wait polls predicates every few frames)
+		s64 quiet = 0;
+		mcp::get_int_param(params, "quiet", quiet);
+		xr_string lines = "\"lines\":[],\"truncated\":0";
+		if (quiet)
+			ok = run(L, code, results, error);
+		else
+			lines = mcp::run_logged([&]() { ok = run(L, code, results, error); });
 		if (!ok)
 		{
 			out = error;
