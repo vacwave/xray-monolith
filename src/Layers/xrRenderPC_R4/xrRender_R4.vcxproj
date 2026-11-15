@@ -364,6 +364,13 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
+  <!-- NVIDIA DLSS SDK: NGX static lib (dynamic CRT) is merged into this lib -->
+  <ItemDefinitionGroup>
+    <Lib>
+      <AdditionalDependencies>nvsdk_ngx_d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(SolutionDir)3rd party\dlss\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Lib>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="..\..\Include\xrRender\ApplicationRender.h" />
     <ClInclude Include="..\..\Include\xrRender\ConsoleRender.h" />
@@ -562,6 +569,7 @@
     <ClInclude Include="light_gi.h" />
     <ClInclude Include="r2_types.h" />
     <ClInclude Include="r4.h" />
+    <ClInclude Include="r4_dlss.h" />
     <ClInclude Include="r4_rendertarget.h" />
     <ClInclude Include="r4_rendertarget_wallmarks.h" />
     <ClInclude Include="R_Backend_LOD.h" />
@@ -761,6 +769,7 @@
     <ClCompile Include="light_GI.cpp" />
     <ClCompile Include="r2_test_hw.cpp" />
     <ClCompile Include="r4.cpp" />
+    <ClCompile Include="r4_dlss.cpp" />
     <ClCompile Include="r4_loader.cpp" />
     <ClCompile Include="r4_rendertarget.cpp" />
     <ClCompile Include="r4_rendertarget_accum_direct.cpp" />
@@ -816,6 +825,12 @@
       <Project>{ca0649dd-d089-423a-981c-46b57a884eb9}</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- DLSS runtime, loaded by NGX from the game exe's folder -->
+    <CopyFileToFolders Include="$(SolutionDir)3rd party\dlss\bin\nvngx_dlss.dll">
+      <DestinationFolders>$(xrGameDir)bin_dbg</DestinationFolders>
+    </CopyFileToFolders>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

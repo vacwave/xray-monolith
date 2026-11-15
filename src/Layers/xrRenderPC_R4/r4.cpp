@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "r4.h"
+#include "r4_dlss.h"
 #include "../xrRender/fbasicvisual.h"
 #include "../../xrEngine/xr_object.h"
 #include "../../xrEngine/CustomHUD.h"
@@ -543,10 +544,12 @@ void CRender::create()
 	FluidManager.SetScreenSize(Device.dwWidth, Device.dwHeight);
 
 	Device.ModelDefferClear = xr_make_delegate(Models, &CModelPool::DeleteQueuedDeffer);
+	dlss::create(HW.pDevice, Device.dwWidth, Device.dwHeight);
 }
 
 void CRender::destroy()
 {
+	dlss::destroy();
 	m_bMakeAsyncSS = false;
 	FluidManager.Destroy();
 	GMBase.destroy();
@@ -590,6 +593,7 @@ void CRender::reset_end()
 	//-AVO
 
 	FluidManager.SetScreenSize(Device.dwWidth, Device.dwHeight);
+	dlss::resize(Device.dwWidth, Device.dwHeight);
 
 	// Set this flag true to skip the first render frame,
 	// that some data is not ready in the first frame (for example device camera position)

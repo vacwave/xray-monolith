@@ -213,6 +213,9 @@
     <ClInclude Include="r4.h">
       <Filter>Core</Filter>
     </ClInclude>
+    <ClInclude Include="r4_dlss.h">
+      <Filter>Core</Filter>
+    </ClInclude>
     <ClInclude Include="..\xrRender\r__dsgraph_types.h">
       <Filter>Core</Filter>
     </ClInclude>
@@ -817,6 +820,9 @@
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="r4.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="r4_dlss.cpp">
       <Filter>Core</Filter>
     </ClCompile>
     <ClCompile Include="r4_loader.cpp">
