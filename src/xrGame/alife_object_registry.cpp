@@ -150,5 +150,31 @@ void CALifeObjectRegistry::load(IReader& file_stream)
 		add(tpSE_Abstract);
 	}
 
+	// drop objects whose parent wasn't loaded (e.g. its section no longer exists), repeat for nested children
+	u32 orphan_count = 0;
+	for (bool removed = true; removed;)
+	{
+		removed = false;
+		for (OBJECT_REGISTRY::iterator I = m_objects.begin(); I != m_objects.end();)
+		{
+			CSE_ALifeDynamicObject* object = (*I).second;
+			if (object->ID_Parent == 0xffff || m_objects.find(object->ID_Parent) != m_objects.end())
+			{
+				++I;
+				continue;
+			}
+
+			Msg("! Can't load object '%s' [%d]: its parent [%d] wasn't loaded", object->name_replace(), object->ID,
+			    object->ID_Parent);
+			I = m_objects.erase(I);
+			xr_delete(object);
+			removed = true;
+			++orphan_count;
+		}
+	}
+
+	if (orphan_count)
+		Msg("! %d objects without a loaded parent are skipped", orphan_count);
+
 	Msg("* %d objects are successfully loaded", m_objects.size());
 }
