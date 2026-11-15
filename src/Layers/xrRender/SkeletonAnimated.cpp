@@ -206,20 +206,29 @@ u16 CKinematicsAnimated::LL_PartID(LPCSTR B)
 }
 
 // cycles
+MotionID CKinematicsAnimated::FindCycle(const char* N)
+{
+	if (!m_cycle_lookup || !N)
+		return MotionID();
+
+	SCycleLookup& L = *m_cycle_lookup;
+	std::call_once(L.built, [&]()
+	{
+		// highest slot first, emplace keeps the first one: same pick as the old reverse slot scan
+		for (int k = int(m_Motions.size()) - 1; k >= 0; --k)
+		{
+			for (const auto& it : *m_Motions[k].motions.cycle())
+				L.cycles.emplace(std::string_view(it.first.c_str(), it.first.size()), MotionID(u16(k), it.second));
+		}
+	});
+
+	auto I = L.cycles.find(std::string_view(N));
+	return I != L.cycles.end() ? I->second : MotionID();
+}
+
 MotionID CKinematicsAnimated::ID_Cycle_Safe(LPCSTR N)
 {
-	MotionID motion_ID;
-	for (int k = int(m_Motions.size()) - 1; k >= 0; --k)
-	{
-		shared_motions* s_mots = &m_Motions[k].motions;
-		accel_map::const_iterator I = s_mots->cycle()->find(LPSTR(N));
-		if (I != s_mots->cycle()->end())
-		{
-			motion_ID.set(u16(k), I->second);
-			break;
-		}
-	}
-	return motion_ID;
+	return FindCycle(N);
 }
 
 MotionID CKinematicsAnimated::ID_Cycle(shared_str N)
@@ -231,18 +240,7 @@ MotionID CKinematicsAnimated::ID_Cycle(shared_str N)
 
 MotionID CKinematicsAnimated::ID_Cycle_Safe(shared_str N)
 {
-	MotionID motion_ID;
-	for (int k = int(m_Motions.size()) - 1; k >= 0; --k)
-	{
-		shared_motions* s_mots = &m_Motions[k].motions;
-		accel_map::const_iterator I = s_mots->cycle()->find(N);
-		if (I != s_mots->cycle()->end())
-		{
-			motion_ID.set(u16(k), I->second);
-			break;
-		}
-	}
-	return motion_ID;
+	return FindCycle(N.c_str());
 }
 
 MotionID CKinematicsAnimated::ID_Cycle(LPCSTR N)
@@ -716,6 +714,7 @@ void CKinematicsAnimated::Copy(dxRender_Visual* P)
 	CKinematicsAnimated* pFrom = (CKinematicsAnimated*)P;
 	PCOPY(m_Motions);
 	PCOPY(m_Partition);
+	PCOPY(m_cycle_lookup);
 
 	IBlend_Startup();
 }
@@ -914,6 +913,7 @@ void CKinematicsAnimated::Load(const char* N, IReader* data, u32 dwFlags)
 	}
 
 	R_ASSERT2(m_Motions.size(), make_string("section '%s'\nmodel '%s'", current_player_hud_sect.c_str(), N).c_str());
+	m_cycle_lookup = xr_make_shared<SCycleLookup>();
 
 	m_Partition = m_Motions[0].motions.partition();
 	m_Partition->load(this, N);
