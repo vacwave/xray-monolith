@@ -302,7 +302,8 @@ void destroySettings()
 
 void destroyConsole()
 {
-	Console->Execute("cfg_save");
+	if (!hidden_mode()) // keep the user's user.ltx untouched
+		Console->Execute("cfg_save");
 	Console->Destroy();
 	xr_delete(Console);
 }
@@ -1047,6 +1048,7 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 #endif // DEDICATED_SERVER
 
 	// Title window
+	if (!hidden_mode())
     logoWindow = CreateDialog(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_STARTUP), 0, logDlgProc);
    
 	HWND logoPicture = GetDlgItem(logoWindow, IDC_STATIC_LOGO);

@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "hidden_mode.h"
 #include "resource.h"
 #include "dedicated_server_only.h"
 
@@ -69,6 +70,9 @@ PROTECT_API void CRenderDevice::Initialize()
 		SetRect(&rc, 0, 0, 640, 480);
 		AdjustWindowRect(&rc, m_dwWindowStyle, FALSE);
 
+		if (hidden_mode())
+			m_hWnd = hidden_mode_create_window(hInstance, wndclass);
+		else
 		// Create the render window
 		m_hWnd = CreateWindowEx(WS_EX_TOPMOST,
 		                        wndclass, "S.T.A.L.K.E.R.: Anomaly", m_dwWindowStyle,

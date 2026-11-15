@@ -307,6 +307,7 @@ DEFINE_VECTOR(xr_rtoken, RTokenVec, RTokenVecIt);
 
 #include "net_utils.h"
 #include "xrParams.h"
+#include "xrHiddenMode.h"
 
 #include "_thread_types.h"
 

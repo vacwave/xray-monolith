@@ -1185,6 +1185,8 @@ BOOL CHW::support(D3DFORMAT fmt, DWORD type, DWORD usage)
 
 void CHW::updateWindowProps(HWND m_hWnd)
 {
+    if (hidden_mode())
+        return; // the window stays hidden, never takes focus or the cursor
     BOOL bWindowed = (g_screenmode != 2);
 
     // Set window properties depending on what mode were in.

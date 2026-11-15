@@ -132,5 +132,6 @@ void CUICursor::SetUICursorPosition(Fvector2 pos)
 	p.y = iFloor(vPos.y / (UI_BASE_HEIGHT / (float)Device.clientHeight));
 	if (m_b_use_win_cursor)
 		ClientToScreen(Device.m_hWnd, (LPPOINT)&p);
-	SetCursorPos(p.x, p.y);
+	if (!hidden_mode())
+		SetCursorPos(p.x, p.y);
 }
