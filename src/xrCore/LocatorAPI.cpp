@@ -263,12 +263,18 @@ void CLocatorAPI::Register(LPCSTR name, u32 vfs, u32 crc, u32 ptr, u32 size_real
 	xr_strcpy(temp, sizeof(temp), desc.name);
 	string_path path;
 	string_path folder;
+	string_path self;
+	xr_strcpy(self, sizeof(self), desc.name);
 	u32 vfs_id = vfs;
 	while (temp[0] && temp[1])
 	{
 		_splitpath(temp, path, folder, 0, 0);
 		xr_strcat(path, folder);
-		if (!exist(path))
+		const bool found = exist(path);
+		// during init entries are only added here, so an existing parent already has all its parents
+		if (found && !m_Flags.is(flReady) && xr_strcmp(path, self))
+			break;
+		if (!found)
 		{
 			desc.name = xr_strdup(path);
 			desc.vfs = vfs_id;
