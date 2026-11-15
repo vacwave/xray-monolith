@@ -3191,6 +3191,7 @@
     </ClCompile>
     <ClCompile Include="level_graph_vertex.cpp" />
     <ClCompile Include="Level_input.cpp" />
+    <ClCompile Include="mcp_input.cpp" />
     <ClCompile Include="Level_load.cpp" />
     <ClCompile Include="level_map_locations.cpp" />
     <ClCompile Include="Level_network.cpp">

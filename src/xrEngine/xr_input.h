@@ -73,6 +73,9 @@ public:
 	sxr_mouse mouse_property;
 	sxr_key key_property;
 	u32 dwCurTime;
+	// Held by MCP input injection (mcp_input.cpp), OR-ed into the async key/button state
+	BOOL mcpKBState[COUNT_KB_BUTTONS];
+	BOOL mcpMouseState[COUNT_MOUSE_BUTTONS];
 
 	void SetAllAcquire(BOOL bAcquire = TRUE);
 	void SetMouseAcquire(BOOL bAcquire);

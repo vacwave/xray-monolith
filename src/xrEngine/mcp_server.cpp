@@ -594,6 +594,11 @@ xr_string to_json_string(LPCSTR s)
 	return dump(json(to_utf8(s))).c_str();
 }
 
+u32 client_id()
+{
+	return conn_id;
+}
+
 void capture_log()
 {
 	if (log_captured)

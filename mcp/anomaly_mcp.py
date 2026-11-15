@@ -1436,6 +1436,8 @@ local a, gave = db.actor, ""
 if FAC then a:set_character_community("actor_" .. FAC, 0, 0) end
 local pda = a:object("device_pda_1") or a:object("device_pda_2") or a:object("device_pda_3")
 if not pda then alife_create_item("device_pda_1", a) gave = "device_pda_1" end
+-- the kit leaves it in the backpack; the 3D PDA key only draws the PDA slot (8)
+if pda and not a:item_in_slot(8) then a:move_to_slot(pda, 8) end
 return level.name(), fmt(a:position()), community(), pda and pda:section() or gave, gave, a:money()
 '''
 
@@ -1548,6 +1550,66 @@ async def game_teleport(instance: str | None = None, faction: str | None = None,
     Unknown level/faction -> error listing the valid ones. Result: level, position, faction, load_s, notes."""
     inst = get(instance)
     return with_error_hint(inst, await run(teleport, inst, faction, level, position, cvars, timeout))
+
+
+# ---------------------------------------------------------------- game_input
+
+def input_run(inst, steps, wait, timeout):
+    """input.run, then poll input.status until done; on timeout everything is released so no key stays stuck."""
+    if not steps:
+        return {"instance": inst.id, **inst.call("input.status", timeout=10)}
+    rid = inst.call("input.run", {"steps": steps}, timeout=10)["id"]
+    if not wait:
+        return {"instance": inst.id, "id": rid, "done": False}
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            res = inst.call("input.status", {"id": rid}, timeout=max(1.0, deadline - time.monotonic()))
+            if res.get("done"):
+                return {"instance": inst.id, **res}
+        except TimeoutError:
+            pass  # main thread blocked (level load): keep waiting until the deadline
+        if time.monotonic() > deadline:
+            rel = inst.call("input.release_all", timeout=10)
+            raise TimeoutError(f"input sequence {rid} not done after {timeout} s; cancelled and released "
+                               f"{rel.get('released')}")
+        time.sleep(0.02)
+
+
+@tool
+async def game_input(steps: list, instance: str | None = None, wait: bool = True, timeout: float = 120) -> dict:
+    """Play keyboard/mouse input like a human, timed per frame by the engine (works silent/minimized, no focus).
+
+    Input goes where real input goes (level, main menu, dialogs, inventory, PDA, console). steps is a timed script:
+    a list runs in SEQUENCE; a list nested in it runs in PARALLEL (a list inside that is a sequence again, ...).
+    Steps (ms = duration; one verb per step):
+      {"action": "forward", "ms": 2000}  hold a game action (bind name) for 2 s; without ms = tap (1 frame);
+                                        "state": "down" / "up" = press / release only (stays held until released).
+      {"key": "ESCAPE"}                 same for a raw key (W, ESCAPE/ESC, RETURN/ENTER, UP, F1, SPACE, LSHIFT,
+                                        MOUSE1..8 / LMB / RMB ...); with ms / state like actions.
+      {"text": "hello"}                 type text (key taps with shift, current keyboard layout) into an edit box.
+      {"look": {"yaw": 90, "pitch": -10}, "ms": 300}  turn the actor camera by degrees (+ = right / up), smoothed.
+      {"look_at": [x, y, z], "ms": 300} / {"look_dir": [dx, dy, dz]}  aim the camera at a world point / direction.
+      {"mouse": {"dx": 40, "dy": 0}, "ms": 200}  raw mouse move in pixels (UI cursor; in game scaled by sensitivity).
+      {"wheel": 1}                      mouse wheel notches (+ = up).   {"wait": 500}  pause 500 ms.
+    Example "walk 2 s while turning 90 deg, then use":
+      [[{"action": "forward", "ms": 2000}, {"look": {"yaw": 90}, "ms": 2000}], {"action": "use"}]
+    Actions: forward back lstrafe rstrafe jump crouch accel sprint_toggle llookout rlookout wpn_fire wpn_zoom
+    wpn_reload use inventory active_jobs (PDA) wpn_1..6 quick_use_1..4 torch night_vision show_detector drop quit
+    (ESC/menu) ... aliases: fire aim zoom reload pda sprint walk menu strafe_left/right lean_left/right. Unknown
+    names fail with the full list; actions resolve to their bound key.
+    wait=True returns when done: {id, done, elapsed_ms, frames, held (keys still down), warning?}; wait=False returns
+    {id} at once. steps=[] returns the status: running sequences and held keys. Keys are released on
+    game_input_release, when the supervisor disconnects, and on timeout (seconds)."""
+    inst = get(instance)
+    return await run(input_run, inst, steps, wait, timeout)
+
+
+@tool
+async def game_input_release(instance: str | None = None) -> dict:
+    """Release every key/button held by game_input and cancel running input sequences: {released, cancelled}."""
+    inst = get(instance)
+    return {"instance": inst.id, **await run(lambda: inst.call("input.release_all", timeout=10))}
 
 
 # ---------------------------------------------------------------- game_screenshot
