@@ -38,7 +38,12 @@ void CALifeSimulatorBase::register_object(CSE_ALifeDynamicObject* object, bool a
 	CSE_ALifeInventoryItem* item = smart_cast<CSE_ALifeInventoryItem*>(object);
 	if (item && item->attached())
 	{
-		CSE_ALifeDynamicObject* II = objects().object(item->base()->ID_Parent);
+		CSE_ALifeDynamicObject* II = objects().object(item->base()->ID_Parent, true);
+		if (!II) // parent skipped on load (e.g. "! Can't create entity": section missing from this game's configs)
+			Debug.fatal(DEBUG_INFO, "[LSS] item [%s][%d] (section %s) has parent id %d, which is not in the saved game; "
+			            "a save made with mods whose sections are missing here? See '! Can't create entity' above",
+			            item->base()->name_replace(), item->base()->ID, item->base()->s_name.c_str(),
+			            item->base()->ID_Parent);
 
 #ifdef DEBUG
 		if (std::find(II->children.begin(),II->children.end(),item->base()->ID) != II->children.end()) {

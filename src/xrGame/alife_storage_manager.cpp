@@ -111,7 +111,7 @@ void CALifeStorageManager::save(LPCSTR save_name_no_check, bool update_name)
 #else // DEBUG
 	Msg("* Game %s is successfully saved to file '%s'", m_save_name, temp);
 #endif // DEBUG
-	mcp_event_game_saved(m_save_name, temp);
+	mcp_event_game_saved(save_name, temp);
 
 	//Alundaio: To get the savegame fname to make our own custom save states
 #ifdef ENGINE_LUA_ALIFE_STORAGE_MANAGER_CALLBACKS

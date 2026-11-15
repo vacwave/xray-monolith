@@ -835,7 +835,7 @@ def info_or_error(inst, timeout=5):
 
 
 def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_args=None, timeout=180,
-           full_dumps=False, hang_timeout=None, load_timeout=None, slot_index=None):
+           full_dumps=False, hang_timeout=None, load_timeout=None, slot_index=None, load=None):
     params = {k: v for k, v in locals().items() if k != "slot_index"}
     exe = Path(exe) if exe else DEFAULT_EXE
     game_root = Path(game_root) if game_root else DEFAULT_GAME_ROOT
@@ -855,6 +855,9 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
         appdata = RUN_DIR / iid / "appdata"
         copied = copy_missing_dlls(game_root, exe.parent)
         seed_appdata(appdata, game_root)
+        if load:  # the save must already be in this slot's appdata (game_saves import_from=...)
+            if " " in load or not (appdata / "savedgames" / (check_load_name(load) + SAVE_EXT)).is_file():
+                raise FileNotFoundError(f"no save {load!r} (without spaces) in {appdata / 'savedgames'}")
         port_file = appdata / "mcp_port"
         port_file.unlink(missing_ok=True)
         args = [str(exe), "-fsltx", str(game_root / "fsgame.ltx"), "-appdata", str(appdata), "-mcp_port", "0"]
@@ -862,6 +865,8 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
             args.append("-showwindow")
         if new_game:
             args += ["-start", "server(all/single/alife/new)", "client(localhost)"]
+        elif load:
+            args += ["-start", f"server({load}/single/alife/load)", "client(localhost)"]
         if extra_args:
             args += extra_args.split() if isinstance(extra_args, str) else list(extra_args)
         p = subprocess.Popen(args, cwd=str(game_root), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -1052,7 +1057,7 @@ def tool(f):
 async def game_launch(exe: str | None = None, game_root: str | None = None, show_window: bool = False,
                       new_game: bool = False, extra_args: str | None = None, timeout: float = 180,
                       full_dumps: bool = False, hang_timeout: float | None = None,
-                      load_timeout: float | None = None) -> dict:
+                      load_timeout: float | None = None, load: str | None = None) -> dict:
     """Launch a game instance (silent/minimized unless show_window) and connect to it.
 
     exe: default <repo>/_build/_game/bin_dbg/AnomalyDX11AVX.exe. game_root: default C:\\Anomaly (C:\\GAMMA counts
@@ -1062,9 +1067,15 @@ async def game_launch(exe: str | None = None, game_root: str | None = None, show
     name, so the last launch wins for all running instances. hang_timeout / load_timeout: seconds of stalled frames
     before the instance is marked hung (defaults 30 / 600 while a level loads).
     Refused when the machine-wide instance cap is reached. If the engine never opens its port, the game is dumped
-    and killed, and the error names the dump."""
-    return await run(launch, exe, game_root, show_window, new_game, extra_args, timeout, full_dumps, hang_timeout,
-                     load_timeout)
+    and killed, and the error names the dump. load: start straight into that save (it must be in the slot's
+    savedgames, e.g. imported earlier by game_saves); returns once the actor is in control (result.load, as
+    game_load)."""
+    t0 = time.time()
+    res = await run(launch, exe, game_root, show_window, new_game, extra_args, timeout, full_dumps, hang_timeout,
+                    load_timeout, None, load)
+    if load:
+        res["load"] = await run(load_wait, instances[res["instance"]], load, 0, 0, t0 + (load_timeout or 600), t0)
+    return res
 
 
 @tool
@@ -1550,6 +1561,337 @@ async def game_teleport(instance: str | None = None, faction: str | None = None,
     Unknown level/faction -> error listing the valid ones. Result: level, position, faction, load_s, notes."""
     inst = get(instance)
     return with_error_hint(inst, await run(teleport, inst, faction, level, position, cvars, timeout))
+
+
+# ---------------------------------------------------------------- game_save / game_load / game_saves
+# Console commands like the stock UI: `save <name>` (the console path skips the UI-only on_before_save_input vetoes:
+# campfire saves, agony/timer conditions), `load <name>` while ALife runs, else `start server(<name>/single/alife/load)`.
+# The engine writes <name>.scoc (Lua marshal data) and <name>.scop, then emits game_saved; the .dds thumbnail follows.
+
+SAVE_EXT = ".scop"
+SAVE_PARTS = (".scop", ".scoc", ".dds")
+SAVE_BAD_CHARS = set('/\\:*?"<>|^()[]%')  # engine valid_saved_game_name
+ENTITY_RX = re.compile(r"! Can't create entity '([^']*)'")
+
+SL_STATE = r'''
+local a = db.actor
+if not (level.present() and a) then return alife() and "noactor" or "menu" end
+local p = a:position()
+return a:alive() and "ok" or "dead", level.name(), string.format("%.2f,%.2f,%.2f", p.x, p.y, p.z), a:money(),
+  string.format("%.3f", a.health)
+'''
+
+SL_RESCAN = 'getFS():rescan_path("$game_saves$") getFS():rescan_pathes()\n'  # the FS caches the file list
+
+SL_INFO = SL_RESCAN + r'''
+local out = {}
+for _, n in ipairs(@NAMES@) do
+  local ok, r = pcall(function()
+    if not valid_saved_game(n) then return "||invalid" end
+    local w = CSavedGameWrapper(n)
+    local Y, M, D, h, m = w:game_time():get(0, 0, 0, 0, 0, 0, 0)
+    return string.format("%s|%04d-%02d-%02d %02d:%02d|%.3f", w:level_name(), Y, M, D, h, m, w:actor_health())
+  end)
+  out[#out + 1] = ok and r or "||error"
+end
+return unpack(out)
+'''
+
+SL_LOAD = SL_RESCAN + r'''
+local n = @NAME@
+-- the death tutorial's stop callback runs `main_menu on`; inside a load that leaves a dead menu window (crash)
+if game.has_active_tutorial() then game.stop_tutorial() return "tutorial" end
+exec_console_cmd("keypress_on_start off")
+if alife() then exec_console_cmd("load " .. n) return "load" end
+device():pause(false)
+exec_console_cmd("disconnect")
+exec_console_cmd("start server(" .. n .. "/single/alife/load) client(localhost)")
+exec_console_cmd("main_menu off")
+return "start"
+'''
+
+
+def lua_str(s):
+    return json.dumps(s, ensure_ascii=False)  # a valid Lua string literal for names without control characters
+
+
+def sl_exec(inst, code, timeout=30, **kw):
+    for k, v in kw.items():
+        code = code.replace(f"@{k.upper()}@", v)
+    res = inst.call("lua.exec", {"code": code}, timeout=timeout)
+    return res["results"], res.get("lines", [])
+
+
+def saves_dir(inst):
+    if not inst.appdata:
+        raise ValueError(f"{inst.id} has no known appdata (attach with appdata=...)")
+    return inst.appdata / "savedgames"
+
+
+def save_names(inst):
+    d = saves_dir(inst)
+    return sorted((p.stem for p in d.glob("*" + SAVE_EXT)), key=lambda n: -(d / (n + SAVE_EXT)).stat().st_mtime) \
+        if d.is_dir() else []
+
+
+def check_load_name(name):
+    if not name or not name.strip() or any(c in SAVE_BAD_CHARS for c in name):
+        raise ValueError(f"bad save name {name!r} (not allowed: {''.join(sorted(SAVE_BAD_CHARS))})")
+    return name.strip()
+
+
+def clean_save_name(name):
+    """New save names: letters, digits, _ - . (others become _), max 64 chars; spaces would not survive -start."""
+    n = re.sub(r"[^A-Za-z0-9_.\-]", "_", (name or "").strip()).strip(".")[:64]
+    if not n:
+        raise ValueError(f"bad save name {name!r}")
+    return n
+
+
+def sl_ready(inst, what):
+    if inst.dead:
+        raise RuntimeError(f"cannot {what}: instance {inst.id} is not running (exit code {inst.exit_code}); "
+                           "use game_restart or game_launch(load=...)")
+    if inst.hung:
+        raise RuntimeError(f"cannot {what}: instance {inst.id} is hung (see game_status)")
+    if inst.call("engine.heartbeat", timeout=5).get("loading"):
+        raise RuntimeError(f"cannot {what}: a level is loading; retry when game_state is no longer 'loading'")
+
+
+def same_save(a, b):
+    a, b = (a or "").lower(), (b or "").lower()
+    return a.removesuffix(SAVE_EXT) == b.removesuffix(SAVE_EXT)
+
+
+def sl_event(inst, types, since, pred, deadline, what):
+    while True:
+        for e in inst.events.select(since, types):
+            if pred(e.get("data") or {}):
+                return e
+        if inst.dead or inst.crash:
+            raise RuntimeError(f"game crashed or exited while waiting for {what}")
+        if time.time() > deadline:
+            raise TimeoutError(f"no {what} in time")
+        time.sleep(0.05)
+
+
+def file_info(p):
+    try:
+        st = p.stat()
+        return {"size": st.st_size, "mtime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime))}
+    except OSError:
+        return None
+
+
+def game_save_run(inst, name, timeout):
+    t0 = time.perf_counter()
+    deadline = time.time() + timeout
+    n = clean_save_name(name)
+    sl_ready(inst, "save")
+    st, _ = sl_exec(inst, SL_STATE)
+    if st[0] == "menu":
+        raise RuntimeError("cannot save: no game is running (main menu); start one with game_teleport or game_load")
+    if st[0] == "noactor":
+        raise RuntimeError("cannot save: the level has no actor yet (loading); retry in a moment")
+    if st[0] == "dead":
+        raise RuntimeError("cannot save: the actor is dead; use game_load to go back to a save")
+    path = saves_dir(inst) / (n + SAVE_EXT)
+    existed = path.is_file()
+    since = inst.events.last_seq
+    res = inst.call("console.exec", {"cmd": f"save {n}"}, timeout=30)
+    bad = [l for l in res.get("lines", []) if "Save failed" in l or "cannot make saved game" in l]
+    if bad:
+        raise RuntimeError("save refused by the engine: " + "; ".join(bad))
+    try:
+        ev = sl_event(inst, ["game_saved"], since, lambda d: same_save(d.get("name"), n), deadline, "game_saved event")
+    except TimeoutError:
+        raise TimeoutError(f"save {n}: no game_saved event within {timeout} s; console: {res.get('lines', [])[-5:]}")
+    save_s = time.perf_counter() - t0
+    dds = path.with_suffix(".dds")
+    for _ in range(40):  # the thumbnail is rendered a frame or two later
+        if dds.is_file():
+            break
+        time.sleep(0.05)
+    return {"instance": inst.id, "name": n, "file": str(path), "size": path.stat().st_size,
+            "parts": {ext[1:]: file_info(path.with_suffix(ext)) for ext in SAVE_PARTS}, "overwritten": existed,
+            "level": st[1], "position": [float(c) for c in st[2].split(",")], "money": int(float(st[3])),
+            "health": float(st[4]), "event_seq": ev["seq"], "save_s": round(save_s, 2),
+            "renamed": n != name or None}
+
+
+def missing_entities(inst, log_since):
+    secs = {}
+    for _, line, _ in inst.lines(since=log_since):
+        m = ENTITY_RX.search(line)
+        if m:
+            secs[m.group(1)] = secs.get(m.group(1), 0) + 1
+    return secs
+
+
+def load_crash(inst, name, log_since, t0):
+    """The crash record for a load that killed the game, plus the save/data mismatch hints from the log."""
+    t = time.time()
+    while time.time() - t < WER_WAIT_S + 10 and not (inst.dead and inst.crash):
+        time.sleep(0.25)
+    secs = missing_entities(inst, log_since)
+    out = {"instance": inst.id, "name": name, "loaded": False, "crashed": True, "alive": not inst.dead,
+           "error": f"the game died while loading {name}: " + (inst.crash["reason"] if inst.crash else
+                                                               f"exit code {inst.exit_code}"),
+           "total_s": round(time.time() - t0, 1)}
+    if secs:
+        top = sorted(secs.items(), key=lambda kv: -kv[1])[:20]
+        out["missing_sections"] = {"count": sum(secs.values()), "distinct": len(secs), "top": dict(top)}
+        out["hint"] = ("the save references object sections that this game's configs do not have (made with mods "
+                       "this instance does not run); load it in the game setup it was made with")
+    out["crash"] = last_crash(inst, 30)
+    return out
+
+
+def load_wait(inst, name, ev_since, log_since, deadline, t0, want_level=None):
+    """After a load command: game_loaded -> level_loaded -> actor_spawned events, then tp_wait's readiness probe."""
+    try:
+        gl = sl_event(inst, ["game_loaded"], ev_since, lambda d: same_save(d.get("name"), name), deadline,
+                      f"game_loaded event for {name}")
+        lv = sl_event(inst, ["level_loaded"], gl["seq"], lambda d: True, deadline, "level_loaded event")
+        level = (lv.get("data") or {}).get("level")
+        sl_event(inst, ["actor_spawned"], lv["seq"], lambda d: True, deadline, "actor_spawned event")
+        tp_wait(inst, level, deadline)
+    except Exception as e:
+        if inst.dead or inst.crash:
+            return load_crash(inst, name, log_since, t0)
+        if isinstance(e, TimeoutError):
+            hb = None
+            try:
+                hb = inst.call("engine.heartbeat", timeout=5)
+            except Exception:
+                pass
+            raise TimeoutError(f"load of {name} not finished in time ({e}); the game is alive" +
+                               (", still loading" if hb and hb.get("loading") else "") +
+                               ": it may finish later (watch game_state), or use game_stop / game_restart") from None
+        raise
+    st, _ = sl_exec(inst, SL_STATE)
+    out = {"instance": inst.id, "name": name, "loaded": True, "level": st[1],
+           "position": [float(c) for c in st[2].split(",")], "money": int(float(st[3])), "health": float(st[4]),
+           "load_s": round(time.time() - t0, 1)}
+    if want_level and want_level != st[1]:
+        out["note"] = f"save header says level {want_level}"
+    secs = missing_entities(inst, log_since)
+    if secs:
+        out["missing_sections"] = {"count": sum(secs.values()), "distinct": len(secs),
+                                   "top": dict(sorted(secs.items(), key=lambda kv: -kv[1])[:20])}
+    return out
+
+
+def game_load_run(inst, name, timeout):
+    t0 = time.time()
+    deadline = t0 + timeout
+    name = check_load_name(name)
+    sl_ready(inst, "load")
+    if not (saves_dir(inst) / (name + SAVE_EXT)).is_file():
+        names = save_names(inst)
+        raise FileNotFoundError(f"no save {name!r} in {saves_dir(inst)}; saves: {names[:20] or 'none'}"
+                                " (game_saves(import_from=...) copies one in)")
+    info, _ = sl_exec(inst, SL_INFO, names="{" + lua_str(name) + "}")
+    level, _, health = info[0].split("|")
+    if health in ("invalid", "error"):
+        raise ValueError(f"save {name!r} is not loadable here: version mismatch or corrupted ({health})")
+    ev_since, log_since = inst.events.last_seq, inst.last_seq
+    how, lines = sl_exec(inst, SL_LOAD, name=lua_str(name))
+    for _ in range(10):  # stopped a tutorial (death screen): load from the menu it opened, a few frames later
+        if how[0] != "tutorial":
+            break
+        time.sleep(0.3)
+        how, lines = sl_exec(inst, SL_LOAD, name=lua_str(name))
+    bad =[l for l in lines if l.startswith("! Cannot") or "ALife simulator has not been started" in l]
+    if bad:
+        raise RuntimeError(f"load of {name} refused: " + "; ".join(bad))
+    out = load_wait(inst, name, ev_since, log_since, deadline, t0, level or None)
+    out["via"] = "load (in game)" if how[0] == "load" else "start server (main menu)"
+    return out
+
+
+def game_saves_run(inst, delete, import_from, import_as, details):
+    d = saves_dir(inst)
+    done = {}
+    if import_from:
+        src = str(import_from)
+        src = src[:-len(SAVE_EXT)] if src.lower().endswith(SAVE_EXT) else src
+        if not Path(src + SAVE_EXT).is_file():
+            raise FileNotFoundError(f"no {src + SAVE_EXT}")
+        dst_name = clean_save_name(import_as) if import_as else check_load_name(Path(src).name)
+        d.mkdir(parents=True, exist_ok=True)
+        copied = []
+        for ext in SAVE_PARTS:  # copy only: the source is never modified
+            if Path(src + ext).is_file():
+                shutil.copy2(src + ext, d / (dst_name + ext))
+                copied.append(ext[1:])
+        done["imported"] = {"name": dst_name, "from": src + SAVE_EXT, "parts": copied}
+    if delete:
+        n = check_load_name(delete)
+        gone = []
+        for ext in SAVE_PARTS:
+            p = d / (n + ext)
+            if p.is_file() and p.resolve().parent == d.resolve():
+                p.unlink()
+                gone.append(ext[1:])
+        if not gone:
+            raise FileNotFoundError(f"no save {n!r} in {d}")
+        done["deleted"] = {"name": n, "parts": gone}
+    names = save_names(inst)
+    saves = []
+    for n in names:
+        p = d / (n + SAVE_EXT)
+        e = {"name": n, **file_info(p)}
+        e["size"] = sum((file_info(p.with_suffix(x)) or {"size": 0})["size"] for x in SAVE_PARTS)
+        saves.append(e)
+    note = None
+    if details and saves:
+        try:
+            sl_ready(inst, "read save headers")
+            info, _ = sl_exec(inst, SL_INFO, names="{" + ",".join(lua_str(n) for n in names) + "}", timeout=60)
+            for e, r in zip(saves, info):
+                lv, gt, hp = r.split("|")
+                if hp in ("invalid", "error"):
+                    e.update(valid=False, reason="version mismatch or corrupted" if hp == "invalid"
+                             else "header read failed")
+                else:
+                    e.update(level=lv or None, game_time=gt, actor_health=float(hp))
+        except Exception as ex:
+            note = f"no levels/game times: {ex}"
+    return {"instance": inst.id, "dir": str(d), **done, "count": len(saves), "saves": saves, "note": note}
+
+
+@tool
+async def game_save(name: str, instance: str | None = None, timeout: float = 60) -> dict:
+    """Save the running game as `name` in the instance's own appdata (savedgames); returns once the save is on disk:
+    file, size, parts (scop/scoc/dds), level, position, money, health, save_s. Name: letters, digits, _ - . (others
+    become _; renamed is set then); an existing save of that name is overwritten. Uses the console `save` command, so
+    the UI-only save vetoes (campfire-only saves, Agony/timer conditions, emission/combat checks) do not apply.
+    Errors: main menu without a game, loading, actor dead."""
+    inst = get(instance)
+    return with_error_hint(inst, await run(game_save_run, inst, name, timeout))
+
+
+@tool
+async def game_load(name: str, instance: str | None = None, timeout: float = 600) -> dict:
+    """Load save `name` (from game_saves) from the main menu or a running game, also while the actor is dead; returns
+    once the actor is in control on the loaded level (same check as game_teleport): level, position, money, health,
+    load_s, via. Missing save -> error listing the saves. If the game dies during the load the result has loaded=false,
+    the crash record and, when the log shows skipped objects ("Can't create entity"), missing_sections: the save was
+    made with mods whose sections this game does not have. Timeout -> error; the load may still finish later."""
+    inst = get(instance)
+    return with_error_hint(inst, await run(game_load_run, inst, name, timeout))
+
+
+@tool
+async def game_saves(instance: str | None = None, delete: str | None = None, import_from: str | None = None,
+                     import_as: str | None = None, details: bool = True) -> dict:
+    """List the instance's saves, newest first: name, size (all parts), mtime, and with details (game running, not
+    loading) level, game_time, actor_health read from the save. import_from: a .scop path (e.g.
+    C:\\Anomaly\\appdata\\savedgames\\1.scop) copied with its .scoc/.dds into the instance's savedgames, optionally as
+    import_as (the source is never modified). delete: removes that save (all parts) from the instance's own
+    savedgames only."""
+    return await run(game_saves_run, get(instance), delete, import_from, import_as, details)
 
 
 # ---------------------------------------------------------------- game_state
