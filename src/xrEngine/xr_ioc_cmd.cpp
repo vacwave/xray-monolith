@@ -1088,6 +1088,7 @@ extern int g_ai_unlimited_ammo;
 float g_AimLookFactor = 1.f;
 
 int ps_framelimiter = 0;
+int ps_framelimiter_sleep = 1; // 0 = spin, 1 = sleep in menu/pause, 2 = sleep always
 extern u32 g_crosshair_color;
 float g_freelook_z_offset;
 float g_ironsights_factor = 1.25f;
@@ -1320,6 +1321,7 @@ void CCC_Register()
 	CMD1(CCC_HideConsole, "hide");
 
 	CMD4(CCC_Integer, "r__framelimit", &ps_framelimiter, 0, 500);
+	CMD4(CCC_Integer, "r__framelimit_sleep", &ps_framelimiter_sleep, 0, 2);
 	CMD3(CCC_Mask, "rs_refresh_60hz", &psDeviceFlags, rsRefresh60hz);
 	CMD3(CCC_Mask, "dbg_ph_shapes", &psDeviceFlags2, rsDBGDrawPHShapes);
 	CMD3(CCC_Mask, "dbg_ph_bones", &psDeviceFlags2, rsDBGDrawPHBones);
