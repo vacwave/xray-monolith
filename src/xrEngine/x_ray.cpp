@@ -34,6 +34,7 @@
 #include "MonitorList.h"
 #include "renderdoc_integration.h"
 #include "mcp_server.h"
+#include "render.h"
 
 extern "C" void XR_EARLY_INIT();
 
@@ -80,6 +81,7 @@ extern bool init_reshade();
 extern void unregister_reshade();
 extern void GetMonitorResolution(u32& horizontal, u32& vertical);
 extern void GetMonitorPosition(int& x, int& y);
+extern ref_light precache_light;
 
 //ImGui
 #pragma comment(lib, "imgui.lib")
@@ -695,6 +697,13 @@ void Startup()
 	//Reshade
 	if (use_reshade)
 		unregister_reshade();
+
+	// Quit during precache frames: drop its light now, not in static destruction after the spatial DBs and renderer
+	if (precache_light)
+	{
+		precache_light->set_active(false);
+		precache_light.destroy();
+	}
 
 	// Destroy APP
 	xr_delete(g_SpatialSpacePhysic);

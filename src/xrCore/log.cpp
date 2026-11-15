@@ -357,6 +357,9 @@ void xrLogger::InternalPrintRecord()
 
 	{
 		xrCriticalSectionGuard g(&logDataGuard);
+		// Another printer (CloseLog / FlushLogSync vs. the log thread) may have taken the last record
+		if (logData->empty())
+			return;
 		theRecord = logData->front();
 		logData->pop();
 	}

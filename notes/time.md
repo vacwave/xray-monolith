@@ -15,4 +15,4 @@
 - Measured: 500 ms forward hold: real time 1.26-1.27 m, stepped dt 20/10 1.25-1.27 m, dt 33 1.32-1.35 m (hold rounds up to 16 frames = 528 ms). Look +90 exact, fire while stepping uses ammo, input frozen while paused without steps.
 - Measured: game_step(frames 10, input, screenshot 512 px, state) ~770 ms per call with r__framelimit 30 (10 frames = 333 ms of it); paused frame-hook round trips ~33 ms at that cap.
 - Paused screenshots differ only in HUD elements animated in wall time (battery icon, ~1400 px); the 3D world is identical. Hang monitor: frames keep advancing while paused (verified 65 s, hung false).
-- Gotcha (not from this goal): graceful quit sometimes ends with 0xC0000374 heap corruption at ntdll+0x112fc5 during "Destroying Direct3D"; seen 3x (one in a game started before this goal's exe existed), not reproduced in 5 other quits.
+- The 0xC0000374 quits seen during this goal were not time control: quitting within 60 frames of an in-level save load left the precache light to static destruction (fixed in goal 22, see engine.md).
