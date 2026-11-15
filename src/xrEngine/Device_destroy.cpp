@@ -103,7 +103,7 @@ void CRenderDevice::Reset(bool precache)
 		seqResolutionChanged.Process(rp_ScreenResolutionChanged);
 	}
 
-	if (g_screenmode == 1)
+	if (g_screenmode == 1 && !hidden_mode()) // the WS_VISIBLE style would show the hidden window
 	{
 		u32 w, h;
 		int monX, monY;
