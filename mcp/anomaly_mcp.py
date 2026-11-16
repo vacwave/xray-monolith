@@ -816,12 +816,14 @@ def read_port_file(path):
         return None
 
 
-def seed_appdata(appdata, game_root):
+def seed_appdata(appdata, game_root, keep_shader_cache=False):
     appdata.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(TEMPLATE_USER_LTX, appdata / "user.ltx")
     src = game_root / "appdata" / "shaders_cache"
     dst = appdata / "shaders_cache"
-    if src.is_dir() and not dst.exists():
+    if not keep_shader_cache:  # default: the game rebuilds it, so stale shaders never survive a launch
+        shutil.rmtree(dst, ignore_errors=True)
+    elif src.is_dir() and not dst.exists():
         shutil.copytree(src, dst)
 
 
@@ -842,7 +844,8 @@ def info_or_error(inst, timeout=5):
 
 
 def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_args=None, timeout=180,
-           full_dumps=False, hang_timeout=None, load_timeout=None, slot_index=None, load=None):
+           full_dumps=False, hang_timeout=None, load_timeout=None, slot_index=None, load=None,
+           keep_shader_cache=False):
     params = {k: v for k, v in locals().items() if k != "slot_index"}
     exe = Path(exe) if exe else DEFAULT_EXE
     game_root = Path(game_root) if game_root else DEFAULT_GAME_ROOT
@@ -861,7 +864,7 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
         iid = slot.name
         appdata = RUN_DIR / iid / "appdata"
         copied = copy_missing_dlls(game_root, exe.parent)
-        seed_appdata(appdata, game_root)
+        seed_appdata(appdata, game_root, keep_shader_cache)
         if load:  # the save must already be in this slot's appdata (game_saves import_from=...)
             if " " in load or not (appdata / "savedgames" / (check_load_name(load) + SAVE_EXT)).is_file():
                 raise FileNotFoundError(f"no save {load!r} (without spaces) in {appdata / 'savedgames'}")
@@ -1064,7 +1067,8 @@ def tool(f):
 async def game_launch(exe: str | None = None, game_root: str | None = None, show_window: bool = False,
                       new_game: bool = False, extra_args: str | None = None, timeout: float = 180,
                       full_dumps: bool = False, hang_timeout: float | None = None,
-                      load_timeout: float | None = None, load: str | None = None) -> dict:
+                      load_timeout: float | None = None, load: str | None = None,
+                      keep_shader_cache: bool = False) -> dict:
     """Launch a game instance (silent/minimized unless show_window) and connect to it.
 
     exe: default <repo>/_build/_game/bin_dbg/AnomalyDX11AVX.exe. game_root: default C:\\Anomaly (C:\\GAMMA counts
@@ -1076,10 +1080,11 @@ async def game_launch(exe: str | None = None, game_root: str | None = None, show
     Refused when the machine-wide instance cap is reached. If the engine never opens its port, the game is dumped
     and killed, and the error names the dump. load: start straight into that save (it must be in the slot's
     savedgames, e.g. imported earlier by game_saves); returns once the actor is in control (result.load, as
-    game_load)."""
+    game_load). keep_shader_cache: by default the slot's shaders_cache is deleted before every launch (and
+    game_restart) and the game recompiles it; true keeps it (a new slot is seeded from the game root's cache)."""
     t0 = time.time()
     res = await run(launch, exe, game_root, show_window, new_game, extra_args, timeout, full_dumps, hang_timeout,
-                    load_timeout, None, load)
+                    load_timeout, None, load, keep_shader_cache)
     if load:
         res["load"] = await run(load_wait, instances[res["instance"]], load, 0, 0, t0 + (load_timeout or 600), t0)
     return res

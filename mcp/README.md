@@ -29,7 +29,7 @@ All tools take an optional `instance` (default: the last launched or attached on
 
 | Tool | What it does |
 |---|---|
-| `game_launch` | `exe` (default `<repo>\_build\_game\bin_dbg\AnomalyDX11AVX.exe`), `game_root` (default `C:\Anomaly`), `show_window`, `new_game`, `extra_args`, `timeout`, `full_dumps`, `hang_timeout`, `load_timeout`, `load` (start straight into a save already in the slot's savedgames; waits until the actor is in control, result `load` as game_load) |
+| `game_launch` | `exe` (default `<repo>\_build\_game\bin_dbg\AnomalyDX11AVX.exe`), `game_root` (default `C:\Anomaly`), `show_window`, `new_game`, `extra_args`, `timeout`, `full_dumps`, `hang_timeout`, `load_timeout`, `load` (start straight into a save already in the slot's savedgames; waits until the actor is in control, result `load` as game_load), `keep_shader_cache` (default false: the slot's shader cache is deleted before launch) |
 | `game_attach` | attach to a running `-mcp_port` game by `port` or `appdata` dir |
 | `game_status` | pid, alive, exit code, port, `crashed`, `hung` (+ frame stall, loading), `engine.info`, log rate (lines/s), last lines |
 | `game_list` | instances of this supervisor and the caps |
@@ -97,7 +97,8 @@ capped at 20k chars, and `omitted` says what was left out. The engine itself ret
   (`{"max_vanilla": 3, "max_gamma": 2}`).
 - Instance id = slot (`vanilla-1`, ...). Its appdata is `<repo>\.mcp-run\<id>\appdata` (logs, user.ltx, saves).
 - Every launch copies `mcp/templates/user.ltx` (a low-settings baseline with **`r__framelimit 30`**; set
-  `r__framelimit 0` via `console_exec` for FPS tests) and seeds `shaders_cache` from `<game_root>\appdata` once.
+  `r__framelimit 0` via `console_exec` for FPS tests) and deletes the slot's `shaders_cache` so the game rebuilds it
+  (`keep_shader_cache=true` keeps it and seeds a new slot from `<game_root>\appdata` once).
 - DLLs in `<game_root>\bin` missing next to the exe are copied there first.
 - Args: `-fsltx <game_root>\fsgame.ltx -appdata <dir> -mcp_port 0` (+ `-showwindow`, + `-start server(all/single/alife/new) client(localhost)` for `new_game`).
   Runs are silent (minimized, no focus steal) unless `show_window`.
