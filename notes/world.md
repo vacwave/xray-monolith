@@ -12,3 +12,4 @@
 - Outside a level: `{available:false, reason: no_level|loading|no_actor|bad_position}` (result, not an error); supervisor answers `loading` from engine.heartbeat without waiting.
 - Cost (Garbage, ~1000 online objects): default 0.28 ms, summary r500 0.22 ms, r500 limit 100 0.78 ms, r500 los (30) 0.68 ms, r500 los limit 100 1.6 ms (max 2.0), offline r5000 limit 100 0.96 ms; game_object 0.07 ms; round trip ~30 ms (frame-bound at the 30 fps cap). JSON: 7 KB default, ~25 KB at limit 100.
 - Safety verified: main menu, ~50 calls through new game + level change (loading/fake_start), 200 calls during NPC spawn/kill/release churn, 600 calls -> private bytes +2 MB.
+- game_object on an offline entity of another level (e.g. a task target squad) reports distance/bearing as if it were on the current level and has no level field.
