@@ -17,3 +17,4 @@
 - Disconnect: `mcp::client_id()` (conn_id) is polled in on_frame; any change (client lost or new client) releases all held keys and cancels sequences (logs `* [MCP] input: client changed, releasing N key(s)`). Verified by killing the supervisor mid 30 s hold.
 - Input clock (goal 18): sequences tick on an mcp_input clock = wall ms when MCP time control is unused, simulation ms (dwTimeDelta) while it is in use; frozen while MCP-paused outside step frames (menus/console + 1 frame stay wall-timed). A tap needs 2 step frames. See time.md.
 - `mcp_input::set_driver(tick)` / `hold_key` / `is_held` (ENGINE_API, goal 21): xrGame per-input-frame driver (nav move_to) and keys held through the same held set (released by release_all / client change); see nav.md.
+- `mcp_input::release_count()` (goal 29): bumped by every release_all (input.release_all, client change with keys held); drivers that hold no key (nav.shoot track mode) watch it.

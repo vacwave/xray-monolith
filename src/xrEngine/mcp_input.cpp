@@ -75,7 +75,7 @@ namespace
 	u32 next_id = 1;
 	xr_list<sequence> seqs;
 	xr_vector<held_key> held;
-	u32 last_conn = 0;
+	u32 last_conn = 0, releases = 0;
 	u32 clock = 0, last_wall = 0; // input time: wall ms, or simulation ms while MCP time control is in use
 
 	// accumulated for this frame and delivered once
@@ -276,6 +276,7 @@ namespace
 	json release_all()
 	{
 		json released = held_names();
+		releases++;
 		while (!held.empty())
 			release(held.back().dik);
 		u32 cancelled = 0;
@@ -578,6 +579,11 @@ void hold_key(int dik, bool down)
 bool is_held(int dik)
 {
 	return std::any_of(held.begin(), held.end(), [dik](const held_key& h) { return h.dik == dik; });
+}
+
+u32 release_count()
+{
+	return releases;
 }
 
 void on_frame()

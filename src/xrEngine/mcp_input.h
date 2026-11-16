@@ -26,6 +26,8 @@ namespace mcp_input
 	// Press / release a key through the held-key set (released by input.release_all and on client change)
 	ENGINE_API void hold_key(int dik, bool down);
 	ENGINE_API bool is_held(int dik);
+	// Number of input.release_all runs (incl. client changes with keys held): drivers holding no key watch it
+	ENGINE_API u32 release_count();
 	// CInput::OnFrame hook
 	void on_frame();
 }

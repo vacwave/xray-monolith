@@ -16,7 +16,8 @@ You drive a real Stalker Anomaly / GAMMA game through the `anomaly` MCP tools an
 | Talk to, pick up, open | `game_use(id)`. It aims properly; a raw `use` key often misses. |
 | Hold a conversation | `game_talk` to read everything, `game_talk(id=...)` to choose. Prefer phrase `id` over text: ids are the same on vanilla and GAMMA, texts are not. |
 | Inventory, trade, menus | `game_ui` to find widgets and item cells, `game_ui_click` to click by text, `game_input` for double-click, right-click and drag (`click`, `drag` steps at the cell `center`). |
-| Keys, shooting, looking | `game_input` with action names (`fire`, `reload`, `inventory`, `forward` ...). Keys are the defaults. |
+| Shooting an NPC | `game_shoot(id, part="chest"\|"head", shots=N or until_dead=true)`. It keeps the aim on the target and fires the weapon in hands normally (real spread: misses at range are normal); read `state`, `hits`, `target.health`; `los_blocked` names the blocker. Walk closer with `game_move_to` yourself. |
+| Keys, looking | `game_input` with action names (`fire`, `reload`, `inventory`, `forward` ...). Keys are the defaults. |
 | Quest state | `game_tasks` (stage, target, giver, history), `game_infos` (info portions), events `task_given` / `task_stage` / `task_completed` / `task_failed`. |
 | Set up a scenario fast | `game_spawn`, `game_give`, `game_actor`, `game_kill`, `game_release`, `game_weather`, `game_emission`, `game_teleport(position=...)`. |
 | Wait for something | `game_wait` (events, state, objects, Lua predicate) with `fail_on: ["script_error", "actor_died"]`. Do not poll in a loop or sleep. |

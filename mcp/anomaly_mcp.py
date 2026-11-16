@@ -2524,7 +2524,7 @@ async def game_nav_map(instance: str | None = None, position: list[float] | None
     return await run(nav_map, inst, position, radius, cell, orient, path_to, objects, max_px)
 
 
-def nav_move(inst, p, wait, wait_timeout, method="nav.move_to"):
+def nav_move(inst, p, wait, wait_timeout, method="nav.move_to", status_method="nav.move_status"):
     res = world_call(inst, method, p)
     if res.get("available") is False or res.get("done") or not wait:
         return res
@@ -2532,13 +2532,14 @@ def nav_move(inst, p, wait, wait_timeout, method="nav.move_to"):
     while time.monotonic() < deadline:
         time.sleep(0.1)
         try:
-            res = inst.call("nav.move_status", {}, timeout=5)
+            res = inst.call(status_method, {}, timeout=5)
         except TimeoutError:
             continue  # level load: the mover aborts itself (level_change)
         if res.get("done"):
             return {"instance": inst.id, **res}
+    tool = "game_shoot" if status_method == "nav.shoot_status" else "game_move_to"
     return {"instance": inst.id, **res, "note": f"still running after {wait_timeout} s of wall time (paused or "
-                                                 "stepping?); poll game_move_to(status=True) or stop=True"}
+                                                 f"stepping?); poll {tool}(status=True) or stop=True"}
 
 
 @tool
@@ -2593,6 +2594,39 @@ async def game_use(instance: str | None = None, id: int | None = None, wait_time
         raise ValueError("id required (an online object, e.g. from game_objects)")
     inst = get(instance)
     return await run(nav_move, inst, {"id": int(id)}, True, wait_timeout, "nav.use")
+
+
+@tool
+async def game_shoot(instance: str | None = None, id: int | None = None, part: str = "chest", shots: int = 1,
+                     until_dead: bool = False, burst: int = 3, max_seconds: float = 30, fire: bool = True,
+                     ads: bool = False, wait: bool = True, wait_timeout: float | None = None, status: bool = False,
+                     stop: bool = False) -> dict:
+    """Shoot creature `id` with the weapon in hands like a player: every input frame the engine turns the camera so
+    the weapon's fire ray points at `part` ("chest", "head" or a bone name; the bone's collision shape centre, else
+    the bbox centre) and re-aims after each recoil kick; the fire action is pressed only while that fire ray (the
+    ray bullets leave along before spread) hits the target first. Real ballistics: spread, recoil, ammo, jams and fire
+    modes stay the game's, so misses at range are normal. Automatic fire: bursts of `burst` rounds, released when the
+    aim drifts off; single/burst modes: one press per shot. Empty magazine -> normal reload if spare ammo; jam ->
+    reload (unjams in the engine). ads: aim down sights while shooting. fire=False: track only (keep aiming until
+    max_seconds / stop; use game_input meanwhile). Movement stays yours (game_move_to). Honours MCP pause/game_step.
+    Shot count: `shots` rounds, or until_dead. For the outcome only, game_kill(by_actor=True) is quicker.
+    Result: state done / target_dead / target_gone / los_blocked (blocker: what, id, name, material, distance; held
+    fire 1.5 s) / out_of_range (weapon fire distance) / out_of_ammo / jammed / no_weapon (reason: nothing in hands,
+    knife, binoculars, not a firearm, grenade launcher mode) / timeout / aborted (dialog, actor_dead, level_change,
+    keys_released = game_input_release or disconnect, replaced by game_move_to/game_use, stopped); target {id, name,
+    section, part, bone, position, distance, health_before, health, killer_id, killed_by_actor}, shots, hits and
+    hit_power and hit_bones (the actor's hits on it as the engine registered them), other_hits/other_ids (anything
+    else the actor hit), weapon, ammo {mag_before, total_before, mag, total}, reloads, jams, aim_error_deg,
+    elapsed_ms, frames. wait=False returns at once; status=True polls, stop=True aborts."""
+    inst = get(instance)
+    if status or stop:
+        return {"instance": inst.id, **await run(world_call, inst, "nav.shoot_status", {"stop": int(stop)})}
+    if id is None:
+        raise ValueError("id required (an online creature, e.g. from game_objects)")
+    p = {"id": int(id), "part": str(part), "shots": int(shots), "until_dead": int(until_dead), "burst": int(burst),
+         "timeout_ms": int(max_seconds * 1000), "fire": int(fire), "ads": int(ads)}
+    return await run(nav_move, inst, p, wait, wait_timeout if wait_timeout is not None else max_seconds + 30,
+                     "nav.shoot", "nav.shoot_status")
 
 
 # ---------------------------------------------------------------- game_input

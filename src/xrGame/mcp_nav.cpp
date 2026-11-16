@@ -23,12 +23,22 @@
 #include "HUDManager.h"
 #include "entity_alive.h"
 #include "InventoryOwner.h"
+#include "Inventory.h"
+#include "Weapon.h"
+#include "WeaponKnife.h"
+#include "WeaponBinoculars.h"
+#include "WeaponMagazinedWGrenade.h"
+#include "Actor_Flags.h"
+#include "Hit.h"
+#include "../xrEngine/GameMtlLib.h"
+#include "../Include/xrRender/Kinematics.h"
 #include <queue>
 
 // MCP nav.*: AI-map (level graph) and game-graph queries for agents (read-only), plus a debug overlay of nodes / a path
 // drawn into the 3D view (same line path as Lua debug gizmos: DRender->add_lines, flushed by CLevel::OnRender).
 bool mcp_world_is_door(CGameObject* o); // xrGame/mcp_world.cpp
 LPCSTR mcp_door_state(CGameObject* o, xr_string* json, bool* usable);
+extern void (*g_mcp_on_hit)(CEntity* victim, const SHit* hit); // xrGame/Entity.cpp
 
 namespace
 {
@@ -2219,6 +2229,8 @@ namespace
 		return r.done();
 	}
 
+	void shoot_replace(); // a running nav.shoot ends "replaced": both turn the camera
+
 	bool nav_move_to(LPCSTR params, xr_string& out)
 	{
 		ctx c;
@@ -2231,6 +2243,7 @@ namespace
 		}
 		if (g_mv.active)
 			mover_finish("aborted", "replaced");
+		shoot_replace();
 		s64 id = -1;
 		mcp::get_int_param(params, "id", id);
 		mover_t m;
@@ -2297,6 +2310,7 @@ namespace
 		}
 		if (g_mv.active)
 			mover_finish("aborted", "replaced");
+		shoot_replace();
 		mover_t m;
 		m.id = g_mv.id + 1;
 		m.level = g_pGameLevel->name();
@@ -2334,6 +2348,636 @@ namespace
 			mover_finish("aborted", "stopped");
 		out = mover_json();
 		return true;
+	}
+
+	// ------------------------------------------------------------------ shoot: keep the camera on a bone of a creature (re-aimed
+	// every input frame, so recoil kick is corrected) and fire the equipped weapon through the normal fire / reload actions,
+	// only while the weapon's own fire ray (CActor::GetPick: the ray bullets leave along before dispersion) hits the target first
+
+	struct shot_hits // filled by the CEntity::Hit hook (any thread) under g_hits_lock
+	{
+		u32 hits = 0, other = 0;
+		float power = 0;
+		xr_vector<std::pair<xr_string, u32>> bones; // target bone -> hits
+		xr_vector<u16> others;                      // other objects the actor hit meanwhile (first 8)
+	};
+
+	struct shooter_t
+	{
+		u32 id = 0;
+		bool active = false;
+		LPCSTR state = "idle"; // running, done, target_dead, target_gone, los_blocked, out_of_range, out_of_ammo, jammed, no_weapon, timeout, aborted
+		LPCSTR reason = nullptr;
+		u16 target = u16(-1), wid = u16(-1);
+		xr_string name, section, part, bone, weapon, blocker;
+		const void* level = nullptr; // g_pGameLevel identity: a save load (same level name) ends the shoot too
+		bool fire = true, until_dead = false, ads = false, zoomed = false;
+		u32 want = 1, burst = 3, burst_n = 0, burst_from = 0, timeout_ms = 30000, elapsed = 0, frames = 0, conn = 0, releases = 0;
+		int fire_dik = 0, reload_dik = 0, zoom_dik = 0;
+		bool fire_down = false, tap = false, reload_tap = false, zoom_down = false;
+		u32 shots = 0, reloads = 0, jams = 0, on_frames = 0;
+		int mag = 0, mag_before = -1, total_before = -1, mag_after = -1, total_after = -1;
+		u32 wstate = 0, press_t = 0, release_t = 0, zoom_t = 0, nowpn_t = 0, blocked_t = 0, range_t = 0, los_t = 0;
+		u32 settle_t = 0, unjam_t = 0, unjam_tries = 0, reload_t = 0, reload_tries = 0, dead_t = 0;
+		bool nowpn = false, blocked = false, beyond = false, settling = false, misfire = false, dead = false;
+		float health_before = 0, health = 0, dist = 0, err = 0, bias_y = 0, bias_p = 0;
+		Fvector aim, pos;
+		u16 killer = u16(-1);
+	};
+	shooter_t g_sh;
+	shot_hits g_hits;
+	xrCriticalSection g_hits_lock;
+
+	void shoot_on_hit(CEntity* victim, const SHit* h)
+	{
+		if (!g_sh.active || !g_actor || h->whoID != g_actor->ID() || victim == g_actor)
+			return;
+		xr_string bone;
+		IKinematics* k = victim->Visual() ? victim->Visual()->dcast_PKinematics() : nullptr;
+		if (k && h->boneID < k->LL_BoneCount())
+			bone = k->LL_BoneName_dbg(h->boneID);
+		xrCriticalSectionGuard guard(g_hits_lock);
+		if (victim->ID() != g_sh.target)
+		{
+			g_hits.other++;
+			if (g_hits.others.size() < 8 && std::find(g_hits.others.begin(), g_hits.others.end(), victim->ID()) == g_hits.others.end())
+				g_hits.others.push_back(victim->ID());
+			return;
+		}
+		g_hits.hits++;
+		g_hits.power += h->power;
+		auto it = std::find_if(g_hits.bones.begin(), g_hits.bones.end(), [&bone](const std::pair<xr_string, u32>& b) { return b.first == bone; });
+		if (it != g_hits.bones.end())
+			it->second++;
+		else
+			g_hits.bones.emplace_back(bone, 1);
+	}
+
+	u16 part_bone(CGameObject* o, LPCSTR part)
+	{
+		IKinematics* k = o->Visual() ? o->Visual()->dcast_PKinematics() : nullptr;
+		if (!k)
+			return BI_NONE;
+		static LPCSTR head[] = { "bip01_head", "head", nullptr }, chest[] = { "bip01_spine2", "bip01_spine1", "bip01_spine", "spine", nullptr };
+		LPCSTR* names = !xr_strcmp(part, "head") ? head : !xr_strcmp(part, "chest") ? chest : nullptr;
+		if (!names)
+			return k->LL_BoneID(part);
+		for (; *names; ++names)
+		{
+			u16 b = k->LL_BoneID(*names);
+			if (b != BI_NONE)
+				return b;
+		}
+		return BI_NONE;
+	}
+
+	// world centre of the bone's collision shape (what the pick ray tests), else the bone origin
+	void bone_point(CGameObject* o, u16 b, Fvector& p)
+	{
+		IKinematics* k = o->Visual()->dcast_PKinematics();
+		const SBoneShape& s = k->LL_GetData(b).shape;
+		Fvector l;
+		if (s.type == SBoneShape::stBox)
+			l = s.box.m_translate;
+		else if (s.type == SBoneShape::stSphere)
+			l = s.sphere.P;
+		else if (s.type == SBoneShape::stCylinder)
+			l = s.cylinder.m_center;
+		else
+			l.set(0, 0, 0);
+		Fmatrix m;
+		m.mul_43(o->XFORM(), k->LL_GetTransform(b));
+		m.transform_tiny(p, l);
+	}
+
+	// aim point of the target this frame; bone name in g_sh.bone ("center" without a matching bone)
+	Fvector shoot_aim(CGameObject* o)
+	{
+		Fvector p;
+		u16 b = part_bone(o, g_sh.part.c_str());
+		IKinematics* k = o->Visual() ? o->Visual()->dcast_PKinematics() : nullptr;
+		if (!k || b == BI_NONE || b >= k->LL_BoneCount())
+		{
+			g_sh.bone = "center";
+			o->Center(p);
+			return p;
+		}
+		g_sh.bone = k->LL_BoneName_dbg(b);
+		bone_point(o, b, p);
+		return p;
+	}
+
+	// the actor's firearm in hands, else null and why
+	CWeapon* shoot_weapon(LPCSTR& why)
+	{
+		PIItem it = g_actor->inventory().ActiveItem();
+		CWeapon* w = smart_cast<CWeapon*>(it);
+		why = nullptr;
+		if (!it)
+			why = "nothing in hands";
+		else if (!w)
+			why = "not a firearm in hands";
+		else if (smart_cast<CWeaponKnife*>(w))
+			why = "knife in hands";
+		else if (smart_cast<CWeaponBinoculars*>(w))
+			why = "binoculars in hands";
+		else if (smart_cast<CWeaponMagazinedWGrenade*>(w) && smart_cast<CWeaponMagazinedWGrenade*>(w)->GetGrenadeLauncherMode())
+			why = "grenade launcher mode (switch back to the rifle)";
+		return why ? nullptr : w;
+	}
+
+	float pitch_to(const Fvector& from, const Fvector& to)
+	{
+		Fvector d;
+		d.sub(to, from);
+		return rad2deg(atan2f(d.y, _sqrt(d.x * d.x + d.z * d.z)));
+	}
+
+	void key_up(int dik, bool& down)
+	{
+		if (down && mcp_input::is_held(dik))
+			mcp_input::hold_key(dik, false);
+		down = false;
+	}
+
+	void key_tap(int dik)
+	{
+		mcp_input::hold_key(dik, true);
+		mcp_input::hold_key(dik, false);
+	}
+
+	// main menu, console or a game dialog (inventory, talk, PDA...) takes the input
+	bool ui_blocking()
+	{
+		CMainMenu* mm = g_pGamePersistent ? MainMenu() : nullptr;
+		CUIGameCustom* gui = CurrentGameUI();
+		return (mm && mm->IsActive()) || (gui && gui->TopInputReceiver()) || (Console && Console->bVisible);
+	}
+
+	// final target / weapon numbers (the objects may be gone)
+	void shoot_sample()
+	{
+		if ((pApp && pApp->IsLoading()) || !g_pGameLevel || g_pGameLevel != g_sh.level || !g_actor)
+			return;
+		if (CEntityAlive* ea = smart_cast<CEntityAlive*>(online(g_sh.target)))
+		{
+			g_sh.health = _max(0.f, ea->GetfHealth());
+			g_sh.pos = ea->Position();
+			g_sh.killer = ea->g_Alive() ? u16(-1) : ea->killer_id();
+		}
+		LPCSTR why;
+		if (CWeapon* w = shoot_weapon(why))
+		{
+			g_sh.mag_after = w->GetAmmoElapsed();
+			g_sh.total_after = w->GetSuitableAmmoTotal();
+		}
+	}
+
+	void shoot_finish(LPCSTR state, LPCSTR reason = nullptr)
+	{
+		key_up(g_sh.fire_dik, g_sh.fire_down);
+		g_sh.tap = false;
+		if (g_sh.reload_tap)
+			key_up(g_sh.reload_dik, g_sh.reload_tap);
+		key_up(g_sh.zoom_dik, g_sh.zoom_down);
+		if (g_sh.zoomed && psActorFlags.test(AF_AIM_TOGGLE) && g_actor && g_pGameLevel == g_sh.level && !(pApp && pApp->IsLoading()) && !ui_blocking())
+		{
+			LPCSTR why;
+			CWeapon* w = shoot_weapon(why);
+			if (w && w->IsZoomed())
+				key_tap(g_sh.zoom_dik); // toggle aim back off
+		}
+		shoot_sample();
+		g_sh.active = false;
+		g_sh.state = state;
+		g_sh.reason = reason;
+	}
+
+	void shoot_replace()
+	{
+		if (g_sh.active)
+			shoot_finish("aborted", "replaced");
+	}
+
+	xr_string blocker_json(const collide::rq_result& r)
+	{
+		jobj b;
+		b.num("distance", r.range, 2);
+		if (r.O)
+		{
+			CEntityAlive* ea = smart_cast<CEntityAlive*>(r.O);
+			b.str("what", ea && ea->g_Alive() ? "creature" : "object").i("id", r.O->ID()).str("name", r.O->cName().c_str());
+			b.str("section", r.O->cNameSect_str());
+		}
+		else
+		{
+			b.str("what", "level_geometry");
+			if (r.element >= 0 && r.element < Level().ObjectSpace.GetStaticModel()->get_tris_count())
+			{
+				u16 m = (u16)Level().ObjectSpace.GetStaticTris()[r.element].material;
+				if (m < GMLib.CountMaterial())
+					b.str("material", GMLib.GetMaterialByIdx(m)->m_Name.c_str());
+			}
+		}
+		return b.done();
+	}
+
+	void shoot_tick(u32 dt)
+	{
+		if (!g_sh.active)
+			return;
+		// taps last one input frame
+		if (g_sh.tap)
+		{
+			key_up(g_sh.fire_dik, g_sh.fire_down);
+			g_sh.tap = false;
+		}
+		if (g_sh.reload_tap)
+			key_up(g_sh.reload_dik, g_sh.reload_tap);
+		g_sh.elapsed += dt;
+		g_sh.frames++;
+		if ((pApp && pApp->IsLoading()) || !g_pGameLevel || g_pGameLevel != g_sh.level)
+			return shoot_finish("aborted", "level_change");
+		if (!g_actor || !g_actor->g_Alive())
+			return shoot_finish("aborted", "actor_dead");
+		if (mcp::client_id() != g_sh.conn || mcp_input::release_count() != g_sh.releases ||
+			(g_sh.fire_down && !mcp_input::is_held(g_sh.fire_dik)) || (g_sh.zoom_down && !mcp_input::is_held(g_sh.zoom_dik)))
+			return shoot_finish("aborted", "keys_released");
+		if (ui_blocking())
+			return shoot_finish("aborted", "dialog");
+		CEntityAlive* o = smart_cast<CEntityAlive*>(online(g_sh.target));
+		if (!o)
+			return shoot_finish("target_gone");
+		g_sh.health = _max(0.f, o->GetfHealth());
+		if (!o->g_Alive())
+		{
+			key_up(g_sh.fire_dik, g_sh.fire_down);
+			if (!g_sh.dead)
+				g_sh.dead_t = g_sh.elapsed;
+			g_sh.dead = true;
+			if (o->killer_id() != u16(-1) || g_sh.elapsed - g_sh.dead_t >= 1000) // the killer is set by the death event
+				shoot_finish("target_dead");
+			return;
+		}
+		if (g_sh.settling && g_sh.elapsed - g_sh.settle_t >= 500)
+			return shoot_finish("done"); // the last rounds had time to land
+		if (g_sh.elapsed > g_sh.timeout_ms)
+			return g_sh.fire ? shoot_finish("timeout") : shoot_finish("done", "max_seconds");
+
+		// turn the camera so that the fire ray points at the aim point; bias = filtered angle between the fire ray and
+		// the camera ray (non-zero with g_firepos / g_aimpos: bullets leave from the barrel)
+		Fvector aim = g_sh.aim = shoot_aim(o);
+		g_sh.pos = o->Position();
+		const Fvector& eye = Device.vCameraPosition;
+		float cy = wrap180(heading(eye, aim) - camera_yaw()), cp = pitch_to(eye, aim) - camera_pitch();
+		SPickParam& pp = g_actor->GetPick();
+		bool ray = !pp.barrel_blocked && pp.defs.dir.square_magnitude() > EPS;
+		LPCSTR why;
+		CWeapon* w = shoot_weapon(why);
+		u32 st = w ? w->GetState() : 0;
+		bool steady = w && !w->IsPending() && (st == CHUDState::eIdle || st == CWeapon::eFire || st == CWeapon::eFire2);
+		if (ray)
+		{
+			float fy = wrap180(heading(pp.defs.start, aim) - rad2deg(atan2f(pp.defs.dir.x, pp.defs.dir.z)));
+			float fp = pitch_to(pp.defs.start, aim) - rad2deg(asinf(_max(-1.f, _min(1.f, pp.defs.dir.y))));
+			if (steady) // the barrel swings during draw / reload animations
+			{
+				g_sh.bias_y += .25f * (_max(-10.f, _min(wrap180(fy - cy), 10.f)) - g_sh.bias_y);
+				g_sh.bias_p += .25f * (_max(-10.f, _min(fp - cp, 10.f)) - g_sh.bias_p);
+			}
+			g_sh.err = _sqrt(fy * fy + fp * fp);
+		}
+		else
+			g_sh.err = _sqrt(cy * cy + cp * cp);
+		float mx = 1080.f * dt / 1000.f;
+		float ty = _max(-mx, _min(cy + g_sh.bias_y, mx)), tp = _max(-mx, _min(cp + g_sh.bias_p, mx));
+		CCameraBase* cam = g_actor->cam_Active();
+		if (_abs(ty) > .005f)
+			cam->Move(ty > 0 ? kRIGHT : kLEFT, deg2rad(_abs(ty)));
+		if (_abs(tp) > .005f)
+			cam->Move(tp > 0 ? kDOWN : kUP, deg2rad(_abs(tp))); // kDOWN looks up
+
+		// on target = the weapon's fire ray (last frame) hits this creature first, within the weapon's fire distance
+		Fvector start = ray ? pp.defs.start : eye;
+		g_sh.dist = start.distance_to(aim);
+		bool on = ray && pp.result.O == o && (!w || pp.result.range <= w->GetFireDistance());
+		g_sh.on_frames = on ? g_sh.on_frames + 1 : 0;
+		if (on)
+		{
+			g_sh.blocked = false;
+			g_sh.blocker.clear();
+		}
+		else if (g_sh.elapsed - g_sh.los_t >= 100)
+		{
+			// line of fire to the aim point: same ray rules as the pick (objects stop it, see-through geometry not)
+			g_sh.los_t = g_sh.elapsed;
+			SPickParam lp;
+			lp.defs.start = start;
+			lp.defs.dir.sub(aim, start);
+			float len = lp.defs.dir.magnitude();
+			if (len > EPS_L)
+			{
+				lp.defs.dir.div(len);
+				lp.defs.range = len + .5f;
+				HUD().DoPick(lp);
+				if (lp.result.O == o || (lp.result.O && lp.result.O->H_Parent() == o) || lp.result.range >= len - .05f)
+				{
+					g_sh.blocked = false;
+					g_sh.blocker.clear();
+				}
+				else
+				{
+					if (!g_sh.blocked)
+						g_sh.blocked_t = g_sh.elapsed;
+					g_sh.blocked = true;
+					g_sh.blocker = blocker_json(lp.result);
+				}
+			}
+		}
+		if (pp.barrel_blocked)
+		{
+			if (!g_sh.blocked)
+				g_sh.blocked_t = g_sh.elapsed;
+			g_sh.blocked = true;
+			g_sh.blocker = jobj().str("what", "barrel_blocked").done(); // the weapon is pushed into geometry
+		}
+		bool beyond = w && g_sh.dist > w->GetFireDistance();
+		if (beyond && !g_sh.beyond)
+			g_sh.range_t = g_sh.elapsed;
+		g_sh.beyond = beyond;
+		if (!g_sh.settling && g_sh.blocked && g_sh.elapsed - g_sh.blocked_t >= 1500)
+			return shoot_finish("los_blocked");
+		if (!g_sh.settling && beyond && g_sh.elapsed - g_sh.range_t >= 1500)
+			return shoot_finish("out_of_range");
+
+		if (!g_sh.fire)
+			return;
+		if (!w)
+		{
+			key_up(g_sh.fire_dik, g_sh.fire_down);
+			if (!g_sh.nowpn)
+				g_sh.nowpn_t = g_sh.elapsed;
+			g_sh.nowpn = true;
+			if (xr_strcmp(why, "nothing in hands") || g_sh.elapsed - g_sh.nowpn_t >= 2000) // 2 s for a slot switch
+				return shoot_finish("no_weapon", why);
+			return;
+		}
+		g_sh.nowpn = false;
+
+		// shots = rounds that left the magazine outside reloads (a cleared jam ejects one)
+		int mag = w->GetAmmoElapsed();
+		if (w->ID() != g_sh.wid)
+		{
+			g_sh.wid = w->ID();
+			g_sh.weapon = w->cNameSect_str();
+			g_sh.wstate = st;
+		}
+		else
+		{
+			if (mag < g_sh.mag && st != CWeapon::eReload && g_sh.wstate != CWeapon::eReload)
+				g_sh.shots += g_sh.mag - mag;
+			if (st == CWeapon::eReload && g_sh.wstate != CWeapon::eReload && !g_sh.misfire)
+				g_sh.reloads++;
+		}
+		g_sh.mag = mag;
+		g_sh.wstate = st;
+
+		if (g_sh.settling)
+			return;
+		if (!g_sh.until_dead && g_sh.shots >= g_sh.want)
+		{
+			key_up(g_sh.fire_dik, g_sh.fire_down);
+			g_sh.settling = true;
+			g_sh.settle_t = g_sh.elapsed;
+			return;
+		}
+		if (w->IsMisfire())
+		{
+			key_up(g_sh.fire_dik, g_sh.fire_down);
+			if (!g_sh.misfire)
+			{
+				g_sh.jams++;
+				g_sh.unjam_tries = 0;
+				g_sh.unjam_t = g_sh.elapsed;
+			}
+			g_sh.misfire = true;
+			// the engine clears a jam on reload (eReload with the jammed round); a mod may bind it elsewhere
+			if (st != CWeapon::eReload && !w->IsPending() && (!g_sh.unjam_tries || g_sh.elapsed - g_sh.unjam_t >= 3000))
+			{
+				if (!g_sh.reload_dik || g_sh.unjam_tries >= 2)
+					return shoot_finish("jammed", g_sh.reload_dik ? "reload did not clear the jam" : "reload is not bound to a key");
+				mcp_input::hold_key(g_sh.reload_dik, true);
+				g_sh.reload_tap = true;
+				g_sh.unjam_tries++;
+				g_sh.unjam_t = g_sh.elapsed;
+			}
+			return;
+		}
+		g_sh.misfire = false;
+		if (!steady)
+		{
+			key_up(g_sh.fire_dik, g_sh.fire_down); // drawing, reloading, switching mode: wait
+			return;
+		}
+		if (mag == 0)
+		{
+			key_up(g_sh.fire_dik, g_sh.fire_down);
+			if (w->GetSuitableAmmoTotal() <= 0)
+				return shoot_finish("out_of_ammo");
+			if (!g_sh.reload_tries || g_sh.elapsed - g_sh.reload_t >= 3000)
+			{
+				if (!g_sh.reload_dik || g_sh.reload_tries >= 2)
+					return shoot_finish("out_of_ammo", g_sh.reload_dik ? "reload did not start" : "reload is not bound to a key");
+				mcp_input::hold_key(g_sh.reload_dik, true);
+				g_sh.reload_tap = true;
+				g_sh.reload_tries++;
+				g_sh.reload_t = g_sh.elapsed;
+			}
+			return;
+		}
+		g_sh.reload_tries = 0;
+		if (g_sh.ads && g_sh.zoom_dik && !w->IsZoomed() && st == CHUDState::eIdle && g_sh.elapsed - g_sh.zoom_t >= 500)
+		{
+			key_up(g_sh.zoom_dik, g_sh.zoom_down);
+			mcp_input::hold_key(g_sh.zoom_dik, true);
+			g_sh.zoom_down = g_sh.zoomed = true;
+			g_sh.zoom_t = g_sh.elapsed;
+			if (psActorFlags.test(AF_AIM_TOGGLE))
+				key_up(g_sh.zoom_dik, g_sh.zoom_down);
+		}
+
+		bool ok = on && g_sh.on_frames >= 2 && !beyond;
+		if (w->GetCurrentFireMode() < 0) // automatic: short bursts while on target
+		{
+			if (g_sh.fire_down)
+			{
+				bool stalled = g_sh.shots == g_sh.burst_from && g_sh.elapsed - g_sh.press_t >= 600; // e.g. a press that only left safe mode
+				if (!ok || g_sh.shots - g_sh.burst_from >= g_sh.burst_n || stalled)
+				{
+					key_up(g_sh.fire_dik, g_sh.fire_down);
+					g_sh.release_t = g_sh.elapsed;
+				}
+			}
+			else if (ok && g_sh.elapsed - g_sh.release_t >= 150)
+			{
+				mcp_input::hold_key(g_sh.fire_dik, true);
+				g_sh.fire_down = true;
+				g_sh.press_t = g_sh.elapsed;
+				g_sh.burst_from = g_sh.shots;
+				g_sh.burst_n = g_sh.until_dead ? g_sh.burst : _min(g_sh.burst, g_sh.want - g_sh.shots);
+			}
+		}
+		else if (ok && st == CHUDState::eIdle && g_sh.elapsed - g_sh.release_t >= 100) // single / fixed burst: one press each
+		{
+			mcp_input::hold_key(g_sh.fire_dik, true);
+			g_sh.fire_down = g_sh.tap = true;
+			g_sh.release_t = g_sh.elapsed;
+		}
+	}
+
+	xr_string shoot_json()
+	{
+		jobj r;
+		r.i("id", g_sh.id).str("state", g_sh.state).b("done", !g_sh.active);
+		if (g_sh.reason)
+			r.str("reason", g_sh.reason);
+		if (!g_sh.id)
+			return r.done();
+		r.str("mode", g_sh.fire ? "shoot" : "track");
+		jobj t;
+		t.i("id", g_sh.target).str("name", g_sh.name.c_str()).str("section", g_sh.section.c_str()).str("part", g_sh.part.c_str());
+		t.str("bone", g_sh.bone.c_str()).vec("position", g_sh.pos).num("distance", g_sh.dist, 2);
+		t.num("health_before", g_sh.health_before).num("health", g_sh.health);
+		if (g_sh.killer != u16(-1))
+			t.i("killer_id", g_sh.killer).b("killed_by_actor", g_actor && g_sh.killer == g_actor->ID());
+		r.raw("target", t.done());
+		{
+			xrCriticalSectionGuard guard(g_hits_lock);
+			r.i("shots", g_sh.shots).i("hits", g_hits.hits).num("hit_power", g_hits.power);
+			xr_string bones = "{";
+			for (auto& b : g_hits.bones)
+				bones += (bones.size() > 1 ? "," : "") + js(b.first.c_str()) + ":" + std::to_string(b.second).c_str();
+			r.raw("hit_bones", bones + "}");
+			if (g_hits.other)
+			{
+				xr_string ids = "[";
+				for (u16 v : g_hits.others)
+					ids += (ids.size() > 1 ? "," : "") + xr_string(std::to_string(v).c_str());
+				r.i("other_hits", g_hits.other).raw("other_ids", ids + "]");
+			}
+		}
+		if (g_sh.weapon.size())
+		{
+			jobj a;
+			a.i("mag_before", g_sh.mag_before).i("total_before", g_sh.total_before);
+			a.i("mag", g_sh.active ? g_sh.mag : g_sh.mag_after).i("total", g_sh.total_after);
+			r.str("weapon", g_sh.weapon.c_str()).raw("ammo", a.done()).i("reloads", g_sh.reloads).i("jams", g_sh.jams);
+		}
+		r.num("aim_error_deg", g_sh.err, 2);
+		if (g_sh.blocker.size())
+			r.raw("blocker", g_sh.blocker);
+		return r.i("elapsed_ms", g_sh.elapsed).i("frames", g_sh.frames).done();
+	}
+
+	bool nav_shoot(LPCSTR params, xr_string& out)
+	{
+		ctx c;
+		if (!ready(params, c, out, "to"))
+			return true;
+		if (!g_actor || !g_actor->g_Alive())
+		{
+			out = jobj().b("available", false).str("reason", "no_actor").done();
+			return true;
+		}
+		s64 id = -1;
+		CEntityAlive* o = mcp::get_int_param(params, "id", id) && id >= 0 && id < 0xffff ? smart_cast<CEntityAlive*>(online((u16)id)) : nullptr;
+		if (!o || !o->Visual())
+		{
+			out = "id of an online creature required";
+			return false;
+		}
+		if (!o->g_Alive())
+		{
+			out = "the target is already dead";
+			return false;
+		}
+		xr_string part = "chest";
+		mcp::get_string_param(params, "part", part);
+		if (part.empty())
+			part = "chest";
+		if (part != "chest" && part != "head" && part_bone(o, part.c_str()) == BI_NONE)
+		{
+			out = "no bone \"" + part + "\" on " + o->cNameVisual().c_str() + " (part: chest, head or a bone name)";
+			return false;
+		}
+		shooter_t s;
+		s.fire = int_param(params, "fire", 1) != 0;
+		s.until_dead = int_param(params, "until_dead", 0) != 0;
+		s.ads = int_param(params, "ads", 0) != 0;
+		s.want = (u32)_max<s64>(1, _min<s64>(int_param(params, "shots", 1), 10000));
+		s.burst = (u32)_max<s64>(1, _min<s64>(int_param(params, "burst", 3), 100));
+		s.timeout_ms = (u32)_max<s64>(500, _min<s64>(int_param(params, "timeout_ms", 30000), 3600000));
+		s.fire_dik = get_action_dik(kWPN_FIRE);
+		s.reload_dik = get_action_dik(kWPN_RELOAD);
+		s.zoom_dik = get_action_dik(kWPN_ZOOM);
+		if (s.fire && !s.fire_dik)
+		{
+			out = "the fire action is not bound to a key";
+			return false;
+		}
+		if (g_mv.active)
+			mover_finish("aborted", "replaced");
+		shoot_replace();
+		s.id = g_sh.id + 1;
+		s.level = g_pGameLevel;
+		s.target = o->ID();
+		s.name = o->cName().c_str();
+		s.section = o->cNameSect_str();
+		s.part = part;
+		s.health_before = s.health = o->GetfHealth();
+		s.conn = mcp::client_id();
+		s.releases = mcp_input::release_count();
+		s.pos = o->Position();
+		LPCSTR why;
+		CWeapon* w = shoot_weapon(why);
+		if (w)
+		{
+			s.wid = w->ID();
+			s.weapon = w->cNameSect_str();
+			s.mag = s.mag_before = s.mag_after = w->GetAmmoElapsed();
+			s.total_before = s.total_after = w->GetSuitableAmmoTotal();
+			s.wstate = w->GetState();
+		}
+		g_sh = s;
+		{
+			xrCriticalSectionGuard guard(g_hits_lock);
+			g_hits = shot_hits();
+		}
+		g_sh.active = true;
+		g_sh.state = "running";
+		g_sh.aim = shoot_aim(o);
+		g_sh.dist = Device.vCameraPosition.distance_to(g_sh.aim);
+		bool switching = g_actor->inventory().GetNextActiveSlot() != g_actor->inventory().GetActiveSlot();
+		if (g_sh.fire && !w && !(switching && !xr_strcmp(why, "nothing in hands")))
+			shoot_finish("no_weapon", why);
+		else if (g_sh.fire && w && g_sh.dist > w->GetFireDistance())
+			shoot_finish("out_of_range");
+		out = shoot_json();
+		return true;
+	}
+
+	bool nav_shoot_status(LPCSTR params, xr_string& out)
+	{
+		if (int_param(params, "stop", 0) && g_sh.active)
+			shoot_finish("aborted", "stopped");
+		out = shoot_json();
+		return true;
+	}
+
+	void driver_tick(u32 dt)
+	{
+		mover_tick(dt);
+		shoot_tick(dt);
 	}
 
 	struct frame_hook : public pureFrame
@@ -2441,7 +3085,10 @@ void mcp_register_nav()
 	mcp::register_method("nav.move_to", nav_move_to);
 	mcp::register_method("nav.move_status", nav_move_status);
 	mcp::register_method("nav.use", nav_use);
-	mcp_input::set_driver(mover_tick);
+	mcp::register_method("nav.shoot", nav_shoot);
+	mcp::register_method("nav.shoot_status", nav_shoot_status);
+	mcp_input::set_driver(driver_tick);
+	g_mcp_on_hit = shoot_on_hit;
 	Device.seqFrame.Add(&frame, REG_PRIORITY_LOW);
 }
 
