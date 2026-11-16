@@ -156,6 +156,7 @@ namespace
 		if (!level_name.empty() && (lvl != level_ptr || loading || name != level_name || reload))
 		{
 			emit("level_unloaded", "{\"level\":" + js(level_name) + "}");
+			mcp_tasks_reset();
 			prev_level = level_name;
 			level_name.clear();
 		}
@@ -174,6 +175,8 @@ namespace
 				emit("actor_spawned", "{\"level\":" + js(level_name) + ",\"id\":" + num(a->ID()) + ",\"name\":" + js(a->cName().c_str()) +
 					",\"health\":" + std::to_string(a->GetfHealth()).c_str() + ",\"alive\":" + (a->g_Alive() ? "true" : "false") + "}");
 		}
+
+		mcp_tasks_poll(!level_name.empty() && a);
 
 		bool menu = MainMenu() && MainMenu()->IsActive();
 		if (menu != menu_active)
@@ -367,6 +370,19 @@ void mcp_event_task(CGameTask* t, LPCSTR change)
 {
 	if (!enabled || !t)
 		return;
+	mcp_tasks_changed(t, change);
 	emit(make_string("task_%s", change).c_str(), "{\"id\":" + js(t->m_ID.c_str()) + ",\"title\":" +
 		js(CStringTable().translate(t->m_Title).c_str()) + ",\"title_id\":" + js(t->m_Title.c_str()) + "}");
+}
+
+void mcp_event_info(LPCSTR name, bool given)
+{
+	if (enabled)
+		emit(given ? "info_given" : "info_removed", "{\"name\":" + js(name) + "}");
+}
+
+void mcp_event(LPCSTR type, LPCSTR data)
+{
+	if (enabled)
+		emit(type, data);
 }

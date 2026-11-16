@@ -1450,7 +1450,9 @@ async def game_events(instance: str | None = None, since: int | None = None, typ
     """Structured game events from the supervisor buffer (survives reconnects and game exit), oldest first.
     Types: script_error (data: kind, fatal, message, file, line, script, traceback, count, since_last), level_loaded
     (level, previous), level_unloaded, actor_spawned, actor_died (killer_id/name/section), game_saved, game_loaded,
-    menu_opened, menu_closed, task_given, task_completed, task_failed, task_in_progress.
+    menu_opened, menu_closed, task_given, task_completed, task_failed, task_in_progress (id, title, title_id),
+    task_stage (id, title, old_stage, stage, target: object brief or null; polled once per second), info_given /
+    info_removed (name).
     since: only events with seq > since (page with the returned last_seq); without it the newest `limit` are returned.
     types: type names or fnmatch patterns (e.g. ['task_*']). limit: max 500. Script errors repeating within 5 s are
     coalesced: count = total so far, since_last = occurrences this event stands for. Fatal errors (kind callback/
@@ -2119,7 +2121,7 @@ async def game_state(instance: str | None = None, sections: list[str] | None = N
     night_vision, detector {working}}; target (crosshair) {distance, id, section, object, name, alive, relation};
     world {level, game_time, game_time_factor, time_factor, weather, surge, psi_storm, in_cover}.
     sections (optional, cheap but bigger): "inventory" (slots, belt, backpack grouped by section; capped at 100),
-    "tasks" (active tasks: id, title, type, active), "stats" (frame, fps, frame_ms, times); ["all"] = all of them.
+    "tasks" (active tasks: id, title, type, stage, active; details: game_tasks), "stats" (frame, fps, frame_ms, times); ["all"] = all of them.
     Fields that do not apply are absent. While a level loads the answer is {mode: loading, source: supervisor}."""
     inst = get(instance)
     sections = sections or []
@@ -2214,6 +2216,65 @@ async def game_object(id: int, instance: str | None = None) -> dict:
     an inventory. Not online -> the alife server entity (offline: true). Unknown id -> object null."""
     inst = get(instance)
     return await run(world_call, inst, "world.object", {"id": int(id)})
+
+
+@tool
+async def game_tasks(instance: str | None = None, id: str | None = None, history: bool = True) -> dict:
+    """Quest state as the PDA knows it (read-only). tasks: every task in progress (or only `id`): id, title,
+    description (translated, as shown in the PDA), type (storyline/additional), active, state, received (game time),
+    stage (script stage; changes fire `task_stage` events), status (task_manager status), pending (complete/fail
+    decided, applied on the next task update or at hand-in), forced_status, target (PDA marker object: id, name,
+    character, section, kind, level, alive, online, position; distance (m from the actor) and bearing (deg to turn
+    right) only when it is on the actor's level; null = no marker), giver (id, name, character, level, alive), def
+    (task ltx strings: stage_complete, target_functor, status_functor, condlist_N, on_complete, on_fail).
+    history=true adds completed/failed tasks, newest first (max 50): id, title, description, state, finished (game
+    time), finished_game_ms, last_stage/giver when seen this session. History is the engine task registry, saved with
+    the game: it follows the loaded save and survives reconnects and level changes.
+    Wait for a stage: game_wait {"event": "task_stage", "where": {"id": ..., "stage": 1}} or {"state":
+    "tasks.<id>.stage", "eq": 1}; completion: {"event": "task_completed", "where": {"id": ...}}.
+    Outside a level: {available: false, reason: no_level/loading/no_actor}."""
+    inst = get(instance)
+    p = {"history": int(bool(history))}
+    if id:
+        p["id"] = id
+    return await run(world_call, inst, "tasks.get", p)
+
+
+INFOS_MAX = 500
+
+
+def infos_call(inst, match, has, give, remove):
+    p = {}
+    if give:
+        p["give"] = ",".join(give)
+    if remove:
+        p["remove"] = ",".join(remove)
+    res = world_call(inst, "infos.get", p)
+    if not res.get("available"):
+        return res
+    names = res.pop("infos")
+    known = set(names)
+    if has:
+        res["has"] = {n: n in known for n in has}
+    if match or not has:
+        sel = sorted(n for n in names if not match or fnmatch.fnmatch(n.lower(), match.lower()))
+        res["matched"] = len(sel)
+        res["infos"] = sel[:INFOS_MAX]
+        if len(sel) > INFOS_MAX:
+            res["omitted"] = f"{len(sel) - INFOS_MAX} more; narrow with match"
+    return res
+
+
+@tool
+async def game_infos(instance: str | None = None, match: str | None = None, has: list[str] | None = None,
+                     give: list[str] | None = None, remove: list[str] | None = None) -> dict:
+    """The actor's info portions (story flags such as esc_2_12_stalker_fanat_task_2_done). give / remove: names to
+    add / drop first (same as db.actor:give_info_portion / disable_info_portion; result given / removed lists only the
+    ones that changed). has: names -> {name: bool}. match: case-insensitive glob over the known names (sorted, max 500);
+    without has the full list is returned (filtered by match). count = all known. Each change fires an
+    info_given / info_removed event. Outside a level: {available: false, reason}."""
+    inst = get(instance)
+    return await run(infos_call, inst, match, has, give, remove)
 
 
 # ---------------------------------------------------------------- game_nav / game_nav_map (AI map queries, overlay, top-down image)
@@ -4006,7 +4067,7 @@ async def game_emission(kind: str = "surge", action: str = "status", instance: s
 
 WT_EVENT_TYPES = ("script_error", "level_loaded", "level_unloaded", "actor_spawned", "actor_died", "game_saved",
                   "game_loaded", "menu_opened", "menu_closed", "task_given", "task_completed", "task_failed",
-                  "task_in_progress")
+                  "task_in_progress", "task_stage", "info_given", "info_removed")
 WT_OPS = ("eq", "ne", "lt", "le", "gt", "ge", "in", "match", "exists", "within")
 WT_LEAVES = {  # leaf key -> extra keys it accepts (besides the comparison ops where marked by "ops")
     "in_control": (), "loaded": (), "mode": (), "dialog": ("open",), "event": ("where",), "log": (),
@@ -4245,6 +4306,8 @@ def wt_path(obj, path):
             obj = obj.get(part)
         elif isinstance(obj, list) and part.lstrip("-").isdigit() and -len(obj) <= int(part) < len(obj):
             obj = obj[int(part)]
+        elif isinstance(obj, list):  # element by id, e.g. tasks.<task id>.stage
+            obj = next((e for e in obj if isinstance(e, dict) and str(e.get("id")) == part), None)
         else:
             return None
     return obj
@@ -4574,7 +4637,8 @@ async def game_wait(until: str | dict | list, instance: str | None = None, timeo
     {"event": "task_given", "where": {"id": "my_task"}} (data fields; strings are globs) | {"log": "regex"} |
     {"sim_ms": 5000} (simulation time; follows game_time sim_speed and game_step) | {"frames": 100} |
     {"game_clock": "21:00"} (game clock reaches HH:MM, next day if already past) |
-    {"state": "actor.health", "lt": 0.5} (any game_state path, sections inventory./tasks./stats. fetched as needed) |
+    {"state": "actor.health", "lt": 0.5} (any game_state path, sections inventory./tasks./stats. fetched as needed;
+    list elements by index or id: "tasks.<task id>.stage") |
     {"has_item": "wpn_ak74*"} (inventory count; ops apply, default >= 1) |
     {"object": 1234, "is": "dead"} (exists, gone, alive, dead, online, offline; default exists) |
     {"object": 1234, "within": 5, "of": [x,y,z] | "actor" | id} | {"object": 1234, "field": "health", "lt": 0.3} |

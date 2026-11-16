@@ -727,3 +727,10 @@ void mcp_register_world()
 	mcp::register_method("world.objects", world_objects);
 	mcp::register_method("world.object", world_object);
 }
+
+// Kind name (game_objects kinds) of an alife server entity; nullptr when there is none
+LPCSTR mcp_world_kind(u16 id)
+{
+	CSE_ALifeDynamicObject* se = server_object(id);
+	return se ? kind_names[classify_se(se)] : nullptr;
+}

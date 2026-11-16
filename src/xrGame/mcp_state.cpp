@@ -51,6 +51,7 @@
 extern bool g_bDisableAllInput;
 extern CUISequencer* g_tutorial;
 xr_string mcp_ui_cursor_json(); // xrGame/mcp_ui.cpp
+s64 mcp_tasks_stage(const shared_str& id); // xrGame/mcp_tasks.cpp
 
 namespace
 {
@@ -385,6 +386,9 @@ namespace
 			e.str("id", t->m_ID.c_str());
 			e.str("title", t->m_Title.size() ? CStringTable().translate(t->m_Title).c_str() : nullptr);
 			e.str("type", t->GetTaskType() == eTaskTypeStoryline ? "storyline" : "additional");
+			s64 stage = mcp_tasks_stage(t->m_ID);
+			if (stage >= 0)
+				e.i("stage", stage);
 			if (t == active)
 				e.b("active", true);
 			out += (n++ ? "," : "") + e.done();

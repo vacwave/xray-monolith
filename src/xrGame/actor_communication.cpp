@@ -30,6 +30,7 @@
 #include "ai/monsters/basemonster/base_monster.h"
 #include "ai/trader/ai_trader.h"
 #include "Flashlight.h"
+#include "mcp_events.h"
 
 void CActor::AddGameNews(GAME_NEWS_DATA& news_data)
 {
@@ -48,6 +49,7 @@ bool CActor::OnReceiveInfo(shared_str info_id) const
 {
 	if (!CInventoryOwner::OnReceiveInfo(info_id))
 		return false;
+	mcp_event_info(info_id.c_str(), true);
 
 	CInfoPortion info_portion;
 	info_portion.Load(info_id);
@@ -72,6 +74,8 @@ bool CActor::OnReceiveInfo(shared_str info_id) const
 
 void CActor::OnDisableInfo(shared_str info_id) const
 {
+	if (HasInfo(info_id))
+		mcp_event_info(info_id.c_str(), false);
 	CInventoryOwner::OnDisableInfo(info_id);
 
 	if (!CurrentGameUI())
