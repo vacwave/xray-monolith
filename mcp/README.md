@@ -91,10 +91,10 @@ capped at 20k chars, and `omitted` says what was left out. The engine itself ret
 ## Launching
 
 - Profile: `gamma` when `game_root` is `C:\GAMMA` (GAMMA/MO2 launching is not handled), else `vanilla`.
-- Machine-wide caps: 3 vanilla, 2 GAMMA (~4 GB RAM each). Slots are lock files in
+- Machine-wide caps: 3 vanilla, 1 GAMMA (~4 GB RAM each; GAMMA's textures need far more VRAM). Slots are lock files in
   `%LOCALAPPDATA%\anomaly-mcp\slots\`, held while the game runs and freed by the OS if the supervisor dies.
   Override with `ANOMALY_MCP_MAX_VANILLA` / `ANOMALY_MCP_MAX_GAMMA` or `%LOCALAPPDATA%\anomaly-mcp\config.json`
-  (`{"max_vanilla": 3, "max_gamma": 2}`).
+  (`{"max_vanilla": 3, "max_gamma": 1}`).
 - Instance id = slot (`vanilla-1`, ...). Its appdata is `<repo>\.mcp-run\<id>\appdata` (logs, user.ltx, saves).
 - Every launch copies `mcp/templates/user.ltx` (a low-settings baseline with **`r__framelimit 30`**; set
   `r__framelimit 0` via `console_exec` for FPS tests) and deletes the slot's `shaders_cache` so the game rebuilds it

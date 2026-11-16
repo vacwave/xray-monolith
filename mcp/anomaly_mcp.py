@@ -53,7 +53,7 @@ WER_KEY = r"SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps"
 # MiniDumpWithThreadInfo|IndirectlyReferencedMemory|DataSegs|HandleData|UnloadedModules|ProcessThreadData|FullMemoryInfo
 MID_DUMP_FLAGS = 0x1000 | 0x40 | 0x1 | 0x4 | 0x20 | 0x100 | 0x800
 
-DEFAULTS = {"max_vanilla": 3, "max_gamma": 2, "hang_timeout_s": 30, "load_hang_timeout_s": 600,
+DEFAULTS = {"max_vanilla": 3, "max_gamma": 1, "hang_timeout_s": 30, "load_hang_timeout_s": 600,
             "dump_keep": 5, "dump_cap_gb": 40}
 
 

@@ -11,7 +11,7 @@ Deferred indefinitely: PyInstaller single exe (user runs on own machine only).
 Parallel-dev practice that worked: 2 devs in worktrees, each testing from its own `C:\Anomaly\bin_g<N>` copy and its own scratch subdir, new code in new files + one contiguous block in `anomaly_mcp.py`, dev rebases before hand-back, coordinator ff-merges/cherry-picks. Worktrees need the untracked `optick-git` sources copied in.
 
 Setup: `py -3.11 -m pip install "mcp>=2.3,<3"`; WER LocalDumps installed via `mcp/setup_wer.ps1` (admin, done 2026-11-15).
-Caps 3 vanilla / 2 GAMMA. Vanilla ≈4.1 GB RAM / 1.6 GB VRAM. Template user.ltx has r__framelimit 30 (uncap for FPS tests).
+Caps 3 vanilla / 1 GAMMA (8 GB VRAM card; GAMMA VRAM with the template user.ltx still to be measured). Vanilla ≈4.1 GB RAM / 1.6 GB VRAM. Template user.ltx has r__framelimit 30 (uncap for FPS tests).
 Open issues (candidates for the planning session):
 - Ask user: MCP-only non-fatal mode for Lua errors inside engine→Lua callbacks (fatal by engine design; event is sent before the crash). Mod-printed errors (`printe`) are not captured as events; no NPC-death event type.
 - Shutdown: one unreproduced double free in `CModelPool::Registry` at exit (dump 18664; suspected unlocked race, upstream MT code; 0 in 70 quits since). One unreproduced startup hang before the logs dir (launch timeout auto-dumps).
