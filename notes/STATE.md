@@ -6,8 +6,12 @@ User decisions 2026-11-16: target BOTH vanilla and GAMMA; GAMMA uses the same te
 
 Queue:
 - 24 (IN PROGRESS, dev running, user OK 2026-11-16; single game at a time is the expected use, so no launch serialization / VRAM budget): `game_launch(game_root=C:\GAMMA)` via `ModOrganizer.exe -p "G.A.M.M.A" run <exe> -a "<args>"`, game = MO2's child, kill only our MO2, slot + job + restart, re-mute after every level load, measure GAMMA VRAM with the template; AND MCP runs must stop rewriting the user's `axr_options.ltx` (`C:\Anomaly\gamedata\configs\` and GAMMA's `mods\G.A.M.M.A. MCM values...\gamedata\configs\`; the GAMMA one was rewritten 2026-11-16 13:09 without a backup).
-Later (PROPOSED, needs user OK; planning session WITH the user):
-- 26 quest/task tool (stage, target, giver, completed/failed, stage-change event) · 27 dialogue/phrase ids in ui.tree · 28 info portion list · 29 game_object level field for off-level entities · 30 scenario runner with assertions · 31 gamedata deploy/reload loop.
+Approved by user 2026-11-16, in order after 24:
+- 25 quest/task tool: stage, target, giver, description, completed/failed (also after hand-in), stage-change event.
+- 26 dialogue: the agent must see the actual conversation options COMPLETELY (every option incl. scrolled-out ones, full untruncated text, speaker lines) plus dialog/phrase ids, and choose by id.
+- 27 info portion list (actor's known infos; may fold into 25).
+- 28 doors for game_move_to: user idea = reuse how NPCs open doors (or open/ignore doors on the path); dev investigates the NPC door mechanism first, locked doors reported as blocked.
+Maybe later (user: not now): scenario runner with assertions (agents can write their own test loops); gamedata deploy/reload loop (user doubts it will work). Small: game_object level field for off-level entities.
 Minor: template user.ltx has 3 unknown commands (`lua_parallel_gc_pause`, `perf_spike_ms`, `perf_stats`); artefact pickup needs an active detector (document or tool); game_move_to stuck at closed doors.
 
 Setup: `py -3.11 -m pip install "mcp>=2.3,<3"`; WER LocalDumps via `mcp/setup_wer.ps1` (done). GPU: RTX 2080 SUPER 8 GB. Caps 3 vanilla / 1 GAMMA (per profile, no shared VRAM budget). Vanilla ≈4.1 GB RAM / 1.6 GB VRAM. Template user.ltx: r__framelimit 30 (uncap for FPS tests), texture_lod 4, muted.
