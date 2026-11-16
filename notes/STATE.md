@@ -10,7 +10,7 @@ Approved by user 2026-11-16, in order after 24:
 - 25 quest/task tool: stage, target, giver, description, completed/failed (also after hand-in), stage-change event.
 - 26 dialogue: the agent must see the actual conversation options COMPLETELY (every option incl. scrolled-out ones, full untruncated text, speaker lines) plus dialog/phrase ids, and choose by id.
 - 27 info portion list (actor's known infos; may fold into 25).
-- 28 doors for game_move_to: user idea = reuse how NPCs open doors (or open/ignore doors on the path); dev investigates the NPC door mechanism first, locked doors reported as blocked.
+- 28 doors for game_move_to (user decision): emulate the use key on a door on the path / when stuck next to one (same path as a player press, no collision bypass, no opening doors up front), then report the door's state: opened, still closed, locked (with reason).
 Maybe later (user: not now): scenario runner with assertions (agents can write their own test loops); gamedata deploy/reload loop (user doubts it will work). Small: game_object level field for off-level entities.
 Minor: template user.ltx has 3 unknown commands (`lua_parallel_gc_pause`, `perf_spike_ms`, `perf_stats`); artefact pickup needs an active detector (document or tool); game_move_to stuck at closed doors.
 
