@@ -3285,6 +3285,7 @@ for _, id in ipairs(A.ids) do
   if not o then out[#out + 1] = {id = id, error = "not online yet"}
   elseif slot < 0 then out[#out + 1] = {id = id, error = sec .. " has no inventory slot"}
   else -- the move is an inventory event: the slot changes a frame later (A.check polls it)
+    slot = slot + 1 -- engine slot = ini slot + 1 (CInventoryItem::Load)
     local w = a:item_in_slot(slot)
     local ok = w ~= nil and w:id() == id
     if not (ok or A.check) then a:move_to_slot(o, slot) end
