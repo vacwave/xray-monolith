@@ -3287,6 +3287,8 @@ def talk_out(inst, v, line_chars, log_last):
     out = {"instance": inst.id, "open": bool(v.get("open"))}
     if v.get("loading"):
         out["loading"] = True
+    elif not v.get("open"):
+        out["game_mode"] = game_state_get(inst, []).get("mode")
     if not v.get("open"):
         return out
     out["mode"] = v["mode"]

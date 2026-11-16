@@ -650,8 +650,10 @@ namespace
 		jobj res;
 		CUIGameSP* sp = g_pGameLevel && !(pApp && pApp->IsLoading()) ? smart_cast<CUIGameSP*>(CurrentGameUI()) : nullptr;
 		CUITalkWnd* t = sp ? sp->TalkMenu : nullptr;
+		if (t && !t->IsShown())
+			t = nullptr; // a closed talk window keeps its partner pointers; they dangle once that NPC is destroyed (load)
 		CGameObject* pgo = t ? smart_cast<CGameObject*>(t->OthersInvOwner()) : nullptr;
-		if (!t || !t->IsShown() || !pgo || !talk_acc::wnd(t) || !talk_acc::ours(t))
+		if (!t || !pgo || !talk_acc::wnd(t) || !talk_acc::ours(t))
 		{
 			out = res.b("open", false).done();
 			return true;
