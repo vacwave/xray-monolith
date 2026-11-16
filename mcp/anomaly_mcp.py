@@ -2182,7 +2182,10 @@ async def game_objects(instance: str | None = None, radius: float = 100, kinds: 
     elevation}}, or {"look_at": position}), elevation (deg up). Creatures: alive, health, community, rank, relation
     (friend/neutral/enemy/worst_enemy), wounded, in_combat, enemy_id, sees_actor, squad_id/squad/smart; corpses:
     items, has_loot. Items: condition, cost, ammo/mag_size/ammo_type (weapons), rounds (ammo). Anomalies: type (engine
-    class), radius, enabled (campfires: lit). Containers: empty, items, closed. Level changers: destination. Also counts (per kind,
+    class), radius, enabled (campfires: lit). Containers: empty, items, closed. Level changers: destination. Doors:
+    door {state open/opening/closed/closing/locked (ph_door logic; scripted = other scheme, no_logic = free physics
+    door), logic (active section), locked, not_for_npc (cabinet/safe doors), on_use/on_info/... (the logic's condlists:
+    which info portion or condition opens/unlocks it), tip (the use text a player sees)}. Also counts (per kind,
     all matches), total, omitted, target (crosshair: distance, point, id/kind/section or material for level geometry),
     cost_ms (engine time). Outside a level: {available: false, reason: no_level/loading/no_actor}.
     Detail for one object (inventory, money, active item, zone power): game_object(id)."""
@@ -2521,8 +2524,8 @@ async def game_nav_map(instance: str | None = None, position: list[float] | None
     return await run(nav_map, inst, position, radius, cell, orient, path_to, objects, max_px)
 
 
-def nav_move(inst, p, wait, wait_timeout):
-    res = world_call(inst, "nav.move_to", p)
+def nav_move(inst, p, wait, wait_timeout, method="nav.move_to"):
+    res = world_call(inst, method, p)
     if res.get("available") is False or res.get("done") or not wait:
         return res
     deadline = time.monotonic() + wait_timeout
@@ -2548,10 +2551,18 @@ async def game_move_to(instance: str | None = None, position: list[float] | None
     frame (same injected input as game_input), so it respects MCP pause / game_step (no progress while paused; stepped
     frames advance it). No teleporting. sprint: tap sprint_toggle while running straight.
     stop_distance (m, horizontal): default 1 (1.5 for objects). timeout: seconds of input time (game time while MCP
-    time control is used). Stuck (no progress for 1 s while holding forward): tap use (opens doors; facing an NPC it
-    may open a talk -> aborted dialog), then jump, then replan, then give up.
-    Result: state reached / stuck (stuck_at) / timeout / no_path (reason) / aborted (reason: dialog, actor_dead,
-    level_change, keys_released = game_input_release or supervisor disconnect, target_gone, replaced, stopped),
+    time control is used). Doors (ph_door logic, cabinet doors ignored): a shut door within 2.4 m ahead on the path is
+    opened like a player: step to a spot in front of it outside its swing, look at it until the crosshair pick is the
+    door within use range (2 m), press use once, wait until it is open, walk through the doorway. Open doors are
+    walked through without use (a press would close them). A door that stays shut (locked without on_use, use had no
+    effect after 2 presses, pick missed) -> replan around it, else state blocked_door. Stuck (no progress for 1 s
+    while holding forward): open a shut door within 2 m, else tap use (none next to an open door; facing an NPC it may
+    open a talk -> aborted dialog), then jump, then replan, then give up.
+    Result: state reached / stuck (stuck_at) / timeout / no_path (reason) / blocked_door (reason locked, no_effect,
+    pick_missed; blocked_door = its id) / aborted (reason: dialog, actor_dead, level_change, keys_released =
+    game_input_release or supervisor disconnect, target_gone, replaced, stopped), doors [{id, name, section, position,
+    before, after (states as in game_objects), action (none, use, opened, avoided), presses, reason, pick (what the
+    crosshair hit instead), door (the game_objects door facts)}], blocked_door,
     distance_left, position, path_length, travelled, elapsed_ms, frames, waypoint/waypoints. Keys are released at the
     end. wait=False returns at once ({id, state: running}); status=True polls the current/last move, stop=True aborts
     it. With game_nav overlay on, the path is drawn."""
@@ -2568,6 +2579,20 @@ async def game_move_to(instance: str | None = None, position: list[float] | None
     if stop_distance is not None:
         p["stop_distance"] = str(float(stop_distance))
     return await run(nav_move, inst, p, wait, wait_timeout)
+
+
+@tool
+async def game_use(instance: str | None = None, id: int | None = None, wait_timeout: float = 15) -> dict:
+    """Use an object like a player (talk to an NPC, take an item, open/close a door, open a box): turn the camera
+    onto it (living NPC: chest; else the centre, then points above/below) until the crosshair pick is that object
+    within use range (2 m), press use once and report. No walking: get within ~2 m first (game_move_to id=...).
+    Result: state used (reason dialog_opened = talk/loot/trade window, taken, door_toggled, no_effect, gone) / failed
+    (reason out_of_range, pick_missed: pick = what the crosshair hit instead, e.g. "blocked by level geometry") /
+    timeout; use {id, name, section, position, before/after (doors), presses, pick, door}."""
+    if id is None:
+        raise ValueError("id required (an online object, e.g. from game_objects)")
+    inst = get(instance)
+    return await run(nav_move, inst, {"id": int(id)}, True, wait_timeout, "nav.use")
 
 
 # ---------------------------------------------------------------- game_input

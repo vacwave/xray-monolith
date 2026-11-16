@@ -47,3 +47,4 @@
 - `game_wait` (block before `main()`; details in wait.md): uses `Instance.wake` (Condition notified by the reader on log/game events and disconnect) and `wt_batch` (several requests sent at once, answered in one frame).
 - `game_tasks` / `game_infos` (after game_object, `world_call`: heartbeat loading -> {available:false, reason: loading, source: supervisor}): thin wrappers over tasks.get / infos.get; game_infos does glob/has/sort/cap 500 in Python. WT_EVENT_TYPES and the game_events docstring list task_stage / info_given / info_removed.
 - `game_talk` (UI tools block after game_ui_click; details in ui.md): read = talk_get/talk_out (option text never cut, log lines cut at line_chars with `truncated`), choose by id/n/text -> talk_pick, key or talk_scroll_click, settle poll; ids are strings (phrase ids look numeric, hence separate id / n params).
+- `game_use` (after game_move_to): `nav_move(..., method="nav.use")`, polls nav.move_status like a move; fields in nav.md.

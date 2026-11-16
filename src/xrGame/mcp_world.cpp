@@ -38,11 +38,15 @@
 #include "alife_level_registry.h"
 #include "xrServer_Objects_ALife_Monsters.h"
 #include "xrServer_Objects_ALife_Items.h"
+#include "script_engine.h"
+#include "string_table.h"
 #include <typeinfo>
 
 // MCP world.objects / world.object: find things around the actor without screenshots (read-only).
 // Online objects come from Level().Objects (only top-level ones: items in inventories are skipped),
 // optional offline ones from the alife level registry (server entities without a client object).
+LPCSTR mcp_door_state(CGameObject* o, xr_string* json, bool* usable);
+
 namespace
 {
 	xr_string js(LPCSTR s) { return s ? mcp::to_json_string(s) : xr_string("null"); }
@@ -453,7 +457,50 @@ namespace
 		}
 		else if (k == k_restrictor || k == k_smart_terrain)
 			e.num("radius", o->Radius(), 2);
+		else if (k == k_door)
+		{
+			xr_string d;
+			mcp_door_state(o, &d, nullptr);
+			e.raw("door", d);
+		}
 		return e.done();
+	}
+
+	// Door logic facts (xr_logic ph_door storage, ph_door.script); every access guarded, nil = no logic. Arg: object id
+	const char* door_chunk =
+		"local id = ...\n"
+		"local db = rawget(_G, 'db') local st = type(db) == 'table' and type(db.storage) == 'table' and db.storage[id]\n"
+		"if type(st) ~= 'table' or not st.active_section then return nil end\n"
+		"local r = { section = st.active_section, scheme = st.active_scheme }\n"
+		"local pd = st.active_scheme == 'ph_door' and st.ph_door\n"
+		"if type(pd) == 'table' then\n"
+		"  r.door = true r.locked = pd.locked == true r.closed = pd.closed == true r.not_for_npc = pd.not_for_npc == true\n"
+		"  local a = pd.door_action\n"
+		"  pcall(function() if a and a.initialized then r.at_open = a:is_open() r.at_closed = a:is_closed() end end)\n"
+		"end\n"
+		"pcall(function() local ini = st.ini if not ini then return end\n"
+		"  for _, k in ipairs({ 'on_use', 'on_info', 'on_info2', 'on_actor_in_zone', 'on_actor_not_in_zone', 'on_timer' }) do\n"
+		"    if ini:line_exist(r.section, k) then r[k] = ini:r_string_ex(r.section, k) end end end)\n"
+		"return r\n";
+
+	const char* door_keys[] = { "on_use", "on_info", "on_info2", "on_actor_in_zone", "on_actor_not_in_zone", "on_timer" };
+
+	bool lua_flag(lua_State* L, int t, LPCSTR k, int& v)
+	{
+		lua_getfield(L, t, k);
+		bool has = lua_type(L, -1) == LUA_TBOOLEAN;
+		if (has)
+			v = lua_toboolean(L, -1);
+		lua_pop(L, 1);
+		return has;
+	}
+
+	xr_string lua_str(lua_State* L, int t, LPCSTR k)
+	{
+		lua_getfield(L, t, k);
+		xr_string r = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+		lua_pop(L, 1);
+		return r;
 	}
 
 	xr_string offline_entry(ctx& c, CSE_ALifeDynamicObject* se, kind_t k, float dist)
@@ -726,6 +773,75 @@ void mcp_register_world()
 {
 	mcp::register_method("world.objects", world_objects);
 	mcp::register_method("world.object", world_object);
+}
+
+bool mcp_world_is_door(CGameObject* o)
+{
+	CEntityAlive* ea;
+	return o && classify(o, ea) == k_door;
+}
+
+// Door state from its ph_door logic: open, opening, closed, closing, locked, scripted (other scheme), no_logic, unknown;
+// json = the "door" object (state, logic section, locked, not_for_npc, condlists, use tip); usable = the logic reacts to
+// use (on_use)
+LPCSTR mcp_door_state(CGameObject* o, xr_string* json, bool* usable)
+{
+	lua_State* L = g_ai_space ? ai().script_engine().lua() : nullptr;
+	LPCSTR state = "no_logic";
+	jobj d;
+	bool use = false;
+	if (L && lua_checkstack(L, 8))
+	{
+		int top = lua_gettop(L);
+		if (!luaL_loadbuffer(L, door_chunk, xr_strlen(door_chunk), "=world.door"))
+		{
+			lua_pushinteger(L, o->ID());
+			if (!lua_pcall(L, 1, 1, 0) && lua_istable(L, -1))
+			{
+				int t = lua_gettop(L);
+				int door = 0, locked = 0, closed = 0, nfn = 0, at_open = -1, at_closed = -1;
+				lua_flag(L, t, "door", door);
+				lua_flag(L, t, "locked", locked);
+				lua_flag(L, t, "closed", closed);
+				lua_flag(L, t, "not_for_npc", nfn);
+				bool ready = lua_flag(L, t, "at_open", at_open) && lua_flag(L, t, "at_closed", at_closed);
+				if (!door)
+					state = "scripted";
+				else if (!ready)
+					state = "unknown";
+				else if (closed)
+					state = locked ? "locked" : at_closed ? "closed" : "closing";
+				else
+					state = at_open ? "open" : "opening";
+				d.str("state", state).str("logic", lua_str(L, t, "section").c_str());
+				if (!door)
+					d.str("scheme", lua_str(L, t, "scheme").c_str());
+				else
+				{
+					d.b("locked", !!locked);
+					if (nfn)
+						d.b("not_for_npc", true);
+				}
+				for (LPCSTR k : door_keys)
+				{
+					xr_string v = lua_str(L, t, k);
+					if (v.size())
+						d.str(k, v.c_str());
+				}
+				use = lua_str(L, t, "on_use").size() > 0;
+			}
+		}
+		lua_settop(L, top);
+	}
+	if (d.s.empty())
+		d.str("state", state);
+	if (LPCSTR tip = o->tip_text())
+		d.str("tip", CStringTable().translate(tip).c_str());
+	if (json)
+		*json = d.done();
+	if (usable)
+		*usable = use;
+	return state;
 }
 
 // Kind name (game_objects kinds) of an alife server entity; nullptr when there is none

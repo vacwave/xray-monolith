@@ -20,10 +20,16 @@
 #include "xr_level_controller.h"
 #include "MainMenu.h"
 #include "UIGameCustom.h"
+#include "HUDManager.h"
+#include "entity_alive.h"
+#include "InventoryOwner.h"
 #include <queue>
 
 // MCP nav.*: AI-map (level graph) and game-graph queries for agents (read-only), plus a debug overlay of nodes / a path
 // drawn into the 3D view (same line path as Lua debug gizmos: DRender->add_lines, flushed by CLevel::OnRender).
+bool mcp_world_is_door(CGameObject* o); // xrGame/mcp_world.cpp
+LPCSTR mcp_door_state(CGameObject* o, xr_string* json, bool* usable);
+
 namespace
 {
 	xr_string js(LPCSTR s) { return s ? mcp::to_json_string(s) : xr_string("null"); }
@@ -803,7 +809,8 @@ namespace
 
 	// Fallback A* for searches beyond the graph engine's fixed 65500-vertex storage; same costs as the engine's level
 	// path manager (cell size per step, heuristic 2 * cell * manhattan cells)
-	bool long_astar(const navmap& m, u32 s, u32 d, u32 cap, float max_ms, xr_vector<u32>& path, u32& visited, bool& truncated)
+	bool long_astar(const navmap& m, u32 s, u32 d, u32 cap, float max_ms, xr_vector<u32>& path, u32& visited, bool& truncated,
+	                const xr_vector<u32>* avoid = nullptr)
 	{
 		static xr_vector<u32> parent;
 		static xr_vector<float> gcost;
@@ -859,6 +866,8 @@ namespace
 			{
 				u32 nb = v->link(k);
 				if (!m.lg.valid_vertex_id(nb) || !m.lg.is_accessible(nb))
+					continue;
+				if (avoid && std::find(avoid->begin(), avoid->end(), nb) != avoid->end())
 					continue;
 				float ng = g + m.cell;
 				if (st.seen(nb) && gcost[nb] <= ng)
@@ -926,9 +935,9 @@ namespace
 		float ms = 0;
 	};
 
-	// level path between two snapped nodes; points start at from and end at to_point
+	// level path between two snapped nodes; points start at from and end at to_point; avoid = nodes not to pass (mcp A*)
 	void level_path(const navmap& m, u32 s, const Fvector& from, u32 d, const Fvector& to_point, u32 cap, float max_ms,
-	                path_result& pr)
+	                path_result& pr, const xr_vector<u32>* avoid = nullptr)
 	{
 		CTimer t;
 		t.Start();
@@ -941,12 +950,16 @@ namespace
 			return;
 		}
 		GraphEngineSpace::CBaseParameters params(flt_max, u32(-1), _min(cap, 65500u));
-		pr.found = ai().graph_engine().search(m.lg, s, d, &pr.nodes, params);
-		pr.visited = ai().graph_engine().m_algorithm->data_storage().get_visited_node_count();
-		if (!pr.found && pr.visited >= params.max_visited_node_count && cap > 65500)
+		bool avoiding = avoid && !avoid->empty();
+		if (!avoiding)
+		{
+			pr.found = ai().graph_engine().search(m.lg, s, d, &pr.nodes, params);
+			pr.visited = ai().graph_engine().m_algorithm->data_storage().get_visited_node_count();
+		}
+		if (avoiding || (!pr.found && pr.visited >= params.max_visited_node_count && cap > 65500))
 		{
 			pr.engine = "mcp_astar";
-			pr.found = long_astar(m, s, d, cap, max_ms, pr.nodes, pr.visited, pr.truncated);
+			pr.found = long_astar(m, s, d, cap, max_ms, pr.nodes, pr.visited, pr.truncated, avoid);
 		}
 		else if (!pr.found && pr.visited >= params.max_visited_node_count)
 			pr.truncated = true;
@@ -1471,11 +1484,23 @@ namespace
 	// ------------------------------------------------------------------ move_to: the actor walks a nav path by injected
 	// input (camera turn + held forward key), ticked by mcp_input in input frames (so MCP pause / steps apply)
 
+	// a door met on the way (or the nav.use target)
+	struct door_rec
+	{
+		u16 id = 0;
+		xr_string name, section, before, after, info, pick;
+		LPCSTR action = "none", reason = nullptr;
+		Fvector pos, gate, stand; // gate = leaf centre while shut (the doorway); stand = where to open it from
+		u32 presses = 0, check_t = 0;
+		bool done = false; // opened or given up: not acted on again in this move
+		bool was_locked = false;
+	};
+
 	struct mover_t
 	{
 		u32 id = 0;
 		bool active = false;
-		LPCSTR state = "idle"; // running, reached, stuck, timeout, aborted, no_path
+		LPCSTR state = "idle"; // running, reached, stuck, timeout, aborted, no_path, blocked_door; nav.use: used, failed
 		LPCSTR reason = nullptr;
 		u16 target_id = u16(-1);
 		Fvector target, start, last_pos, check_pos;
@@ -1488,8 +1513,23 @@ namespace
 		int fwd = 0, sprint_dik = 0, jump_dik = 0, use_dik = 0, tap_dik = 0;
 		u32 check_t = 0, fwd_ms = 0, stuck = 0, stuck_total = 0, replans = 0, sprint_t = 0, replan_t = 0;
 		Fvector stuck_at;
+		xr_vector<door_rec> doors;
+		xr_vector<u16> cand;   // doors near the planned path
+		xr_vector<u32> avoid;  // AI nodes at doors that did not open: replans go around them
+		bool use_only = false; // nav.use: aim at the target and press use, no walking
+		bool level_pitch = false;
+		bool via = false;      // walk through the opened doorway first (the open leaf may stand beside the path)
+		Fvector via_pt;
+		int act = -1;          // doors[] index being handled
+		int phase = 0;         // 1 approach, 2 aim, 3 watch after the use press
+		u32 phase_t = 0, poll_t = 0, aim_try = 0, aim_ok = 0, aim_bad = 0;
+		Fvector phase_pos;
+		u16 blocked = u16(-1);
 	};
 	mover_t g_mv;
+
+	const u32 aim_points = 4, max_presses = 2;
+	const float use_range = 2.f; // CActor::UpdateCL: the use target is the HUD pick object under 2 m
 
 	void mover_release()
 	{
@@ -1510,6 +1550,8 @@ namespace
 		g_mv.reason = reason;
 	}
 
+	void path_doors();
+
 	// path from the actor to the target; false when there is none (reason set)
 	bool mover_plan(LPCSTR& reason)
 	{
@@ -1525,7 +1567,7 @@ namespace
 			return false;
 		}
 		path_result pr;
-		level_path(m, s, c.origin, st.id, st.point, 400000, 200.f, pr);
+		level_path(m, s, c.origin, st.id, st.point, 400000, 200.f, pr, &g_mv.avoid);
 		if (!pr.found)
 		{
 			reason = pr.reason;
@@ -1540,7 +1582,445 @@ namespace
 			g_ov.path = pr.points;
 			g_ov.markers.assign(1, g_mv.target);
 		}
+		path_doors();
 		return true;
+	}
+
+	CGameObject* online(u16 id)
+	{
+		CObject* o = Level().Objects.net_Find(id);
+		return o && !o->getDestroy() ? smart_cast<CGameObject*>(o) : nullptr;
+	}
+
+	bool is_shut(LPCSTR st) { return !xr_strcmp(st, "closed") || !xr_strcmp(st, "closing") || !xr_strcmp(st, "locked"); }
+
+	int door_index(u16 id)
+	{
+		for (u32 k = 0; k < g_mv.doors.size(); ++k)
+			if (g_mv.doors[k].id == id)
+				return (int)k;
+		return -1;
+	}
+
+	// record for o (added on first sight with the state seen then)
+	door_rec& door_note(CGameObject* o, LPCSTR state, const xr_string& info)
+	{
+		int k = door_index(o->ID());
+		if (k < 0)
+		{
+			door_rec r;
+			r.id = o->ID();
+			r.name = o->cName().c_str();
+			r.section = o->cNameSect_str();
+			r.pos = o->Position();
+			r.before = state;
+			g_mv.doors.push_back(r);
+			k = (int)g_mv.doors.size() - 1;
+		}
+		door_rec& r = g_mv.doors[k];
+		r.after = state;
+		r.info = info;
+		r.check_t = g_mv.elapsed;
+		return r;
+	}
+
+	float camera_pitch() { return rad2deg(asinf(_max(-1.f, _min(1.f, Device.vCameraDirection.y)))); }
+
+	// turn the camera toward p (yaw and pitch, 720 deg/s); true once within 1 degree
+	bool look_toward(const Fvector& p, u32 dt)
+	{
+		const Fvector& eye = Device.vCameraPosition;
+		Fvector d;
+		d.sub(p, eye);
+		float dy = wrap180(heading(eye, p) - camera_yaw());
+		float dp = rad2deg(atan2f(d.y, _sqrt(d.x * d.x + d.z * d.z))) - camera_pitch();
+		float mx = 720.f * dt / 1000.f;
+		float ty = _max(-mx, _min(dy, mx)), tp = _max(-mx, _min(dp, mx));
+		CCameraBase* cam = g_actor->cam_Active();
+		if (_abs(ty) > .01f)
+			cam->Move(ty > 0 ? kRIGHT : kLEFT, deg2rad(_abs(ty)));
+		if (_abs(tp) > .01f)
+			cam->Move(tp > 0 ? kDOWN : kUP, deg2rad(_abs(tp))); // kDOWN looks up
+		return _abs(dy) < 1.f && _abs(dp) < 1.f;
+	}
+
+	// where the pick ray should hit o: bbox centre (a living NPC: chest), then points above / below it
+	Fvector aim_point(CGameObject* o, u32 k)
+	{
+		static const float dy[aim_points] = { 0.f, .3f, -.3f, .6f };
+		Fvector p;
+		CEntityAlive* ea = smart_cast<CEntityAlive*>(o);
+		if (ea && ea->g_Alive() && smart_cast<CInventoryOwner*>(o))
+			p.set(o->Position()).y += 1.3f;
+		else
+			o->Center(p);
+		p.y += dy[k];
+		return p;
+	}
+
+	float seg_dist_xz(const Fvector& p, const Fvector& a, const Fvector& b)
+	{
+		float abx = b.x - a.x, abz = b.z - a.z, apx = p.x - a.x, apz = p.z - a.z;
+		float l = abx * abx + abz * abz;
+		float t = l > EPS ? _max(0.f, _min(1.f, (apx * abx + apz * abz) / l)) : 0.f;
+		return _sqrt(_sqr(apx - abx * t) + _sqr(apz - abz * t));
+	}
+
+	// a door one walks through: leaf (2 * hinge-to-centre) >= 0.7 m; cabinet / table doors are ~0.5 m
+	bool passage_door(CGameObject* o)
+	{
+		if (!mcp_world_is_door(o))
+			return false;
+		Fvector c;
+		o->Center(c);
+		return c.distance_to_xz(o->Position()) >= .35f;
+	}
+
+	bool segs_cross_xz(const Fvector& a, const Fvector& b, const Fvector& c, const Fvector& d)
+	{
+		auto side = [](const Fvector& p, const Fvector& q, const Fvector& r) { return (q.x - p.x) * (r.z - p.z) - (q.z - p.z) * (r.x - p.x); };
+		return side(a, b, c) * side(a, b, d) < 0.f && side(c, d, a) * side(c, d, b) < 0.f;
+	}
+
+	// the rest of the path (from the actor) crosses the door's current leaf (hinge to tip, 0.1 m longer each way)
+	bool path_crosses(CGameObject* o, const Fvector& pos)
+	{
+		Fvector h = o->Position(), c, dir;
+		o->Center(c);
+		dir.set(c.x - h.x, 0, c.z - h.z);
+		float l = dir.magnitude();
+		if (l < EPS_L)
+			return false;
+		dir.div(l);
+		Fvector a = Fvector(h).mad(dir, -.1f), b = Fvector(h).mad(dir, 2.f * l + .1f);
+		Fvector from = pos;
+		for (u32 k = g_mv.wp; k < g_mv.path.size(); from = g_mv.path[k++])
+			if (segs_cross_xz(from, g_mv.path[k], a, b))
+				return true;
+		return false;
+	}
+
+	// passage doors whose centre is within 1.2 m of the planned path
+	void path_doors()
+	{
+		g_mv.cand.clear();
+		CObjectList& list = Level().Objects;
+		for (u32 n = 0, cnt = list.o_count(); n < cnt; n++)
+		{
+			CObject* ob = list.o_get_by_iterator(n);
+			if (!ob || ob->getDestroy() || ob->H_Parent())
+				continue;
+			CGameObject* o = smart_cast<CGameObject*>(ob);
+			if (!passage_door(o))
+				continue;
+			Fvector c;
+			o->Center(c);
+			for (size_t k = 1; k < g_mv.path.size(); ++k)
+			{
+				const Fvector &a = g_mv.path[k - 1], &b = g_mv.path[k];
+				if (seg_dist_xz(c, a, b) < 1.2f && c.y > _min(a.y, b.y) - 1.f && c.y < _max(a.y, b.y) + 3.f)
+				{
+					g_mv.cand.push_back(o->ID());
+					break;
+				}
+			}
+		}
+	}
+
+	void door_phase(int k, int phase)
+	{
+		door_rec& r = g_mv.doors[k];
+		CGameObject* o = online(r.id);
+		if (g_mv.act != k && o)
+		{
+			// stand on the doorway's normal, on the actor's side, outside the leaf's swing (hinge = object position,
+			// leaf length = 2 * hinge-to-centre) but within use range
+			Fvector a = g_actor->Position(), h = o->Position();
+			o->Center(r.gate);
+			float sx = r.gate.x - h.x, sz = r.gate.z - h.z, l = _sqrt(sx * sx + sz * sz);
+			r.stand = a;
+			if (l > .05f)
+			{
+				float nx = -sz / l, nz = sx / l;
+				if (nx * (a.x - r.gate.x) + nz * (a.z - r.gate.z) < 0.f)
+					nx = -nx, nz = -nz;
+				float d = _min(1.8f, _max(1.2f, _sqrt(_max(0.f, _sqr(2.f * l + .5f) - l * l))));
+				r.stand.set(r.gate.x + nx * d, a.y, r.gate.z + nz * d);
+			}
+		}
+		g_mv.act = k;
+		g_mv.phase = phase;
+		g_mv.phase_t = g_mv.poll_t = g_mv.elapsed;
+		g_mv.phase_pos = g_actor->Position();
+		g_mv.aim_try = g_mv.aim_ok = g_mv.aim_bad = 0;
+	}
+
+	// back to walking (stuck detection restarts)
+	void door_end()
+	{
+		g_mv.act = -1;
+		g_mv.phase = 0;
+		g_mv.poll_t = g_mv.elapsed;
+		g_mv.level_pitch = true;
+		g_mv.check_t = g_mv.elapsed;
+		g_mv.check_pos = g_actor->Position();
+		g_mv.fwd_ms = 0;
+	}
+
+	// the door did not open: walk around it (its AI nodes avoided) if another route exists, else blocked_door
+	void door_fail(door_rec& r, LPCSTR reason)
+	{
+		r.reason = reason;
+		r.done = true;
+		if (g_mv.use_only)
+			return mover_finish("failed", reason);
+		navmap m(ai().level_graph());
+		Fvector c = r.pos;
+		if (CGameObject* o = online(r.id))
+			o->Center(c);
+		int x0 = m.cx(c.x), z0 = m.cz(c.z);
+		for (int x = x0 - 2; x <= x0 + 2; ++x)
+			for (int z = z0 - 2; z <= z0 + 2; ++z)
+			{
+				u32 f, l;
+				if (m.cell_nodes(x, z, f, l))
+					for (u32 id = f; id < l; ++id)
+					{
+						Fvector p = m.centre(id);
+						if (p.distance_to_xz(c) < 1.f + m.cell * .5f && _abs(p.y - c.y) < 2.5f)
+							g_mv.avoid.push_back(id);
+					}
+			}
+		g_mv.replans++;
+		LPCSTR why;
+		if (mover_plan(why))
+		{
+			r.action = "avoided";
+			return door_end();
+		}
+		g_mv.blocked = r.id;
+		mover_finish("blocked_door", reason);
+	}
+
+	// a door on the path within reach ahead: shut -> approach it to open; open ones are only recorded (no use: it would
+	// close them)
+	void door_scan(const Fvector& pos, const Fvector& aim)
+	{
+		for (u16 id : g_mv.cand)
+		{
+			CGameObject* o = online(id);
+			if (!o)
+				continue;
+			Fvector c;
+			o->Center(c);
+			float d = pos.distance_to_xz(c);
+			if (d > 2.4f || c.y < pos.y - 1.f || c.y > pos.y + 3.f)
+				continue;
+			int k = door_index(id);
+			if (k >= 0 && (g_mv.doors[k].done || g_mv.elapsed - g_mv.doors[k].check_t < 250))
+				continue;
+			if (d > .7f && (c.x - pos.x) * (aim.x - pos.x) + (c.z - pos.z) * (aim.z - pos.z) <= 0.f)
+				continue; // behind
+			xr_string info;
+			bool usable;
+			LPCSTR st = mcp_door_state(o, &info, &usable);
+			bool shut = is_shut(st);
+			if (shut && !path_crosses(o, pos))
+				continue; // a shut door beside the path
+			door_rec& r = door_note(o, st, info);
+			if (!shut)
+				continue;
+			k = door_index(r.id);
+			if (!xr_strcmp(st, "locked") && !usable)
+				return door_fail(r, "locked");
+			return door_phase(k, 1);
+		}
+	}
+
+	// stuck: a shut door within 2 m -> aim and use it (1); an open one -> no use tap, it would close it (-1); none (0)
+	int door_stuck(const Fvector& pos)
+	{
+		CGameObject* best = nullptr;
+		float bd = 2.f;
+		LPCSTR st = nullptr;
+		xr_string info;
+		bool usable = false;
+		CObjectList& list = Level().Objects;
+		for (u32 n = 0, cnt = list.o_count(); n < cnt; n++)
+		{
+			CObject* ob = list.o_get_by_iterator(n);
+			if (!ob || ob->getDestroy() || ob->H_Parent() || ob->Position().distance_to(pos) > 4.f)
+				continue;
+			CGameObject* o = smart_cast<CGameObject*>(ob);
+			if (!passage_door(o))
+				continue;
+			Fvector c;
+			o->Center(c);
+			float d = c.distance_to_xz(pos);
+			if (d >= bd || c.y < pos.y - 1.f || c.y > pos.y + 3.f)
+				continue;
+			xr_string i;
+			bool u;
+			LPCSTR s = mcp_door_state(o, &i, &u);
+			bd = d;
+			best = o;
+			st = s;
+			info = i;
+			usable = u;
+		}
+		if (!best)
+			return 0;
+		door_rec& r = door_note(best, st, info);
+		if (r.done || r.presses >= max_presses)
+			return -1;
+		if (!is_shut(st) && !(usable && !xr_strcmp(st, "scripted")))
+			return xr_strcmp(st, "no_logic") ? -1 : 0;
+		if (!xr_strcmp(st, "locked") && !usable)
+		{
+			door_fail(r, "locked");
+			return 1;
+		}
+		door_phase(door_index(best->ID()), 1);
+		return 1;
+	}
+
+	// approach (phase 1, walking: ends near the door or when blocked), aim until the HUD pick is the door within use
+	// range (2), press use and watch the result (3)
+	void door_tick(u32 dt, const Fvector& pos, Fvector* aim = nullptr)
+	{
+		door_rec& r = g_mv.doors[g_mv.act];
+		CGameObject* o = online(r.id);
+		u32 t = g_mv.elapsed - g_mv.phase_t;
+		if (!o)
+		{
+			if (g_mv.use_only && g_mv.phase == 3)
+				return mover_finish("used", "gone"); // picked up / consumed
+			return door_fail(r, "gone");
+		}
+		if (g_mv.phase == 1)
+		{
+			bool stalled = false;
+			if (g_mv.elapsed - g_mv.poll_t >= 400)
+			{
+				stalled = t >= 800 && pos.distance_to(g_mv.phase_pos) < .15f;
+				g_mv.phase_pos = pos;
+				g_mv.poll_t = g_mv.elapsed;
+			}
+			if (pos.distance_to_xz(r.stand) <= .3f || stalled || t > 4000)
+				door_phase(g_mv.act, 2);
+			else if (aim)
+				*aim = r.stand;
+			return;
+		}
+		const collide::rq_result& rq = HUD().GetRQ();
+		bool closer = g_mv.phase == 2 && !g_mv.use_only && rq.O == o && rq.range >= use_range;
+		if (g_mv.fwd_down != closer)
+		{
+			mcp_input::hold_key(g_mv.fwd, closer); // step toward a door just out of use range
+			g_mv.fwd_down = closer;
+		}
+		if (g_mv.phase == 2)
+		{
+			if (g_mv.aim_try >= aim_points || t > 5000)
+				return door_fail(r, "pick_missed");
+			if (!look_toward(aim_point(o, g_mv.aim_try), dt))
+			{
+				g_mv.aim_ok = 0;
+				return;
+			}
+			if (closer)
+				return;
+			if (rq.O == o && rq.range < use_range)
+			{
+				if (++g_mv.aim_ok < 2)
+					return; // the pick must hold for two frames (the actor reads it in UpdateCL)
+				if (!g_mv.use_dik)
+					return door_fail(r, "use_not_bound");
+				g_mv.tap_dik = g_mv.use_dik;
+				mcp_input::hold_key(g_mv.tap_dik, true);
+				g_mv.jump_tap = true;
+				r.presses++;
+				r.action = "use";
+				r.pick.clear();
+				g_mv.phase = 3;
+				g_mv.phase_t = g_mv.poll_t = g_mv.elapsed;
+				return;
+			}
+			g_mv.aim_ok = 0;
+			if (rq.O == o)
+				r.pick = "out_of_range";
+			else if (rq.O)
+				r.pick = xr_string("blocked by ") + rq.O->cName().c_str();
+			else
+				r.pick = rq.range > 0.f ? "blocked by level geometry" : "nothing hit";
+			if (rq.O == o && g_mv.use_only)
+				return door_fail(r, "out_of_range");
+			if (++g_mv.aim_bad >= 4)
+			{
+				g_mv.aim_try++;
+				g_mv.aim_bad = 0;
+			}
+			return;
+		}
+		// phase 3: poll every 100 ms
+		if (g_mv.elapsed - g_mv.poll_t < 100)
+			return;
+		g_mv.poll_t = g_mv.elapsed;
+		bool door = mcp_world_is_door(o);
+		if (g_mv.use_only && !door)
+		{
+			if (o->H_Parent() == g_actor)
+				return mover_finish("used", "taken");
+			if (t >= 1500)
+				return mover_finish("used", "no_effect");
+			return;
+		}
+		xr_string info;
+		bool usable;
+		LPCSTR st = mcp_door_state(o, &info, &usable);
+		door_note(o, st, info);
+		if (g_mv.use_only)
+		{
+			bool settled = xr_strcmp(st, "opening") && xr_strcmp(st, "closing");
+			if ((settled && (r.before != st || t >= 1200)) || t >= 6000)
+				return mover_finish("used", r.before != st ? "door_toggled" : "no_effect");
+			return;
+		}
+		if (!xr_strcmp(st, "open") || (!xr_strcmp(st, "opening") && t >= 6000))
+		{
+			r.action = "opened";
+			r.done = true;
+			g_mv.via = true;
+			g_mv.via_pt = r.gate;
+			return door_end();
+		}
+		if (t < 1200 || !xr_strcmp(st, "opening"))
+			return;
+		if (!is_shut(st))
+		{
+			r.done = true; // a door without ph_door logic: nothing to watch, walk on
+			return door_end();
+		}
+		r.was_locked |= !xr_strcmp(st, "locked") || r.before == "locked";
+		if (r.presses < max_presses && usable)
+			return door_phase(g_mv.act, 2); // one more try (a missed press, or the logic needed two steps)
+		door_fail(r, r.was_locked ? "locked" : "no_effect"); // a use on a locked door can toggle locked <-> closed
+	}
+
+	xr_string door_json(const door_rec& r)
+	{
+		jobj e;
+		e.i("id", r.id).str("name", r.name.c_str()).str("section", r.section.c_str()).vec("position", r.pos);
+		if (r.before.size())
+			e.str("before", r.before.c_str()).str("after", r.after.c_str());
+		e.str("action", r.action).i("presses", r.presses);
+		if (r.reason)
+			e.str("reason", r.reason);
+		if (r.pick.size())
+			e.str("pick", r.pick.c_str());
+		if (r.info.size())
+			e.raw("door", r.info);
+		return e.done();
 	}
 
 	void mover_tick(u32 dt)
@@ -1567,9 +2047,19 @@ namespace
 		CMainMenu* mm = g_pGamePersistent ? MainMenu() : nullptr;
 		CUIGameCustom* gui = CurrentGameUI();
 		if ((mm && mm->IsActive()) || (gui && gui->TopInputReceiver()) || (Console && Console->bVisible))
+		{
+			if (g_mv.use_only && g_mv.phase == 3 && gui && gui->TopInputReceiver())
+				return mover_finish("used", "dialog_opened");
 			return mover_finish("aborted", "dialog");
+		}
 		if (g_mv.fwd_down && !mcp_input::is_held(g_mv.fwd))
 			return mover_finish("aborted", "keys_released");
+		if (g_mv.use_only)
+		{
+			if (g_mv.elapsed > g_mv.timeout_ms)
+				return mover_finish("timeout");
+			return door_tick(dt, g_actor->Position());
+		}
 		if (g_mv.target_id != u16(-1))
 		{
 			CObject* o = Level().Objects.net_Find(g_mv.target_id);
@@ -1602,12 +2092,38 @@ namespace
 			if (nn != invalid && lg.check_vertex_in_direction(node, Fvector2().set(pos.x, pos.z), nn))
 				g_mv.wp++;
 		}
-		const Fvector& aim = g_mv.wp >= last ? g_mv.target : g_mv.path[g_mv.wp];
+		Fvector aim = g_mv.wp >= last ? g_mv.target : g_mv.path[g_mv.wp]; // copy: a door replan replaces the path
+		if (g_mv.via)
+		{
+			// poll_t = when the door opened
+			if (pos.distance_to_xz(g_mv.via_pt) < .4f || g_mv.elapsed - g_mv.poll_t > 3000 || g_mv.phase)
+				g_mv.via = false;
+			else
+				aim = g_mv.via_pt;
+		}
+		if (!g_mv.phase)
+			door_scan(pos, aim);
+		if (!g_mv.active)
+			return;
+		if (g_mv.phase)
+		{
+			door_tick(dt, pos, &aim);
+			if (g_mv.phase != 1)
+				return;
+		}
 		float d = wrap180(heading(pos, aim) - camera_yaw());
 		float max_turn = 720.f * dt / 1000.f;
 		float turn = _max(-max_turn, _min(d, max_turn));
 		if (_abs(turn) > .01f)
 			g_actor->cam_Active()->Move(turn > 0 ? kRIGHT : kLEFT, deg2rad(_abs(turn)));
+		if (g_mv.level_pitch)
+		{
+			// look ahead again after aiming at a door
+			float p = camera_pitch(), step = _min(_abs(p), max_turn * .5f);
+			if (step > .01f)
+				g_actor->cam_Active()->Move(p > 0 ? kUP : kDOWN, deg2rad(step));
+			g_mv.level_pitch = _abs(p) > 1.f;
+		}
 		bool want = _abs(d) < 50.f;
 		if (want != g_mv.fwd_down)
 		{
@@ -1623,8 +2139,9 @@ namespace
 			g_mv.sprint_t = g_mv.elapsed;
 		}
 
-		// stuck: under 0.3 m of progress per second of holding forward -> use (opens doors), jump, replan, give up
-		if (g_mv.elapsed - g_mv.check_t >= 1000)
+		// stuck: under 0.3 m of progress per second of holding forward -> open a door within 2 m (else tap use), jump,
+		// replan, give up
+		if (!g_mv.phase && g_mv.elapsed - g_mv.check_t >= 1000)
 		{
 			bool held_long = g_mv.fwd_ms > 600;
 			if (held_long && pos.distance_to(g_mv.check_pos) < .3f)
@@ -1633,6 +2150,14 @@ namespace
 				g_mv.stuck_total++;
 				g_mv.stuck_at = pos;
 				LPCSTR why;
+				if (g_mv.stuck == 1)
+				{
+					int ds = door_stuck(pos);
+					if (ds > 0)
+						return; // door phase started (or the door failed: avoided / blocked_door)
+					if (ds < 0)
+						g_mv.stuck = 2; // an open door near: no use tap
+				}
 				if (g_mv.stuck <= 2 && (g_mv.stuck == 1 ? g_mv.use_dik : g_mv.jump_dik))
 				{
 					g_mv.tap_dik = g_mv.stuck == 1 ? g_mv.use_dik : g_mv.jump_dik;
@@ -1664,9 +2189,23 @@ namespace
 			r.str("reason", g_mv.reason);
 		if (!g_mv.id)
 			return r.done();
+		if (g_mv.use_only)
+		{
+			r.str("mode", "use").i("elapsed_ms", g_mv.elapsed).i("frames", g_mv.frames);
+			return r.raw("use", door_json(g_mv.doors[0])).done();
+		}
 		r.vec("target", g_mv.target);
 		if (g_mv.target_id != u16(-1))
 			r.i("target_id", g_mv.target_id);
+		if (g_mv.doors.size())
+		{
+			xr_string a = "[";
+			for (const door_rec& d : g_mv.doors)
+				a += (a.size() > 1 ? "," : "") + door_json(d);
+			r.raw("doors", a + "]");
+		}
+		if (g_mv.blocked != u16(-1))
+			r.i("blocked_door", g_mv.blocked);
 		r.i("elapsed_ms", g_mv.elapsed).i("frames", g_mv.frames).num("path_length", g_mv.path_length, 1);
 		r.i("waypoint", g_mv.wp).i("waypoints", g_mv.path.size()).num("travelled", g_mv.travelled, 1);
 		if (g_actor && g_pGameLevel && g_pGameLevel->name() == g_mv.level)
@@ -1733,6 +2272,58 @@ namespace
 		LPCSTR why = nullptr;
 		if (!mover_plan(why))
 			mover_finish("no_path", why);
+		out = mover_json();
+		return true;
+	}
+
+	// Aimed use (like a player): look at the object's pick point until the HUD pick is that object within use range,
+	// press use, report what happened (shares the mover's door aim / watch phases)
+	bool nav_use(LPCSTR params, xr_string& out)
+	{
+		ctx c;
+		if (!ready(params, c, out, "to"))
+			return true;
+		if (!g_actor || !g_actor->g_Alive())
+		{
+			out = jobj().b("available", false).str("reason", "no_actor").done();
+			return true;
+		}
+		s64 id = -1;
+		CGameObject* o = mcp::get_int_param(params, "id", id) && id >= 0 && id < 0xffff ? online((u16)id) : nullptr;
+		if (!o)
+		{
+			out = "id of an online object required";
+			return false;
+		}
+		if (g_mv.active)
+			mover_finish("aborted", "replaced");
+		mover_t m;
+		m.id = g_mv.id + 1;
+		m.level = g_pGameLevel->name();
+		m.use_only = true;
+		m.target_id = o->ID();
+		m.target = o->Position();
+		m.timeout_ms = 10000;
+		m.fwd = get_action_dik(kFWD);
+		m.use_dik = get_action_dik(kUSE);
+		g_mv = m;
+		g_mv.active = true;
+		g_mv.state = "running";
+		door_rec r;
+		r.id = o->ID();
+		r.name = o->cName().c_str();
+		r.section = o->cNameSect_str();
+		r.pos = o->Position();
+		if (mcp_world_is_door(o))
+			r.before = r.after = mcp_door_state(o, &r.info, nullptr);
+		g_mv.doors.push_back(r);
+		door_phase(0, 2);
+		float dist = Device.vCameraPosition.distance_to(aim_point(o, 0));
+		if (dist > use_range + .5f)
+		{
+			g_mv.doors[0].pick = "out_of_range";
+			mover_finish("failed", "out_of_range");
+		}
 		out = mover_json();
 		return true;
 	}
@@ -1849,6 +2440,7 @@ void mcp_register_nav()
 	mcp::register_method("nav.overlay", nav_overlay);
 	mcp::register_method("nav.move_to", nav_move_to);
 	mcp::register_method("nav.move_status", nav_move_status);
+	mcp::register_method("nav.use", nav_use);
 	mcp_input::set_driver(mover_tick);
 	Device.seqFrame.Add(&frame, REG_PRIORITY_LOW);
 }
