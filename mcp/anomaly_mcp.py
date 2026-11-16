@@ -3030,13 +3030,14 @@ def ui_node_out(inst, n, image_size):
 
 
 def ui_talk(inst, nodes, image_size):
-    qs = [n for n in nodes if n["kind"] == "question" and n.get("clip") != "out"]
+    qs = [n for n in nodes if n["kind"] == "question"]
     ans = [n for n in nodes if n["kind"] == "answer"]
     if not qs and not ans:
         return None
     return {"phrases": [{"speaker": a.get("speaker"), "text": ui_text(a)} for a in ans[-6:]],
-            "options": [{"index": i + 1, "text": ui_text(q), "path": q["path"],
-                         "center": ui_node_out(inst, q, image_size)["center"]} for i, q in enumerate(qs)]}
+            "options": [{"index": i + 1, "id": q.get("id"), "text": ui_text(q), "path": q["path"],
+                         "center": ui_node_out(inst, q, image_size)["center"],
+                         **({"clip": "out"} if q.get("clip") == "out" else {})} for i, q in enumerate(qs)]}
 
 
 def ui_match(pattern, value):
@@ -3103,10 +3104,12 @@ def ui_find(inst, nodes, text, name, path, option, kind, nth):
         return None
 
     if option is not None:
-        qs = [n for n in nodes if n["kind"] == "question" and n.get("clip") != "out"]
+        qs = [n for n in nodes if n["kind"] == "question"]
         if not 1 <= option <= len(qs):
             raise ValueError(f"option {option} not available: {len(qs)} answer option(s) "
                              f"{[ui_text(q) for q in qs]}")
+        if qs[option - 1].get("clip") == "out":
+            raise ValueError(f"option {option} is scrolled out of the list; use game_talk(n={option})")
         return qs[option - 1]
     cands = nodes
     if path is not None:
@@ -3196,7 +3199,8 @@ async def game_ui(instance: str | None = None, view: str = "interactive", root: 
     (edit), value (track bar), scroll [pos,min,max], enabled false, hover (cursor over it), clip ("partial";
     windows scrolled out of view are skipped: clipped_out counts them), item {section, name, id, count, container}
     for inventory/trade cells. class / script_class for plain windows and script windows.
-    talk (talk window open): phrases (last 6 {speaker, text}) and options [{index (1-based), text, path, center}].
+    talk (talk window open): phrases (last 6 {speaker, text}) and options [{index (on-screen number), id (phrase id,
+    dialog id in the topic list), text, path, center, clip "out" when scrolled out}]; the full view is game_talk.
     cursor {x, y (UI units), px, visible, mcp_owned}. dialogs: [{root, class, script_class}]. During a load:
     loading true and no nodes. text also matches a widget's label (the text next to a check box) and an item
     cell's item name / section. 3D PDA (default): its UI is drawn onto the device, so px rects do not match the
@@ -3216,7 +3220,7 @@ async def game_ui_click(instance: str | None = None, text: str | None = None, na
     """Click a visible, enabled widget by meaning: moves the UI cursor to its centre and clicks through the normal
     mouse path (hover, focus, callbacks as for a human). Pick by text (shown text, case-insensitive exact or glob
     like "new*"), name (window name), path (from game_ui), or option (talk window answer option, 1-based as listed
-    in game_ui talk.options). A text inside a button / list item / option clicks that widget. Ambiguous -> error
+    in game_ui talk.options; scrolled out -> use game_talk). A text inside a button / list item / option clicks that widget. Ambiguous -> error
     listing the candidates (use nth or path); no match -> error with the visible texts.
     button: left / right / middle; double: double-click (e.g. use/equip an inventory item).
     Returns clicked (node), at_ui / at_px, and after settle_ms the resulting mode and ui dialog (game_state)."""
@@ -3225,6 +3229,159 @@ async def game_ui_click(instance: str | None = None, text: str | None = None, na
         raise ValueError("pass text, name, path or option")
     return await run(game_ui_click_run, inst, text, name, path, option, kind, button, double, root, nth, settle_ms,
                      image_size)
+
+
+# game_talk: engine ui.talk = the talk window's full option list and log (scrolled out or not) with phrase/dialog ids;
+# choosing presses the option's number key (options 1..10) or scrolls the list and clicks it, like a player.
+
+def talk_get(inst, since=0):
+    if inst.dead:
+        raise RuntimeError(f"instance {inst.id} is not running (exit code {inst.exit_code})")
+    if inst.hung or inst.call("engine.heartbeat", timeout=5).get("loading"):
+        return {"open": False, "loading": True}
+    v = inst.call("ui.talk", {"since": since}, timeout=5)
+    if v.get("open") and not v.get("top"):
+        d = game_state_get(inst, []).get("ui", {}).get("dialog") or {}
+        v["mode"] = d.get("script_mode") or d.get("menu_mode") or d.get("kind") or "other"
+    elif v.get("open"):
+        v["mode"] = "talk"
+    return v
+
+
+def talk_line(e, line_chars):
+    o = {k: e[k] for k in ("i", "speaker", "actor", "info") if e.get(k) is not None}
+    t = ui_text(e) or ""
+    if line_chars and len(t) > line_chars:
+        o["text"], o["truncated"] = t[:line_chars] + "…", len(t)
+    else:
+        o["text"] = t
+    return o
+
+
+def talk_out(inst, v, line_chars, log_last):
+    out = {"instance": inst.id, "open": bool(v.get("open"))}
+    if v.get("loading"):
+        out["loading"] = True
+    if not v.get("open"):
+        return out
+    out["mode"] = v["mode"]
+    for k in ("partner", "topic", "dialog", "pending"):
+        if k in v:
+            out[k] = v[k]
+    out["options"] = [{**{k: o[k] for k in ("n", "key", "id", "dialog") if o.get(k) is not None}, "text": ui_text(o),
+                       **{k: o[k] for k in ("final", "ends", "actions", "give_info", "disable_info", "replies", "clip") if k in o}}
+                      for o in v.get("options", [])]
+    log = v.get("log", [])
+    if log_last is not None:
+        log = log[-log_last:] if log_last > 0 else []
+    out["log"] = [talk_line(e, line_chars) for e in log]
+    out["log_count"] = v.get("log_count", 0)
+    out["engine_ms"] = v.get("ms")
+    return out
+
+
+def talk_pick(v, id, n, text):
+    opts = v.get("options", [])
+    if id is not None:
+        m = [o for o in opts if o.get("id") == str(id)]
+    elif n is not None:
+        m = [o for o in opts if o["n"] == n]
+    else:
+        m = [o for o in opts if ui_match(text, ui_text(o))] or [o for o in opts if ui_match(f"*{text}*", ui_text(o))]
+    if len(m) == 1:
+        return m[0]
+    listed = [{"n": o["n"], "id": o.get("id"), "text": ui_text(o)} for o in (m or opts)]
+    raise ValueError(("ambiguous, pass id or n: " if m else "no such option; options: ") +
+                     json.dumps(listed, ensure_ascii=False))
+
+
+def talk_scroll_click(inst, o_id, n):
+    """Option beyond the number keys: wheel the option list until the option is fully inside it, then click it."""
+    for _ in range(60):
+        v = inst.call("ui.talk", {"since": 1 << 30}, timeout=5)
+        o = next((x for x in v.get("options", []) if x["n"] == n and x.get("id") == o_id), None)
+        if not o:
+            raise RuntimeError("the option list changed while scrolling to the option")
+        r, lr = o["rect"], v["options_rect"]
+        mid = [round((lr[0] + lr[2]) / 2, 2), round((lr[1] + lr[3]) / 2, 2)]
+        if r[1] >= lr[1] and r[3] <= lr[3]:
+            input_run(inst, ui_click_steps([round((r[0] + r[2]) / 2, 2), round((r[1] + r[3]) / 2, 2)]), True, 10)
+            return "click"
+        input_run(inst, [{"cursor": mid}, {"wheel": 1 if r[1] < lr[1] else -1}, {"wait": 30}], True, 10)
+    raise RuntimeError("could not scroll the option into view")
+
+
+def game_talk_run(inst, id, n, text, line_chars, log_last, timeout):
+    t0 = time.perf_counter()
+    v = talk_get(inst)
+    if id is None and n is None and text is None:
+        out = talk_out(inst, v, line_chars, log_last)
+        out["call_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        return out
+    if not v.get("open"):
+        raise RuntimeError("no talk window is open (walk up to an NPC, look at the body, game_input use)")
+    if v["mode"] != "talk":
+        raise RuntimeError(f"the talk window is under a {v['mode']} window; close it first (game_input ESC)")
+    o = talk_pick(v, id, n, text)
+    before = v.get("log_count", 0)
+    via = f"key {o['key']}" if o.get("key") else talk_scroll_click(inst, o.get("id"), o["n"])
+    if o.get("key"):
+        input_run(inst, [{"key": o["key"]}], True, 10)
+    # the partner answers in the same frame; the option list is rebuilt on the next one
+    deadline = time.monotonic() + timeout
+    while True:
+        a = talk_get(inst, before)
+        if not a.get("open") or a.get("loading") or a["mode"] != "talk" or (
+                not a.get("pending") and (a.get("log_count", 0) != before or a.get("dialog") != v.get("dialog")
+                                          or [x.get("id") for x in a["options"]] != [x.get("id") for x in v["options"]])):
+            break
+        if time.monotonic() > deadline:
+            break
+        time.sleep(0.03)
+    out = {"instance": inst.id, "chose": {"n": o["n"], "id": o.get("id"), "dialog": o.get("dialog"),
+                                          "text": ui_text(o), "via": via}}
+    if a.get("open") and not a.get("loading"):
+        out["new_lines"] = [talk_line(e, line_chars) for e in a.get("log", [])]
+        if a["mode"] == "talk" and a.get("log_count", 0) == before and a.get("dialog") == v.get("dialog"):
+            out["warning"] = "nothing changed after the choice (a script may have refused it)"
+    full = talk_out(inst, a, line_chars, log_last if log_last is not None else 0)
+    if not full.get("log"):
+        full.pop("log", None)
+    out.update({k: x for k, x in full.items() if k != "instance"})
+    if not a.get("open"):
+        st = game_state_get(inst, [])
+        out["game_mode"] = st.get("mode")
+        if st.get("ui", {}).get("dialog"):
+            out["dialog_window"] = st["ui"]["dialog"]
+    out["call_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+    return out
+
+
+@tool
+async def game_talk(instance: str | None = None, id: str | None = None, n: int | None = None,
+                    text: str | None = None, line_chars: int = 2000, log_last: int | None = None,
+                    timeout: float = 3) -> dict:
+    """The NPC conversation, complete (all options and log lines, also those scrolled out of view), and choosing an
+    option like a player. Open the talk first: look at the NPC's body within 2 m and game_input {"action": "use"}.
+
+    No choice: {open, mode (talk | trade | upgrade | other window over the talk), partner {id, name, section,
+    character, profile, community, trade, upgrade}, topic (true = topic list, options are dialogs), dialog (current
+    dialog id), options [{n (on-screen number), key (number key, options 1..10), id (phrase id; in the topic list
+    the dialog id), dialog, text (never cut), final (ESC/use picks it), ends (the dialog ends after it or the
+    partner's reply), actions (script function names run when said), give_info / disable_info, clip "out"/"partial"
+    (scrolled out of the list)}], log [{i, speaker, text, actor | info (task/money notes)}] (log_last: only the last N),
+    log_count}. open false = no talk window.
+    Choose by id (phrase id from options; ids are the game's dialog XML ids, the same in vanilla and mods), n or
+    text (exact / glob / substring): presses the option's number key, or scrolls the list and clicks it (n > 10), so
+    preconditions, scripts and sounds run as for a player; waits until the window updated (timeout s). Returns
+    chose {n, id, dialog, text, via}, new_lines (said since the choice), then the new view (log omitted unless
+    log_last). The dialog closing or switching to trade -> open false / mode trade (+ game_mode, dialog_window).
+    line_chars: log lines longer than this are cut (truncated = full length); 0 = no limit. Option text is never cut."""
+    inst = get(instance)
+    if sum(x is not None for x in (id, n, text)) > 1:
+        raise ValueError("pass only one of id, n, text")
+    return await run(game_talk_run, inst, None if id is None else str(id), n, text, max(0, int(line_chars)),
+                     log_last, timeout)
 
 
 # ---------------------------------------------------------------- game_perf

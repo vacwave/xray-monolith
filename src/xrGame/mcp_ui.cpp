@@ -31,6 +31,12 @@
 #include "ui/UIPropertiesBox.h"
 #include "ui/UITalkDialogWnd.h"
 #include "ui/UIMMShniaga.h"
+#include "ui/UITalkWnd.h"
+#include "UIGameSP.h"
+#include "PhraseDialog.h"
+#include "PhraseDialogManager.h"
+#include "InventoryOwner.h"
+#include "character_info.h"
 #include <luabind/detail/object_rep.hpp>
 #include <luabind/detail/class_rep.hpp>
 #include <typeinfo>
@@ -274,6 +280,7 @@ namespace
 				n.str("text", q->m_text ? static_text(q->m_text) : nullptr);
 				if (q->m_num_text)
 					n.str("num", nonempty(q->m_num_text->GetText()));
+				n.str("id", nonempty(q->m_s_value.c_str()));
 				return "question";
 			}
 			if (smart_cast<CUIAnswerItem*>(w))
@@ -544,6 +551,198 @@ namespace
 		out = res.done();
 		return true;
 	}
+
+	// --- ui.talk: the whole conversation of the talk window (all options and log lines, scrolled out or not) ---
+
+	struct talk_acc : CUITalkWnd
+	{
+		static CUITalkDialogWnd* wnd(CUITalkWnd* t) { return t->*(&talk_acc::UITalkDialogWnd); }
+		static DIALOG_SHARED_PTR& dialog(CUITalkWnd* t) { return t->*(&talk_acc::m_pCurrentDialog); }
+		static CPhraseDialogManager* ours(CUITalkWnd* t) { return t->*(&talk_acc::m_pOurDialogManager); }
+		static CInventoryOwner* our_owner(CUITalkWnd* t) { return t->*(&talk_acc::m_pOurInvOwner); }
+		static bool pending(CUITalkWnd* t) { return t->*(&talk_acc::m_bNeedToUpdateQuestions); }
+	};
+	struct script_acc : CDialogScriptHelper
+	{
+		static const xr_vector<shared_str>& give(CDialogScriptHelper* h) { return h->*(&script_acc::m_GiveInfo); }
+		static const xr_vector<shared_str>& disable(CDialogScriptHelper* h) { return h->*(&script_acc::m_DisableInfo); }
+	};
+
+	xr_string jarr(const xr_vector<shared_str>& v)
+	{
+		xr_string s;
+		for (const shared_str& x : v)
+			s += (s.empty() ? "" : ",") + js(x.c_str());
+		return "[" + s + "]";
+	}
+
+	void talk_collect(CUIWindow* w, xr_vector<CUIWindow*>& qs, xr_vector<CUIWindow*>& as, CUIWindow*& qlist)
+	{
+		xr_vector<CUIWindow*> children;
+		{
+			xrCriticalSectionGuard guard(w->csUi);
+			children.assign(w->GetChildWndList().begin(), w->GetChildWndList().end());
+		}
+		for (CUIWindow* c : children)
+		{
+			if (smart_cast<CUIQuestionItem*>(c))
+				qs.push_back(c);
+			else if (smart_cast<CUIAnswerItem*>(c))
+				as.push_back(c);
+			else
+			{
+				if (smart_cast<CUIScrollView*>(c) && c->WindowName() == "---UIQuestionsList")
+					qlist = c;
+				talk_collect(c, qs, as, qlist);
+			}
+		}
+	}
+
+	bool script_effects(jobj& o, CPhrase* ph)
+	{
+		CDialogScriptHelper* h = ph->GetScriptHelper();
+		if (!h->Actions().empty())
+			o.raw("actions", jarr(h->Actions()));
+		if (!script_acc::give(h).empty())
+			o.raw("give_info", jarr(script_acc::give(h)));
+		if (!script_acc::disable(h).empty())
+			o.raw("disable_info", jarr(script_acc::disable(h)));
+		return !h->Actions().empty() || !script_acc::give(h).empty() || !script_acc::disable(h).empty();
+	}
+
+	// What saying the phrase does as far as the engine knows: finalizer, dialog end, script action / info names
+	// of the phrase and of the partner's possible replies
+	void phrase_effects(jobj& o, CPhraseDialog* d, const shared_str& phrase_id)
+	{
+		const CPhraseGraph& g = d->get_sd()->m_PhraseGraph;
+		const CPhraseGraph::CVertex* v = g.vertex(phrase_id);
+		if (!v)
+			return;
+		if (v->data()->IsFinalizer())
+			o.b("final", true);
+		// ends: no next phrase, or none of the partner's replies leads on
+		bool ends = true;
+		xr_string replies;
+		for (const CPhraseGraph::CEdge& e : v->edges())
+		{
+			const CPhraseGraph::CVertex* nv = g.vertex(e.vertex_id());
+			if (!nv)
+				continue;
+			if (!nv->edges().empty())
+				ends = false;
+			jobj r;
+			r.str("id", nv->vertex_id().c_str());
+			if (script_effects(r, nv->data()))
+				replies += (replies.empty() ? "" : ",") + r.done();
+		}
+		o.b("ends", ends);
+		script_effects(o, v->data());
+		if (!replies.empty())
+			o.raw("replies", "[" + replies + "]");
+	}
+
+	bool ui_talk(LPCSTR params, xr_string& out)
+	{
+		CTimer timer;
+		timer.Start();
+		s64 since = 0;
+		mcp::get_int_param(params, "since", since);
+		jobj res;
+		CUIGameSP* sp = g_pGameLevel && !(pApp && pApp->IsLoading()) ? smart_cast<CUIGameSP*>(CurrentGameUI()) : nullptr;
+		CUITalkWnd* t = sp ? sp->TalkMenu : nullptr;
+		CGameObject* pgo = t ? smart_cast<CGameObject*>(t->OthersInvOwner()) : nullptr;
+		if (!t || !t->IsShown() || !pgo || !talk_acc::wnd(t) || !talk_acc::ours(t))
+		{
+			out = res.b("open", false).done();
+			return true;
+		}
+		CUITalkDialogWnd* tw = talk_acc::wnd(t);
+		res.b("open", true).b("top", sp->TopInputReceiver() == t);
+
+		CInventoryOwner* io = t->OthersInvOwner();
+		jobj p;
+		p.i("id", pgo->ID()).str("name", io->Name()).str("section", pgo->cNameSect().c_str());
+		p.str("character", nonempty(io->CharacterInfo().GetSpecificCharacterId().c_str()));
+		p.str("profile", nonempty(io->CharacterInfo().Profile().c_str()));
+		p.str("community", nonempty(io->CharacterInfo().Community().id().c_str()));
+		p.b("trade", io->IsTradeEnabled());
+		if (tw->mechanic_mode)
+			p.b("upgrade", true);
+		res.raw("partner", p.done());
+
+		DIALOG_SHARED_PTR& cur = talk_acc::dialog(t);
+		res.b("topic", !cur.get());
+		res.str("dialog", cur.get() ? cur->GetDialogID().c_str() : nullptr);
+		if (talk_acc::pending(t))
+			res.b("pending", true); // options are rebuilt on the next frame
+
+		xr_vector<CUIWindow*> qs, as;
+		CUIWindow* qlist = nullptr;
+		talk_collect(tw, qs, as, qlist);
+		Frect clip;
+		if (qlist)
+			qlist->GetAbsoluteRect(clip);
+		else
+			clip.set(0.f, 0.f, UI_BASE_WIDTH, UI_BASE_HEIGHT);
+		res.rect("options_rect", clip);
+
+		CPhraseDialogManager* ours = talk_acc::ours(t);
+		xr_string opts;
+		for (u32 k = 0; k < qs.size(); k++)
+		{
+			CUIQuestionItem* q = smart_cast<CUIQuestionItem*>(qs[k]);
+			jobj o;
+			o.i("n", k + 1);
+			if (k < 10)
+				o.str("key", k == 9 ? "0" : std::to_string(k + 1).c_str());
+			o.str("id", nonempty(q->m_s_value.c_str()));
+			CPhraseDialog* d = cur.get();
+			shared_str phrase = q->m_s_value;
+			if (!cur.get())
+			{
+				d = nullptr;
+				for (const DIALOG_SHARED_PTR& ad : ours->AvailableDialogs())
+					if (ad->GetDialogID() == q->m_s_value)
+						d = ad.get();
+				phrase = "0";
+			}
+			o.str("dialog", d ? d->GetDialogID().c_str() : nullptr);
+			o.str("text", q->m_text ? static_text(q->m_text) : nullptr);
+			if (d)
+				phrase_effects(o, d, phrase);
+			Frect r;
+			q->GetAbsoluteRect(r);
+			o.rect("rect", r);
+			if (r.y2 <= clip.y1 || r.y1 >= clip.y2)
+				o.str("clip", "out");
+			else if (r.y1 < clip.y1 || r.y2 > clip.y2)
+				o.str("clip", "partial");
+			opts += (opts.empty() ? "" : ",") + o.done();
+		}
+		res.raw("options", "[" + opts + "]");
+
+		LPCSTR our_name = talk_acc::our_owner(t) ? talk_acc::our_owner(t)->Name() : nullptr;
+		xr_string log;
+		for (u32 k = (u32)_max(0ll, since); k < as.size(); k++)
+		{
+			// children: m_text, m_name (CUIAnswerItem ctor); iconed entries are task/info notes
+			CUIWindow::WINDOW_LIST& ch = as[k]->GetChildWndList();
+			CUITextWnd* tx = ch.size() > 0 ? smart_cast<CUITextWnd*>(ch[0]) : nullptr;
+			CUITextWnd* sn = ch.size() > 1 ? smart_cast<CUITextWnd*>(ch[1]) : nullptr;
+			LPCSTR speaker = sn ? nonempty(sn->GetText()) : nullptr;
+			jobj l;
+			l.i("i", k).str("speaker", speaker).str("text", tx ? nonempty(tx->GetText()) : nullptr);
+			if (smart_cast<CUIAnswerItemIconed*>(as[k]))
+				l.b("info", true);
+			else if (speaker && our_name && !xr_strcmp(speaker, our_name))
+				l.b("actor", true);
+			log += (log.empty() ? "" : ",") + l.done();
+		}
+		res.raw("log", "[" + log + "]").i("log_count", as.size());
+		res.num("ms", timer.GetElapsed_sec() * 1000.f, 2);
+		out = res.done();
+		return true;
+	}
 }
 
 // --- input.run "cursor" step hooks (xrGame/mcp_input.cpp) ---
@@ -587,4 +786,5 @@ void mcp_register_ui()
 	if (!Core.ParamsData.test(ECoreParams::mcp_port))
 		return;
 	mcp::register_method("ui.tree", ui_tree);
+	mcp::register_method("ui.talk", ui_talk);
 }
