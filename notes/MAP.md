@@ -15,4 +15,5 @@
 - UI driving (virtual MCP cursor, input.run cursor step, ui.tree, game_ui / game_ui_click, talk options, inventory cells, main menu / options / PDA quirks) → `xrGame/UICursor.*`, `xrGame/mcp_ui.cpp`, `xrEngine/mcp_input.*` (cursor op), `mcp/anomaly_mcp.py` block `UI tools` → `ui.md`
 - Wait / sync primitive (game_wait: conditions on events, log, state, objects, Lua, time; fail_on; push wake + batched polls; lua.exec quiet) → `mcp/anomaly_mcp.py` block `game_wait`, `xrGame/mcp_lua.cpp` → `wait.md`
 - Navigation (AI map / game graph queries, nav overlay, top-down nav map, move_to; MCP nav.*, game_nav / game_nav_map / game_move_to) → `xrGame/mcp_nav.cpp`, `level_graph*.h`, `graph_engine.h`, hook in `Level.cpp` OnRender, `xrEngine/mcp_input.*` (set_driver/hold_key) → `nav.md`
-- GAMMA via MO2 (launch command, usvfs, concurrent-launch crash, write locations, mod differences) → `C:\GAMMA` (MO2), `C:\Anomaly` → `gamma.md`
+- GAMMA via MO2 (supervisor MO2 launch `mo2_run`/`spawn_outside_job`, usvfs, job breakaway, concurrent-launch crash, write locations, mute via options, mod differences, RAM/VRAM) → `C:\GAMMA` (MO2), `C:\Anomaly`, `mcp/anomaly_mcp.py` → `gamma.md`
+- MCP-mode axr_options.ltx redirect to -appdata (user options never modified) → `xrServerEntities/script_ini_file.cpp` (`mcp_options_path`) → `gamestate.md`

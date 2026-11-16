@@ -46,6 +46,7 @@ MAX_OUTPUT_CHARS = 20000  # per tool result, lines part
 MAX_LINE_CHARS = 2000
 QUICK_EXIT_S = 15  # an exit within this time after launch is reported as a failed/blocked launch
 PORT_WAIT_S = 120
+MO2_CHILD_WAIT_S = 60  # MO2 `run` -> game child process (~3 s seen)
 STOP_WAIT_S = 30
 HEARTBEAT_S = 2  # hang monitor poll interval
 WER_WAIT_S = 15  # after a crash-like exit, how long to wait for the WER dump to appear
@@ -98,14 +99,98 @@ k32.CreateJobObjectW.restype = wt.HANDLE
 k32.CreateJobObjectW.argtypes = [wt.LPVOID, wt.LPCWSTR]
 k32.SetInformationJobObject.argtypes = [wt.HANDLE, ctypes.c_int, wt.LPVOID, wt.DWORD]
 k32.AssignProcessToJobObject.argtypes = [wt.HANDLE, wt.HANDLE]
+k32.CreateToolhelp32Snapshot.restype = wt.HANDLE
+k32.CreateToolhelp32Snapshot.argtypes = [wt.DWORD, wt.DWORD]
+
+
+class _ProcEntry(ctypes.Structure):
+    _fields_ = [("dwSize", wt.DWORD), ("cntUsage", wt.DWORD), ("th32ProcessID", wt.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wt.DWORD), ("cntThreads", wt.DWORD),
+                ("th32ParentProcessID", wt.DWORD), ("pcPriClassBase", ctypes.c_long), ("dwFlags", wt.DWORD),
+                ("szExeFile", wt.WCHAR * 260)]
+
+
+k32.Process32FirstW.argtypes = k32.Process32NextW.argtypes = [wt.HANDLE, ctypes.POINTER(_ProcEntry)]
+
+
+class _StartupInfoEx(ctypes.Structure):
+    _fields_ = [("cb", wt.DWORD), ("lpReserved", wt.LPWSTR), ("lpDesktop", wt.LPWSTR), ("lpTitle", wt.LPWSTR),
+                ("dwX", wt.DWORD), ("dwY", wt.DWORD), ("dwXSize", wt.DWORD), ("dwYSize", wt.DWORD),
+                ("dwXCountChars", wt.DWORD), ("dwYCountChars", wt.DWORD), ("dwFillAttribute", wt.DWORD),
+                ("dwFlags", wt.DWORD), ("wShowWindow", wt.WORD), ("cbReserved2", wt.WORD), ("lpReserved2", wt.LPVOID),
+                ("hStdInput", wt.HANDLE), ("hStdOutput", wt.HANDLE), ("hStdError", wt.HANDLE),
+                ("lpAttributeList", wt.LPVOID)]
+
+
+class _ProcInfo(ctypes.Structure):
+    _fields_ = [("hProcess", wt.HANDLE), ("hThread", wt.HANDLE), ("dwProcessId", wt.DWORD), ("dwThreadId", wt.DWORD)]
+
+
+k32.InitializeProcThreadAttributeList.argtypes = [wt.LPVOID, wt.DWORD, wt.DWORD, ctypes.POINTER(ctypes.c_size_t)]
+k32.UpdateProcThreadAttribute.argtypes = [wt.LPVOID, wt.DWORD, ctypes.c_size_t, wt.LPVOID, ctypes.c_size_t, wt.LPVOID,
+                                          wt.LPVOID]
+k32.DeleteProcThreadAttributeList.argtypes = [wt.LPVOID]
+k32.CreateProcessW.argtypes = [wt.LPCWSTR, wt.LPWSTR, wt.LPVOID, wt.LPVOID, wt.BOOL, wt.DWORD, wt.LPVOID, wt.LPCWSTR,
+                               ctypes.POINTER(_StartupInfoEx), ctypes.POINTER(_ProcInfo)]
+
+
+def spawn_outside_job(cmdline, cwd):
+    """Start a process as a child of the user's explorer.exe, so it takes explorer's job (none), not ours: MO2 starts
+    the game with CREATE_BREAKAWAY_FROM_JOB, which fails with error 5 inside a job that forbids breakaway (e.g. the
+    MCP Python SDK's stdio client puts its server in one). Returns a ProcHandle."""
+    hp = None
+    for pid, _, name in processes():
+        if name.lower() == "explorer.exe":
+            hp = k32.OpenProcess(0x0080, False, pid)  # PROCESS_CREATE_PROCESS (fails for other users' sessions)
+            if hp:
+                break
+    if not hp:
+        raise OSError("no explorer.exe of this user to start MO2 under")
+    try:
+        size = ctypes.c_size_t()
+        k32.InitializeProcThreadAttributeList(None, 1, 0, ctypes.byref(size))
+        attrs = ctypes.create_string_buffer(size.value)
+        parent = wt.HANDLE(hp)
+        if not (k32.InitializeProcThreadAttributeList(attrs, 1, 0, ctypes.byref(size)) and
+                k32.UpdateProcThreadAttribute(attrs, 0, 0x00020000, ctypes.byref(parent), ctypes.sizeof(parent),
+                                              None, None)):  # PROC_THREAD_ATTRIBUTE_PARENT_PROCESS
+            raise OSError(f"proc thread attributes failed (error {ctypes.get_last_error()})")
+        si = _StartupInfoEx()
+        si.cb = ctypes.sizeof(si)
+        si.lpAttributeList = ctypes.cast(attrs, wt.LPVOID)
+        pi = _ProcInfo()
+        ok = k32.CreateProcessW(None, ctypes.create_unicode_buffer(cmdline), None, None, False,
+                                0x00080000, None, cwd, ctypes.byref(si), ctypes.byref(pi))  # EXTENDED_STARTUPINFO_PRESENT
+        err = ctypes.get_last_error()
+        k32.DeleteProcThreadAttributeList(attrs)
+        if not ok:
+            raise OSError(f"CreateProcess failed (error {err}): {cmdline}")
+        k32.CloseHandle(pi.hThread)
+        return ProcHandle(pi.dwProcessId, pi.hProcess)
+    finally:
+        k32.CloseHandle(hp)
+
+
+def processes():
+    """[(pid, parent pid, exe name)] of all running processes."""
+    snap = k32.CreateToolhelp32Snapshot(2, 0)  # TH32CS_SNAPPROCESS
+    e = _ProcEntry()
+    e.dwSize = ctypes.sizeof(e)
+    out = []
+    ok = k32.Process32FirstW(snap, ctypes.byref(e))
+    while ok:
+        out.append((e.th32ProcessID, e.th32ParentProcessID, e.szExeFile))
+        ok = k32.Process32NextW(snap, ctypes.byref(e))
+    k32.CloseHandle(snap)
+    return out
 
 
 class ProcHandle:
     """Process handle by pid (works for launched and attached games)."""
 
-    def __init__(self, pid):
+    def __init__(self, pid, h=None):
         self.pid = pid
-        self.h = k32.OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        self.h = h or k32.OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not self.h:
             raise OSError(f"cannot open process {pid} (error {ctypes.get_last_error()})")
 
@@ -136,19 +221,19 @@ class _JobExtLimits(ctypes.Structure):
                 ("PeakJobMemoryUsed", ctypes.c_size_t)]
 
 
-_job = None
+_jobs = []  # handles kept open until this process exits
 
 
 def kill_with_supervisor(pid):
-    """Games we launch die with this process, so a dead supervisor never leaks a running game past its slot."""
-    global _job
-    if _job is None:
-        _job = k32.CreateJobObjectW(None, None)
-        info = _JobExtLimits()
-        info.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        k32.SetInformationJobObject(_job, 9, ctypes.byref(info), ctypes.sizeof(info))  # ExtendedLimitInformation
+    """Games we launch die with this process, so a dead supervisor never leaks a running game past its slot.
+    One job per game: an MO2-started game is already in MO2's job, and a job nested under one job cannot take another's."""
+    job = k32.CreateJobObjectW(None, None)
+    _jobs.append(job)
+    info = _JobExtLimits()
+    info.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))  # ExtendedLimitInformation
     h = k32.OpenProcess(0x0100 | 0x0001, False, pid)  # PROCESS_SET_QUOTA | PROCESS_TERMINATE
-    if not h or not k32.AssignProcessToJobObject(_job, h):
+    if not h or not k32.AssignProcessToJobObject(job, h):
         log.warning("could not add pid %d to the job (error %d)", pid, ctypes.get_last_error())
     if h:
         k32.CloseHandle(h)
@@ -819,6 +904,7 @@ def read_port_file(path):
 def seed_appdata(appdata, game_root, keep_shader_cache=False):
     appdata.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(TEMPLATE_USER_LTX, appdata / "user.ltx")
+    (appdata / "axr_options.ltx").unlink(missing_ok=True)  # each run starts from the game's own options
     src = game_root / "appdata" / "shaders_cache"
     dst = appdata / "shaders_cache"
     if not keep_shader_cache:  # default: the game rebuilds it, so stale shaders never survive a launch
@@ -836,6 +922,68 @@ def copy_missing_dlls(game_root, exe_dir):
     return copied
 
 
+def mo2_setup(root):
+    """MO2 folder (ModOrganizer.exe, no fsgame.ltx) -> (ModOrganizer.exe, profile, game path from its ini), else None."""
+    if (root / "fsgame.ltx").is_file() or not (root / "ModOrganizer.exe").is_file():
+        return None
+    ini = (root / "ModOrganizer.ini").read_text(encoding="utf-8", errors="replace")
+
+    def val(key):
+        m = re.search(rf"^{key}=(?:@ByteArray\()?(.*?)\)?\s*$", ini, re.M)
+        if not m:
+            raise ValueError(f"no {key} in {root / 'ModOrganizer.ini'}")
+        return m.group(1).replace("\\\\", "\\")
+    return root / "ModOrganizer.exe", val("selected_profile"), Path(val("gamePath"))
+
+
+def mo2_run(mo2, args):
+    """Start the game through our own MO2 (usvfs overlay), return the game's pid, then kill that MO2."""
+    mo2_exe, profile, _ = mo2
+    others = [pid for pid, _, name in processes() if name.lower() == mo2_exe.name.lower()]
+    if others:
+        raise RuntimeError(f"ModOrganizer.exe is already running (pid {', '.join(map(str, others))}); close MO2 first "
+                           "(the supervisor starts and stops its own MO2 per launch)")
+    mo_log = mo2_exe.parent / "logs" / "mo_interface.log"  # rewritten by every MO2 start
+    t0 = time.time()
+    p = spawn_outside_job(subprocess.list2cmdline([str(mo2_exe), "-p", profile, "run", args[0], "-a",
+                                                   subprocess.list2cmdline(args[1:])]), str(mo2_exe.parent))
+    exe_name = Path(args[0]).name.lower()
+    try:
+        while True:
+            pid = next((pid for pid, ppid, name in processes() if ppid == p.pid and name.lower() == exe_name), None)
+            if pid:
+                return pid
+            errors = []
+            try:
+                if mo_log.stat().st_mtime > t0:
+                    errors = [l for l in mo_log.read_text(encoding="utf-8", errors="replace").splitlines() if " E] " in l]
+            except OSError:
+                pass
+            if any(re.search(r" E\] (Error \d+|Failed to run)", l) for l in errors):  # MO2 shows a modal error box
+                raise RuntimeError(f"MO2 could not start {args[0]}:\n" + "\n".join(errors))
+            if p.wait(0):
+                raise RuntimeError(f"ModOrganizer.exe exited with code {p.exit_code()} without starting {exe_name}")
+            if time.time() - t0 > MO2_CHILD_WAIT_S:
+                raise TimeoutError(f"MO2 started no {exe_name} within {MO2_CHILD_WAIT_S} s; check the exe path and "
+                                   f"permissions (MO2 log: {mo_log})")
+            time.sleep(0.25)
+    finally:  # also closes an MO2 error dialog; the game keeps running without MO2 (usvfs lives in the game process)
+        if not p.wait(0):
+            p.kill()
+            p.wait(10)
+        k32.CloseHandle(p.h)
+
+
+# MCP runs keep their own options (engine: axr_options.ltx saved into -appdata); GAMMA's zzz_player_injuries
+# applies master_volume to snd_volume_eff on every level load, so the option itself is set to 0
+MUTE_LUA = r'''
+local c = axr_main.config
+c:w_value("options", "sound/general/master_volume", 0)
+c:w_value("options", "sound/general/music_volume", 0)
+c.ini:save_as(getFS():update_path("$app_data_root$", "axr_options.ltx"))
+'''
+
+
 def info_or_error(inst, timeout=5):
     try:
         return inst.call("engine.info", timeout=timeout)
@@ -851,8 +999,10 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
     game_root = Path(game_root) if game_root else DEFAULT_GAME_ROOT
     if not exe.is_file():
         raise FileNotFoundError(f"exe not found: {exe}")
-    if not (game_root / "fsgame.ltx").is_file():
-        raise FileNotFoundError(f"no fsgame.ltx in {game_root}")
+    mo2 = mo2_setup(game_root)
+    fs_root = mo2[2] if mo2 else game_root
+    if not (fs_root / "fsgame.ltx").is_file():
+        raise FileNotFoundError(f"no fsgame.ltx in {fs_root}")
     profile = "gamma" if game_root.resolve() == GAMMA_ROOT.resolve() else "vanilla"
     warnings = [w for w in [wer_warning(exe.name)] if w]
     if not warnings:
@@ -863,14 +1013,14 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
     try:
         iid = slot.name
         appdata = RUN_DIR / iid / "appdata"
-        copied = copy_missing_dlls(game_root, exe.parent)
-        seed_appdata(appdata, game_root, keep_shader_cache)
+        copied = copy_missing_dlls(fs_root, exe.parent)
+        seed_appdata(appdata, fs_root, keep_shader_cache)
         if load:  # the save must already be in this slot's appdata (game_saves import_from=...)
             if " " in load or not (appdata / "savedgames" / (check_load_name(load) + SAVE_EXT)).is_file():
                 raise FileNotFoundError(f"no save {load!r} (without spaces) in {appdata / 'savedgames'}")
         port_file = appdata / "mcp_port"
         port_file.unlink(missing_ok=True)
-        args = [str(exe), "-fsltx", str(game_root / "fsgame.ltx"), "-appdata", str(appdata), "-mcp_port", "0"]
+        args = [str(exe), "-fsltx", str(fs_root / "fsgame.ltx"), "-appdata", str(appdata), "-mcp_port", "0"]
         if show_window:
             args.append("-showwindow")
         if new_game:
@@ -879,23 +1029,26 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
             args += ["-start", f"server({load}/single/alife/load)", "client(localhost)"]
         if extra_args:
             args += extra_args.split() if isinstance(extra_args, str) else list(extra_args)
-        p = subprocess.Popen(args, cwd=str(game_root), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, close_fds=True)
-        kill_with_supervisor(p.pid)
+        if mo2:
+            pid = mo2_run(mo2, args)
+        else:
+            pid = subprocess.Popen(args, cwd=str(game_root), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, close_fds=True).pid
+        kill_with_supervisor(pid)
         inst = Instance(iid, appdata, slot, profile)
         inst.launch_params, inst.exe_name = params, exe.name
         if hang_timeout:
             inst.hang_timeout = hang_timeout
         if load_timeout:
             inst.load_timeout = load_timeout
-        inst.watch(ProcHandle(p.pid))
+        inst.watch(ProcHandle(pid))
     except Exception:
         slot.release()
         raise
     with reg_lock:
         instances[iid] = inst  # replaces a dead instance that held this slot before
         current[0] = iid
-    log.info("[%s] launched pid %d: %s", iid, p.pid, " ".join(args))
+    log.info("[%s] launched pid %d%s: %s", iid, pid, " via MO2" if mo2 else "", " ".join(args))
 
     t0 = time.time()
     while True:
@@ -919,12 +1072,16 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
             inst.proc.kill()
             inst.proc.wait(10)
             tail = inst.log_file_tail()
-            raise TimeoutError(f"no mcp_port file after {PORT_WAIT_S} s; killed pid {p.pid}; {dump}" +
+            raise TimeoutError(f"no mcp_port file after {PORT_WAIT_S} s; killed pid {pid}; {dump}" +
                                (f"\nlog tail ({tail[0]}):\n" + "\n".join(tail[1]) if tail else " (no log)"))
         time.sleep(0.25)
     inst.connect(port)
     info = info_or_error(inst, timeout=timeout)
-    return {"instance": iid, "pid": p.pid, "port": port, "profile": profile, "appdata": str(appdata),
+    try:
+        inst.call("lua.exec", {"code": MUTE_LUA, "quiet": 1}, timeout=timeout)
+    except Exception as e:
+        warnings.append(f"mute via options failed: {e}")
+    return {"instance": iid, "pid": pid, "port": port, "profile": profile, "appdata": str(appdata),
             "args": args[1:], "copied_dlls": copied, "full_dumps": full_dumps, "engine_info": info,
             "warnings": warnings or None}
 
@@ -1072,7 +1229,9 @@ async def game_launch(exe: str | None = None, game_root: str | None = None, show
     """Launch a game instance (silent/minimized unless show_window) and connect to it.
 
     exe: default <repo>/_build/_game/bin_dbg/AnomalyDX11AVX.exe. game_root: default C:\\Anomaly (C:\\GAMMA counts
-    against the GAMMA cap). new_game: start a new game straight into a level. extra_args: more engine args.
+    against the GAMMA cap); an MO2 folder (ModOrganizer.exe, no fsgame.ltx, e.g. C:\\GAMMA) is started through its own
+    MO2 (`run`, MO2's selected profile and gamePath), which is killed once the game runs; refused while any MO2 runs.
+    The game saves its options (axr_options.ltx) into the slot's appdata, never into the game's. new_game: start a new game straight into a level. extra_args: more engine args.
     timeout: seconds to wait for the first engine.info reply after connecting (a new_game level load blocks it).
     full_dumps: Windows Error Reporting writes full dumps (GBs) instead of mid dumps; the setting is global per exe
     name, so the last launch wins for all running instances. hang_timeout / load_timeout: seconds of stalled frames
@@ -1614,7 +1773,7 @@ return unpack(out)
 SL_LOAD = SL_RESCAN + r'''
 local n = @NAME@
 -- the death tutorial's stop callback runs `main_menu on`; inside a load that leaves a dead menu window (crash)
-if game.has_active_tutorial() then game.stop_tutorial() return "tutorial" end
+if game.has_active_tutorial() and db.actor and not db.actor:alive() then game.stop_tutorial() return "tutorial" end
 exec_console_cmd("keypress_on_start off")
 if alife() then exec_console_cmd("load " .. n) return "load" end
 device():pause(false)
@@ -1816,6 +1975,8 @@ def game_load_run(inst, name, timeout):
             break
         time.sleep(0.3)
         how, lines = sl_exec(inst, SL_LOAD, name=lua_str(name))
+    if how[0] == "tutorial":
+        raise RuntimeError(f"load of {name} not started: the death screen tutorial did not stop")
     bad =[l for l in lines if l.startswith("! Cannot") or "ALife simulator has not been started" in l]
     if bad:
         raise RuntimeError(f"load of {name} refused: " + "; ".join(bad))

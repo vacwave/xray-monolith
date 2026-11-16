@@ -90,8 +90,17 @@ capped at 20k chars, and `omitted` says what was left out. The engine itself ret
 
 ## Launching
 
-- Profile: `gamma` when `game_root` is `C:\GAMMA` (GAMMA/MO2 launching is not handled), else `vanilla`.
-- Machine-wide caps: 3 vanilla, 1 GAMMA (~4 GB RAM each; GAMMA's textures need far more VRAM). Slots are lock files in
+- Profile: `gamma` when `game_root` is `C:\GAMMA`, else `vanilla`.
+- MO2 folder as `game_root` (ModOrganizer.exe, no fsgame.ltx, e.g. `C:\GAMMA`): the supervisor starts its own MO2
+  (`ModOrganizer.exe -p <selected_profile> run <exe> -a "<args>"`, `-fsltx` from MO2's `gamePath`), takes the game
+  (MO2's child), kills that MO2 and tracks the game like any launch (port after ~30 s, game_launch ~45 s). Refused
+  while any ModOrganizer.exe runs (close yours first). An MO2 error (it shows a modal box) kills our MO2 at once and
+  returns the MO2 log's error lines.
+- Options: with `-mcp_port` the engine saves `axr_options.ltx` into the slot's appdata and reads it from there once
+  it exists; every launch deletes it, so a run starts from the game's (or GAMMA's MCM) options and never modifies
+  them. Launch sets `sound/general/master_volume` and `music_volume` to 0 in that copy (GAMMA re-applies
+  master_volume on every level load).
+- Machine-wide caps: 3 vanilla, 1 GAMMA (vanilla ~4.1 GB private RAM / 1.6 GB VRAM in Cordon; GAMMA ~10.6 GB / 7.0 GB). Slots are lock files in
   `%LOCALAPPDATA%\anomaly-mcp\slots\`, held while the game runs and freed by the OS if the supervisor dies.
   Override with `ANOMALY_MCP_MAX_VANILLA` / `ANOMALY_MCP_MAX_GAMMA` or `%LOCALAPPDATA%\anomaly-mcp\config.json`
   (`{"max_vanilla": 3, "max_gamma": 1}`).
@@ -100,11 +109,11 @@ capped at 20k chars, and `omitted` says what was left out. The engine itself ret
   `r__framelimit 0` via `console_exec` for FPS tests) and deletes the slot's `shaders_cache` so the game rebuilds it
   (`keep_shader_cache=true` keeps it and seeds a new slot from `<game_root>\appdata` once).
 - DLLs in `<game_root>\bin` missing next to the exe are copied there first.
-- Args: `-fsltx <game_root>\fsgame.ltx -appdata <dir> -mcp_port 0` (+ `-showwindow`, + `-start server(all/single/alife/new) client(localhost)` for `new_game`).
+- Args: `-fsltx <game_root or MO2 gamePath>\fsgame.ltx -appdata <dir> -mcp_port 0` (+ `-showwindow`, + `-start server(all/single/alife/new) client(localhost)` for `new_game`).
   Runs are silent (minimized, no focus steal) unless `show_window`.
 - A game that exits with code 0 within seconds was blocked by the presence mutex (same exe dir and appdata
   already running) or failed to start; `game_launch` reports it with the log tail.
-- Launched games are in a job object: they are killed if the supervisor exits; on a clean exit (stdin closed) the
+- Launched games are in a job object (one per game): they are killed if the supervisor exits; on a clean exit (stdin closed) the
   supervisor quits them gracefully first. Attached games are left alone.
 
 ## Crashes and hangs

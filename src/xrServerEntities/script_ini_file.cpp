@@ -26,10 +26,25 @@ CScriptIniFile::~CScriptIniFile()
 {
 }
 
+// MCP mode (-mcp_port): axr_options.ltx is saved to (and, once there, read from) the -appdata dir, never to the user's gamedata
+static bool mcp_options_path(LPCSTR file_name, string_path& out)
+{
+	if (!file_name || !Core.ParamsData.test(ECoreParams::mcp_port))
+		return false;
+	string_path cfg;
+	FS.update_path(cfg, "$game_config$", "axr_options.ltx");
+	if (_stricmp(file_name, cfg))
+		return false;
+	FS.update_path(out, "$app_data_root$", "axr_options.ltx");
+	return true;
+}
+
 LPCSTR CScriptIniFile::update(LPCSTR file_name)
 {
-	string_path S1;
+	string_path S1, mcp;
 	FS.update_path(S1, "$game_config$", file_name);
+	if (mcp_options_path(S1, mcp) && FS.exist(mcp))
+		return (*shared_str(mcp));
 	return (*shared_str(S1));
 }
 
@@ -235,6 +250,9 @@ void CScriptIniFile::w_u8(LPCSTR S, LPCSTR L, u8 V, LPCSTR comment)
 bool CScriptIniFile::save_as(LPCSTR new_fname)
 {
 	THROW2(new_fname, "File name is null");
+	string_path mcp;
+	if (mcp_options_path(new_fname, mcp))
+		new_fname = mcp;
 	return (inherited::save_as(new_fname));
 }
 
