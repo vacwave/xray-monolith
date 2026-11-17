@@ -3935,6 +3935,32 @@ end
 return J({ids = ids})
 '''
 
+SC_ITEMSEC = r'''
+local sec, ini = A.section, ini_sys
+local function no(m) return J({ok = false, reason = m}) end
+if not ini:section_exist(sec) then return no("no such section in system_ini") end
+if not ini:line_exist(sec, "class") then return no("no class (a base/template section)") end
+local cname = ini:r_string_ex(sec, "class")
+local okc, cls = pcall(ini.r_clsid, ini, sec, "class")
+if not okc then return no("unknown class " .. cname) end
+-- _g's IsItem is not a clsid test; inv_weight is mandatory for CInventoryItem::Load and absent on non-items
+if IsMonster(nil, cls) or IsStalker(nil, cls) or IsAnomaly(nil, cls) or not ini:line_exist(sec, "inv_weight") then
+  return no("class " .. cname .. " is not an inventory item; use game_spawn")
+end
+return J({ok = true, ammo = IsAmmo(nil, cls) and true or false})
+'''
+
+SC_INV = r'''
+if not in_game() then return fail(NOGAME) end
+local want, have, n = {}, {}, 0
+for _, id in ipairs(A.ids) do want[id] = true end
+db.actor:iterate_inventory(function(_, it)
+  if want[it:id()] then have[#have + 1] = it:id() end
+  if it:section() == A.section then n = n + 1 end
+end, db.actor)
+return J({have = have, count = n})
+'''
+
 SC_EQUIP = r'''
 if not in_game() then return fail(NOGAME) end
 local a, out = db.actor, {}
@@ -4296,9 +4322,16 @@ def spawn(inst, section, count, position, distance, relation, wait):
 
 
 def give(inst, section, count, rounds, equip, remove):
-    cat_key, _ = sc_section(inst, section)
-    if not sc_kind_match("item", cat_key):
+    cat_key = sc_catalog(inst).get(section, (None,))[0]
+    if cat_key and not sc_kind_match("item", cat_key):
         raise ValueError(f"{section} is a {cat_key} section, not an inventory item; use game_spawn")
+    if not cat_key:  # not in the debug spawner lists (quest items etc.): any item section of system_ini
+        chk = sc_exec(inst, SC_ITEMSEC, {"section": section})
+        if not chk["ok"]:
+            if chk["reason"].startswith("no such"):
+                sc_section(inst, section)  # raises with similar section names
+            raise ValueError(f"{section}: {chk['reason']}")
+        cat_key = "weapons_ammo" if chk["ammo"] else "items"
     if remove:
         if count < 0:
             raise ValueError("count must be >= 0 (0 = all)")
@@ -4310,6 +4343,15 @@ def give(inst, section, count, rounds, equip, remove):
         raise ValueError("count must be 1..100")
     out = sc_exec(inst, SC_GIVE, {"section": section, "count": count, "rounds": rounds})
     res = {"instance": inst.id, "section": section, "ids": out["ids"]}
+    deadline = time.time() + 5  # alife create is async: return once every id is in the actor's inventory
+    while True:
+        inv = sc_exec(inst, SC_INV, {"section": section, "ids": out["ids"]})
+        if len(inv["have"]) >= len(out["ids"]) or time.time() >= deadline:
+            break
+        time.sleep(0.1)
+    res["in_inventory"], res["inventory_count"] = len(inv["have"]), inv["count"]
+    if len(inv["have"]) < len(out["ids"]):
+        res["note"] = f"timeout: only {len(inv['have'])}/{len(out['ids'])} items in the inventory after 5 s"
     if equip:
         ids = out["ids"][:1]
         sc_wait_online(inst, ids, 3)
@@ -4430,7 +4472,8 @@ async def game_give(section: str, count: int = 1, rounds: int | None = None, equ
     """Give the actor count (1..100) inventory items of section (see game_spawnable kind=item). Ammo: count = full
     boxes, or rounds = exact number of rounds (split into full boxes + a remainder). equip: move the (first) item to
     its slot (weapons become active; outfits/helmets are worn). remove: take up to count items of section from the
-    actor instead (count 0 = all). Returns the item ids. Money / health: game_actor."""
+    actor instead (count 0 = all). Any item section of system_ini works (quest items too). Returns the item ids once
+    they are in the inventory (in_inventory, inventory_count; note on a 5 s timeout). Money / health: game_actor."""
     inst = get(instance)
     return with_error_hint(inst, await run(give, inst, section, int(count), rounds, equip, remove))
 
