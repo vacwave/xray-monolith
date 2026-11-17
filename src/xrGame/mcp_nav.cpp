@@ -15,6 +15,7 @@
 #include "alife_object_registry.h"
 #include "xrServer_Objects_ALife.h"
 #include "../xrEngine/mcp_input.h"
+#include "../xrEngine/mcp_time.h"
 #include "../xrEngine/XR_IOConsole.h"
 #include "../xrEngine/CameraBase.h"
 #include "xr_level_controller.h"
@@ -32,6 +33,10 @@
 #include "Hit.h"
 #include "../xrEngine/GameMtlLib.h"
 #include "../Include/xrRender/Kinematics.h"
+#include "CustomMonster.h"
+#include "memory_manager.h"
+#include "enemy_manager.h"
+#include "mcp_events.h"
 #include <queue>
 
 // MCP nav.*: AI-map (level graph) and game-graph queries for agents (read-only), plus a debug overlay of nodes / a path
@@ -1593,6 +1598,15 @@ namespace
 		bool was_locked = false;
 	};
 
+	// a fight of the engage core (move_to auto-engage, idle guard)
+	struct fight_rec
+	{
+		u16 id = 0;
+		xr_string name, section, end;
+		u32 shots = 0, hits = 0, ms = 0;
+		bool killed = false;
+	};
+
 	struct mover_t
 	{
 		u32 id = 0;
@@ -1637,6 +1651,13 @@ namespace
 		xr_vector<xr_string> tried; // recovery steps taken
 		double tick_us = 0;
 		float tick_max = 0;
+		int engage = 1;               // shoot hostiles met on the way: 0 off, 1 on, 2 required (no weapon / ammo / jam fails)
+		LPCSTR engage_off = nullptr;  // why engaging stopped for this move
+		LPCSTR fight_end = nullptr;   // set when a fight ended: aborted reason / weapon failure for the next tick
+		bool fighting = false;
+		u32 scan_t = 0, fight_ms = 0;
+		xr_vector<fight_rec> fights;
+		xr_vector<std::pair<u16, u32>> skip; // targets not engaged again until (elapsed)
 	};
 	mover_t g_mv;
 
@@ -1656,9 +1677,13 @@ namespace
 		g_mv.fwd_down = g_mv.sprint_tap = g_mv.jump_tap = g_mv.back_down = false;
 	}
 
+	void engage_stop_move(LPCSTR reason);
+
 	void mover_finish(LPCSTR state, LPCSTR reason = nullptr)
 	{
 		mover_release();
+		if (g_mv.fighting)
+			engage_stop_move(reason ? reason : state);
 		g_mv.active = false;
 		g_mv.state = state;
 		g_mv.reason = reason;
@@ -2278,6 +2303,7 @@ namespace
 	}
 
 	void mover_step(u32 dt);
+	bool mover_engage(u32 dt);
 
 	void mover_tick(u32 dt)
 	{
@@ -2326,6 +2352,8 @@ namespace
 				return mover_finish("timeout");
 			return door_tick(dt, g_actor->Position());
 		}
+		if (mover_engage(dt))
+			return;
 		if (g_mv.target_id != u16(-1))
 		{
 			CObject* o = Level().Objects.net_Find(g_mv.target_id);
@@ -2342,7 +2370,7 @@ namespace
 		g_mv.last_pos = pos;
 		if (pos.distance_to_xz(g_mv.target) <= g_mv.stop && _abs(pos.y - g_mv.target.y) < 2.5f)
 			return mover_finish("reached");
-		if (g_mv.elapsed > g_mv.timeout_ms)
+		if (g_mv.elapsed - g_mv.fight_ms > g_mv.timeout_ms)
 			return mover_finish("timeout");
 
 		// next corner: reached ones are skipped, and so is a corner whose successor is already in straight walkable line
@@ -2507,6 +2535,13 @@ namespace
 		}
 	}
 
+	xr_string fight_json(const fight_rec& f)
+	{
+		jobj r;
+		r.i("id", f.id).str("name", f.name.c_str()).str("section", f.section.c_str()).i("shots", f.shots).i("hits", f.hits);
+		return r.b("killed", f.killed).i("ms", f.ms).str("end", f.end.c_str()).done();
+	}
+
 	xr_string mover_json()
 	{
 		jobj r;
@@ -2555,6 +2590,20 @@ namespace
 		}
 		if (g_mv.frames)
 			r.raw("tick_us", jobj().num("avg", g_mv.tick_us / g_mv.frames, 1).num("max", g_mv.tick_max, 0).done());
+		jobj e;
+		e.str("mode", g_mv.engage == 2 ? "required" : g_mv.engage ? "on" : "off");
+		if (g_mv.engage_off)
+			e.str("stopped", g_mv.engage_off);
+		r.raw("engage", e.done());
+		if (g_mv.fights.size())
+		{
+			xr_string a = "[";
+			for (const fight_rec& f : g_mv.fights)
+				a += (a.size() > 1 ? "," : "") + fight_json(f);
+			r.raw("fights", a + "]").i("fight_ms", g_mv.fight_ms);
+		}
+		if (g_actor && g_pGameLevel && g_pGameLevel->name() == g_mv.level)
+			r.num("health", g_actor->GetfHealth(), 2);
 		return r.done();
 	}
 
@@ -2598,6 +2647,7 @@ namespace
 		m.stop = _max(.3f, num_param(params, "stop_distance", id >= 0 ? 1.5f : 1.f));
 		m.timeout_ms = (u32)_max<s64>(1000, _min<s64>(int_param(params, "timeout_ms", 120000), 3600000));
 		m.sprint = int_param(params, "sprint", 0) != 0;
+		m.engage = (int)_max<s64>(0, _min<s64>(int_param(params, "engage", 1), 2));
 		m.fwd = get_action_dik(kFWD);
 		m.sprint_dik = get_action_dik(kSPRINT_TOGGLE);
 		m.back_dik = get_action_dik(kBACK);
@@ -2696,7 +2746,7 @@ namespace
 	{
 		u32 id = 0;
 		bool active = false;
-		LPCSTR state = "idle"; // running, done, target_dead, target_gone, los_blocked, out_of_range, out_of_ammo, jammed, no_weapon, timeout, aborted
+		LPCSTR state = "idle"; // running, done, target_dead, target_gone, not_visible, los_blocked, out_of_range, out_of_ammo, jammed, no_weapon, timeout, aborted
 		LPCSTR reason = nullptr;
 		u16 target = u16(-1), wid = u16(-1);
 		xr_string name, section, part, bone, weapon, blocker;
@@ -2713,13 +2763,49 @@ namespace
 		float health_before = 0, health = 0, dist = 0, err = 0, bias_y = 0, bias_p = 0;
 		Fvector aim, pos;
 		u16 killer = u16(-1);
+		int owner = 0;                 // own_agent (nav.shoot), own_move (move_to engage), own_guard
+		u32 lost_ms = 300;             // no candidate point visible this long -> not_visible
+		xr_vector<u16> cands;          // aim candidates: requested part first, BI_NONE = bbox centre
+		int cur = 0;                   // cands index aimed at
+		bool vis_now = true, hidden = false, seen = false;
+		u32 vis_t = 0, hidden_t = 0, switches = 0;
 	};
+	enum { own_agent, own_move, own_guard };
 	shooter_t g_sh;
 	shot_hits g_hits;
 	xrCriticalSection g_hits_lock;
+	u32 g_shoot_seq = 0;
+	xr_string g_agent_shot; // the last nav.shoot result while an engage fight uses the shooter
+	struct attack_rec
+	{
+		u16 id;
+		u32 t;
+	};
+	attack_rec g_attacks[8] = {}; // recent hits on the actor (Device.dwTimeGlobal), under g_hits_lock
 
 	void shoot_on_hit(CEntity* victim, const SHit* h)
 	{
+		if (g_actor && victim == g_actor)
+		{
+			if (h->whoID != g_actor->ID() && h->whoID != u16(-1))
+			{
+				xrCriticalSectionGuard guard(g_hits_lock);
+				attack_rec* slot = &g_attacks[0];
+				for (attack_rec& a : g_attacks)
+				{
+					if (a.id == h->whoID)
+					{
+						slot = &a;
+						break;
+					}
+					if (a.t < slot->t)
+						slot = &a;
+				}
+				slot->id = h->whoID;
+				slot->t = _max(1u, Device.dwTimeGlobal);
+			}
+			return;
+		}
 		if (!g_sh.active || !g_actor || h->whoID != g_actor->ID() || victim == g_actor)
 			return;
 		xr_string bone;
@@ -2780,21 +2866,97 @@ namespace
 		m.transform_tiny(p, l);
 	}
 
-	// aim point of the target this frame; bone name in g_sh.bone ("center" without a matching bone)
-	Fvector shoot_aim(CGameObject* o)
+	// aim candidates: the requested part, head, chest, pelvis, limbs (else a spread of bones with collision shapes),
+	// bbox centre (BI_NONE)
+	void shoot_cands(CGameObject* o, LPCSTR part, xr_vector<u16>& out)
+	{
+		out.clear();
+		IKinematics* k = o->Visual() ? o->Visual()->dcast_PKinematics() : nullptr;
+		out.push_back(k ? part_bone(o, part) : BI_NONE);
+		if (k)
+		{
+			u16 n = k->LL_BoneCount();
+			auto add = [&](u16 b) {
+				if (b < n && std::find(out.begin(), out.end(), b) == out.end())
+					out.push_back(b);
+			};
+			add(part_bone(o, "head"));
+			add(part_bone(o, "chest"));
+			static LPCSTR limbs[] = { "bip01_pelvis", "bip01_l_thigh", "bip01_r_thigh", "bip01_l_calf", "bip01_r_calf",
+			                          "bip01_l_upperarm", "bip01_r_upperarm", "bip01_l_forearm", "bip01_r_forearm" };
+			for (LPCSTR l : limbs)
+				add(k->LL_BoneID(l));
+			for (u16 b = 0, step = u16(_max(1, n / 8)); b < n && out.size() < 6; b += step)
+				if (k->LL_GetData(b).shape.type != SBoneShape::stNone)
+					add(b);
+		}
+		if (std::find(out.begin(), out.end(), BI_NONE) == out.end())
+			out.push_back(BI_NONE);
+	}
+
+	Fvector cand_point(CGameObject* o, u16 b)
 	{
 		Fvector p;
-		u16 b = part_bone(o, g_sh.part.c_str());
 		IKinematics* k = o->Visual() ? o->Visual()->dcast_PKinematics() : nullptr;
-		if (!k || b == BI_NONE || b >= k->LL_BoneCount())
-		{
-			g_sh.bone = "center";
+		if (!k || b >= k->LL_BoneCount())
 			o->Center(p);
-			return p;
-		}
-		g_sh.bone = k->LL_BoneName_dbg(b);
-		bone_point(o, b, p);
+		else
+			bone_point(o, b, p);
 		return p;
+	}
+
+	// aim point of the target this frame (the current candidate); bone name in g_sh.bone ("center" for the bbox centre)
+	Fvector shoot_aim(CGameObject* o)
+	{
+		u16 b = g_sh.cur < (int)g_sh.cands.size() ? g_sh.cands[g_sh.cur] : BI_NONE;
+		IKinematics* k = o->Visual() ? o->Visual()->dcast_PKinematics() : nullptr;
+		g_sh.bone = k && b < k->LL_BoneCount() ? k->LL_BoneName_dbg(b) : "center";
+		return cand_point(o, b);
+	}
+
+	// nothing but o (or what it holds) between from and p, by the fire ray's pick rules; else the hit
+	bool clear_to(CGameObject* o, const Fvector& from, const Fvector& p, collide::rq_result* hit)
+	{
+		SPickParam lp;
+		lp.defs.start = from;
+		lp.defs.dir.sub(p, from);
+		float len = lp.defs.dir.magnitude();
+		if (len <= EPS_L)
+			return true;
+		lp.defs.dir.div(len);
+		lp.defs.range = len + .5f;
+		HUD().DoPick(lp);
+		if (lp.result.O == o || (lp.result.O && lp.result.O->H_Parent() == o) || lp.result.range >= len - .05f)
+			return true;
+		if (hit)
+			*hit = lp.result;
+		return false;
+	}
+
+	// first visible candidate: the requested one (0), then the current one, then the rest in order; -1 = none
+	// (hit = what blocks the requested one); each ray costs one from budget
+	int visible_cand(CGameObject* o, const xr_vector<u16>& c, int cur, const Fvector& from, collide::rq_result* hit, u32& budget)
+	{
+		if (!budget)
+			return -1;
+		budget--;
+		if (clear_to(o, from, cand_point(o, c[0]), hit))
+			return 0;
+		if (cur > 0 && cur < (int)c.size() && budget)
+		{
+			budget--;
+			if (clear_to(o, from, cand_point(o, c[cur]), nullptr))
+				return cur;
+		}
+		for (int k = 1; k < (int)c.size() && budget; ++k)
+		{
+			if (k == cur)
+				continue;
+			budget--;
+			if (clear_to(o, from, cand_point(o, c[k]), nullptr))
+				return k;
+		}
+		return -1;
 	}
 
 	// the actor's firearm in hands, else null and why
@@ -2863,6 +3025,8 @@ namespace
 		}
 	}
 
+	void engage_ended();
+
 	void shoot_finish(LPCSTR state, LPCSTR reason = nullptr)
 	{
 		key_up(g_sh.fire_dik, g_sh.fire_down);
@@ -2881,6 +3045,8 @@ namespace
 		g_sh.active = false;
 		g_sh.state = state;
 		g_sh.reason = reason;
+		if (g_sh.owner != own_agent)
+			engage_ended();
 	}
 
 	void shoot_replace()
@@ -2954,6 +3120,37 @@ namespace
 		if (g_sh.elapsed > g_sh.timeout_ms)
 			return g_sh.fire ? shoot_finish("timeout") : shoot_finish("done", "max_seconds");
 
+		// aim at a candidate point the eye can see (the requested part when visible), checked every 100 ms
+		if (g_sh.vis_now || g_sh.elapsed - g_sh.vis_t >= 100)
+		{
+			g_sh.vis_now = false;
+			g_sh.vis_t = g_sh.elapsed;
+			collide::rq_result hit;
+			hit.set(nullptr, 0.f, -1);
+			u32 budget = 16;
+			int k = visible_cand(o, g_sh.cands, g_sh.cur, Device.vCameraPosition, &hit, budget);
+			if (k >= 0)
+			{
+				g_sh.switches += k != g_sh.cur;
+				g_sh.cur = k;
+				g_sh.hidden = false;
+				g_sh.seen = true;
+			}
+			else
+			{
+				if (!g_sh.hidden)
+					g_sh.hidden_t = g_sh.elapsed;
+				g_sh.hidden = true;
+				g_sh.cur = 0;
+				g_sh.blocker = blocker_json(hit);
+			}
+		}
+		if (g_sh.hidden && !g_sh.settling && g_sh.elapsed - g_sh.hidden_t >= g_sh.lost_ms)
+		{
+			key_up(g_sh.fire_dik, g_sh.fire_down);
+			return shoot_finish("not_visible");
+		}
+
 		// turn the camera so that the fire ray points at the aim point; bias = filtered angle between the fire ray and
 		// the camera ray (non-zero with g_firepos / g_aimpos: bullets leave from the barrel)
 		Fvector aim = g_sh.aim = shoot_aim(o);
@@ -2979,7 +3176,7 @@ namespace
 		}
 		else
 			g_sh.err = _sqrt(cy * cy + cp * cp);
-		float mx = 1080.f * dt / 1000.f;
+		float mx = g_sh.hidden && !g_sh.seen ? 0.f : 1080.f * dt / 1000.f; // never seen: do not turn toward a wall
 		float ty = _max(-mx, _min(cy + g_sh.bias_y, mx)), tp = _max(-mx, _min(cp + g_sh.bias_p, mx));
 		CCameraBase* cam = g_actor->cam_Active();
 		if (_abs(ty) > .005f)
@@ -2997,7 +3194,7 @@ namespace
 			g_sh.blocked = false;
 			g_sh.blocker.clear();
 		}
-		else if (g_sh.elapsed - g_sh.los_t >= 100)
+		else if (!g_sh.hidden && g_sh.elapsed - g_sh.los_t >= 100)
 		{
 			// line of fire to the aim point: same ray rules as the pick (objects stop it, see-through geometry not)
 			g_sh.los_t = g_sh.elapsed;
@@ -3176,7 +3373,8 @@ namespace
 		r.str("mode", g_sh.fire ? "shoot" : "track");
 		jobj t;
 		t.i("id", g_sh.target).str("name", g_sh.name.c_str()).str("section", g_sh.section.c_str()).str("part", g_sh.part.c_str());
-		t.str("bone", g_sh.bone.c_str()).vec("position", g_sh.pos).num("distance", g_sh.dist, 2);
+		t.str("bone", g_sh.bone.c_str()).b("visible", !g_sh.hidden).i("bone_switches", g_sh.switches);
+		t.vec("position", g_sh.pos).num("distance", g_sh.dist, 2);
 		t.num("health_before", g_sh.health_before).num("health", g_sh.health);
 		if (g_sh.killer != u16(-1))
 			t.i("killer_id", g_sh.killer).b("killed_by_actor", g_actor && g_sh.killer == g_actor->ID());
@@ -3207,6 +3405,40 @@ namespace
 		if (g_sh.blocker.size())
 			r.raw("blocker", g_sh.blocker);
 		return r.i("elapsed_ms", g_sh.elapsed).i("frames", g_sh.frames).done();
+	}
+
+	// start shooting o with the parameters in s (any previous shoot already ended); the weapon in hands or null (why)
+	CWeapon* shoot_begin(shooter_t& s, CEntityAlive* o, LPCSTR& why)
+	{
+		s.id = ++g_shoot_seq;
+		s.level = g_pGameLevel;
+		s.target = o->ID();
+		s.name = o->cName().c_str();
+		s.section = o->cNameSect_str();
+		s.health_before = s.health = o->GetfHealth();
+		s.conn = mcp::client_id();
+		s.releases = mcp_input::release_count();
+		s.pos = o->Position();
+		shoot_cands(o, s.part.c_str(), s.cands);
+		CWeapon* w = shoot_weapon(why);
+		if (w)
+		{
+			s.wid = w->ID();
+			s.weapon = w->cNameSect_str();
+			s.mag = s.mag_before = s.mag_after = w->GetAmmoElapsed();
+			s.total_before = s.total_after = w->GetSuitableAmmoTotal();
+			s.wstate = w->GetState();
+		}
+		g_sh = s;
+		{
+			xrCriticalSectionGuard guard(g_hits_lock);
+			g_hits = shot_hits();
+		}
+		g_sh.active = true;
+		g_sh.state = "running";
+		g_sh.aim = shoot_aim(o);
+		g_sh.dist = Device.vCameraPosition.distance_to(g_sh.aim);
+		return w;
 	}
 
 	bool nav_shoot(LPCSTR params, xr_string& out)
@@ -3258,35 +3490,9 @@ namespace
 		if (g_mv.active)
 			mover_finish("aborted", "replaced");
 		shoot_replace();
-		s.id = g_sh.id + 1;
-		s.level = g_pGameLevel;
-		s.target = o->ID();
-		s.name = o->cName().c_str();
-		s.section = o->cNameSect_str();
 		s.part = part;
-		s.health_before = s.health = o->GetfHealth();
-		s.conn = mcp::client_id();
-		s.releases = mcp_input::release_count();
-		s.pos = o->Position();
 		LPCSTR why;
-		CWeapon* w = shoot_weapon(why);
-		if (w)
-		{
-			s.wid = w->ID();
-			s.weapon = w->cNameSect_str();
-			s.mag = s.mag_before = s.mag_after = w->GetAmmoElapsed();
-			s.total_before = s.total_after = w->GetSuitableAmmoTotal();
-			s.wstate = w->GetState();
-		}
-		g_sh = s;
-		{
-			xrCriticalSectionGuard guard(g_hits_lock);
-			g_hits = shot_hits();
-		}
-		g_sh.active = true;
-		g_sh.state = "running";
-		g_sh.aim = shoot_aim(o);
-		g_sh.dist = Device.vCameraPosition.distance_to(g_sh.aim);
+		CWeapon* w = shoot_begin(s, o, why);
 		bool switching = g_actor->inventory().GetNextActiveSlot() != g_actor->inventory().GetActiveSlot();
 		if (g_sh.fire && !w && !(switching && !xr_strcmp(why, "nothing in hands")))
 			shoot_finish("no_weapon", why);
@@ -3298,15 +3504,373 @@ namespace
 
 	bool nav_shoot_status(LPCSTR params, xr_string& out)
 	{
+		if (g_sh.owner != own_agent)
+		{
+			out = g_agent_shot.size() ? g_agent_shot : jobj().i("id", 0).str("state", "idle").b("done", true).done();
+			return true;
+		}
 		if (int_param(params, "stop", 0) && g_sh.active)
 			shoot_finish("aborted", "stopped");
 		out = shoot_json();
 		return true;
 	}
 
+	// ------------------------------------------------------------------ engage core (move_to auto-engage, idle guard):
+	// pick a visible hostile creature (monsters hostile to the actor, stalkers whose relation to the actor is enemy) and
+	// shoot it until dead with the shooter above
+
+	CCustomMonster* hostile(CObject* ob)
+	{
+		CCustomMonster* m = smart_cast<CCustomMonster*>(ob);
+		if (!m || m->getDestroy() || !m->g_Alive() || !m->monster_community || !g_actor->monster_community)
+			return nullptr;
+		return m->is_relation_enemy(g_actor) ? m : nullptr;
+	}
+
+	bool attacking_actor(CCustomMonster* m)
+	{
+		if (m->memory().enemy().selected() == g_actor)
+			return true;
+		xrCriticalSectionGuard guard(g_hits_lock);
+		for (const attack_rec& a : g_attacks)
+			if (a.t && a.id == m->ID() && Device.dwTimeGlobal - a.t < 5000)
+				return true;
+		return false;
+	}
+
+	bool skipped(const xr_vector<std::pair<u16, u32>>& skip, u16 id, u32 now)
+	{
+		for (auto& s : skip)
+			if (s.first == id && now < s.second)
+				return true;
+		return false;
+	}
+
+	// the visible hostile to fight within range (capped at the weapon's fire distance): whoever attacks the actor
+	// first, then the nearest; null = none
+	CCustomMonster* engage_pick(float range, const xr_vector<std::pair<u16, u32>>& skip, u32 now, bool& attacking)
+	{
+		LPCSTR why;
+		if (CWeapon* w = shoot_weapon(why))
+			range = _min(range, w->GetFireDistance());
+		const Fvector& eye = Device.vCameraPosition;
+		xr_vector<CObject*> objs;
+		Level().ObjectSpace.GetNearest(objs, eye, range, g_actor);
+		struct cand_t
+		{
+			CCustomMonster* m;
+			float d;
+			bool att;
+		};
+		xr_vector<cand_t> c;
+		for (CObject* ob : objs)
+		{
+			CCustomMonster* m = hostile(ob);
+			if (!m || skipped(skip, m->ID(), now) || !m->Visual())
+				continue;
+			float d = eye.distance_to(m->Position());
+			if (d <= range)
+				c.push_back({ m, d, attacking_actor(m) });
+		}
+		std::sort(c.begin(), c.end(), [](const cand_t& a, const cand_t& b) { return a.att != b.att ? a.att : a.d < b.d; });
+		u32 budget = 32;
+		xr_vector<u16> pts;
+		for (const cand_t& e : c)
+		{
+			shoot_cands(e.m, "chest", pts);
+			if (visible_cand(e.m, pts, 0, eye, nullptr, budget) >= 0)
+			{
+				attacking = e.att;
+				return e.m;
+			}
+			if (!budget)
+				break;
+		}
+		return nullptr;
+	}
+
+	// a firearm with ammo in hands; else why not
+	bool engage_weapon(LPCSTR& why)
+	{
+		CWeapon* w = shoot_weapon(why);
+		if (!w)
+			return false;
+		if (!get_action_dik(kWPN_FIRE))
+			why = "fire not bound";
+		else if (w->GetAmmoElapsed() <= 0 && w->GetSuitableAmmoTotal() <= 0)
+			why = "out_of_ammo";
+		return !why;
+	}
+
+	void engage_start(CCustomMonster* m, int owner)
+	{
+		if (g_sh.owner == own_agent && g_sh.id)
+			g_agent_shot = shoot_json();
+		shooter_t s;
+		s.owner = owner;
+		s.lost_ms = 1500;
+		s.until_dead = true;
+		s.part = "chest";
+		s.timeout_ms = 30000;
+		s.fire_dik = get_action_dik(kWPN_FIRE);
+		s.reload_dik = get_action_dik(kWPN_RELOAD);
+		s.zoom_dik = get_action_dik(kWPN_ZOOM);
+		LPCSTR why;
+		shoot_begin(s, m, why);
+	}
+
+	fight_rec fight_now()
+	{
+		fight_rec f;
+		f.id = g_sh.target;
+		f.name = g_sh.name;
+		f.section = g_sh.section;
+		f.shots = g_sh.shots;
+		{
+			xrCriticalSectionGuard guard(g_hits_lock);
+			f.hits = g_hits.hits;
+		}
+		f.ms = g_sh.elapsed;
+		f.killed = !xr_strcmp(g_sh.state, "target_dead");
+		f.end = g_sh.state;
+		if (g_sh.reason)
+			f.end += xr_string(":") + g_sh.reason;
+		return f;
+	}
+
+	// fights that cannot go on: no line of fire / too far / too long -> leave that target alone for 10 s
+	bool skip_after(LPCSTR st) { return !xr_strcmp(st, "los_blocked") || !xr_strcmp(st, "out_of_range") || !xr_strcmp(st, "timeout"); }
+	bool weapon_failed(LPCSTR st) { return !xr_strcmp(st, "no_weapon") || !xr_strcmp(st, "out_of_ammo") || !xr_strcmp(st, "jammed"); }
+
+	struct guard_t
+	{
+		bool on = true;
+		u32 conn = 0, clock = 0, busy_t = 0, scan_t = 0, fights = 0, frames = 0;
+		LPCSTR state = "idle", why = nullptr;
+		xr_vector<std::pair<u16, u32>> skip;
+		xr_string last;
+		double tick_us = 0;
+		float tick_max = 0;
+	};
+	guard_t g_gd;
+
+	// shoot_finish of an engage fight: record it with its owner
+	void engage_ended()
+	{
+		fight_rec f = fight_now();
+		if (g_sh.owner == own_move)
+		{
+			if (g_mv.fights.size() < 64)
+				g_mv.fights.push_back(f);
+			if (skip_after(g_sh.state))
+				g_mv.skip.emplace_back(g_sh.target, g_mv.elapsed + 10000);
+			if (weapon_failed(g_sh.state))
+				g_mv.fight_end = g_sh.state;
+			else if (!xr_strcmp(g_sh.state, "aborted") && g_sh.reason && !xr_strcmp(g_sh.reason, "keys_released"))
+				g_mv.fight_end = "keys_released";
+			return;
+		}
+		g_gd.fights++;
+		if (skip_after(g_sh.state))
+			g_gd.skip.emplace_back(g_sh.target, g_gd.clock + 10000);
+		g_gd.last = fight_json(f);
+		xr_string e = "{\"phase\":\"end\"," + g_gd.last.substr(1);
+		mcp_event("guard_fight", e.c_str());
+	}
+
+	void engage_stop_move(LPCSTR reason)
+	{
+		g_mv.fighting = false;
+		if (g_sh.active && g_sh.owner == own_move)
+			shoot_finish("aborted", reason);
+	}
+
+	// move_to: scan every 200 ms while walking (not at doors); a target -> stop walking and fight it, then replan and
+	// walk on; true = nothing else to do this tick
+	bool mover_engage(u32 dt)
+	{
+		if (g_mv.fighting)
+		{
+			if (g_sh.active && g_sh.owner == own_move)
+			{
+				g_mv.fight_ms += dt;
+				return true;
+			}
+			g_mv.fighting = false;
+			LPCSTR end = g_mv.fight_end;
+			g_mv.fight_end = nullptr;
+			if (end && !xr_strcmp(end, "keys_released"))
+			{
+				mover_finish("aborted", end);
+				return true;
+			}
+			if (end)
+			{
+				if (g_mv.engage == 2)
+				{
+					mover_finish("engage_failed", end);
+					return true;
+				}
+				g_mv.engage_off = end;
+			}
+			g_mv.check_t = g_mv.scan_t = g_mv.elapsed;
+			g_mv.check_pos = g_actor->Position();
+			g_mv.fwd_ms = g_mv.idle = g_mv.stuck = 0;
+			g_mv.level_pitch = true;
+			g_mv.replans++;
+			LPCSTR why;
+			if (!mover_plan(why))
+				plan_failed(why);
+			return true;
+		}
+		if (!g_mv.engage || g_mv.engage_off || g_mv.phase || g_mv.via || g_mv.elapsed - g_mv.scan_t < 200)
+			return false;
+		g_mv.scan_t = g_mv.elapsed;
+		bool att = false;
+		CCustomMonster* m = engage_pick(50.f, g_mv.skip, g_mv.elapsed, att);
+		if (!m)
+			return false;
+		LPCSTR why;
+		if (!engage_weapon(why))
+		{
+			if (g_mv.engage == 2)
+			{
+				mover_finish("engage_failed", why);
+				return true;
+			}
+			g_mv.engage_off = why;
+			return false;
+		}
+		mover_release();
+		g_mv.fighting = true;
+		engage_start(m, own_move);
+		return true;
+	}
+
+	// why the idle guard must not act now (null = free)
+	LPCSTR guard_pause(bool mine)
+	{
+		if ((pApp && pApp->IsLoading()) || !g_pGameLevel)
+			return "loading";
+		if (!g_actor)
+			return "no_actor";
+		if (!g_actor->g_Alive())
+			return "actor_dead";
+		if (mcp_time::paused())
+			return "mcp_paused";
+		if (ui_blocking())
+			return "ui";
+		if (g_mv.active || (g_sh.active && !mine))
+			return "driver";
+		if (g_actor->Holder())
+			return "vehicle";
+		u32 own = 0; // keys the guard's own fight holds
+		if (mine)
+			own = (g_sh.fire_down && mcp_input::is_held(g_sh.fire_dik)) + (g_sh.zoom_down && mcp_input::is_held(g_sh.zoom_dik)) +
+			      (g_sh.reload_tap && mcp_input::is_held(g_sh.reload_dik));
+		if (mcp_input::running() || mcp_input::held_count() > own)
+			return "input";
+		return nullptr;
+	}
+
+	// idle guard: no MCP driver, no agent input (and 1 s after any pause), no UI -> fight visible hostiles within 50 m
+	void guard_step(u32 dt)
+	{
+		g_gd.clock += dt;
+		if (mcp::client_id() != g_gd.conn)
+		{
+			g_gd.conn = mcp::client_id();
+			g_gd.on = true; // the default for every client
+		}
+		bool mine = g_sh.active && g_sh.owner == own_guard;
+		LPCSTR pause = g_gd.on ? guard_pause(mine) : "off";
+		if (pause)
+		{
+			g_gd.state = pause;
+			g_gd.busy_t = g_gd.clock;
+			if (mine)
+				shoot_finish("aborted", pause);
+			return;
+		}
+		if (mine)
+		{
+			g_gd.state = "fighting";
+			return;
+		}
+		if (g_gd.clock - g_gd.busy_t < 1000)
+		{
+			g_gd.state = "resuming";
+			return;
+		}
+		if (g_gd.clock - g_gd.scan_t < 200)
+			return;
+		g_gd.scan_t = g_gd.clock;
+		LPCSTR why;
+		if (!engage_weapon(why))
+		{
+			g_gd.state = "no_weapon";
+			g_gd.why = why;
+			return;
+		}
+		g_gd.state = "watching";
+		g_gd.why = nullptr;
+		bool att = false;
+		CCustomMonster* m = engage_pick(50.f, g_gd.skip, g_gd.clock, att);
+		if (!m)
+			return;
+		engage_start(m, own_guard);
+		g_gd.state = "fighting";
+		jobj e;
+		e.str("phase", "start").i("id", m->ID()).str("name", m->cName().c_str()).str("section", m->cNameSect_str());
+		e.num("distance", Device.vCameraPosition.distance_to(m->Position()), 1).b("attacking", att);
+		mcp_event("guard_fight", e.done().c_str());
+	}
+
+	void guard_tick(u32 dt)
+	{
+		CTimer t;
+		t.Start();
+		guard_step(dt);
+		float us = t.GetElapsed_sec() * 1e6f;
+		g_gd.frames++;
+		g_gd.tick_us += us;
+		g_gd.tick_max = _max(g_gd.tick_max, us);
+	}
+
+	bool nav_guard(LPCSTR params, xr_string& out)
+	{
+		s64 on;
+		if (mcp::get_int_param(params, "on", on))
+		{
+			if (on && !g_gd.on)
+			{
+				g_gd.state = "resuming";
+				g_gd.busy_t = g_gd.clock;
+			}
+			g_gd.on = on != 0;
+			g_gd.conn = mcp::client_id();
+			if (!g_gd.on && g_sh.active && g_sh.owner == own_guard)
+				shoot_finish("aborted", "off");
+		}
+		jobj r;
+		r.b("on", g_gd.on).str("state", g_gd.on ? g_gd.state : "off");
+		if (g_gd.why)
+			r.str("reason", g_gd.why);
+		if (g_sh.active && g_sh.owner == own_guard)
+			r.raw("fighting", jobj().i("id", g_sh.target).str("name", g_sh.name.c_str()).i("shots", g_sh.shots).i("ms", g_sh.elapsed).done());
+		r.i("fights", g_gd.fights);
+		if (g_gd.last.size())
+			r.raw("last_fight", g_gd.last);
+		if (g_gd.frames)
+			r.raw("tick_us", jobj().num("avg", g_gd.tick_us / g_gd.frames, 1).num("max", g_gd.tick_max, 0).done());
+		out = r.done();
+		return true;
+	}
+
 	void driver_tick(u32 dt)
 	{
 		mover_tick(dt);
+		guard_tick(dt);
 		shoot_tick(dt);
 	}
 
@@ -3417,6 +3981,7 @@ void mcp_register_nav()
 	mcp::register_method("nav.use", nav_use);
 	mcp::register_method("nav.shoot", nav_shoot);
 	mcp::register_method("nav.shoot_status", nav_shoot_status);
+	mcp::register_method("nav.guard", nav_guard);
 	mcp_input::set_driver(driver_tick);
 	g_mcp_on_hit = shoot_on_hit;
 	Device.seqFrame.Add(&frame, REG_PRIORITY_LOW);

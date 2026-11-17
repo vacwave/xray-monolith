@@ -28,6 +28,9 @@ namespace mcp_input
 	ENGINE_API bool is_held(int dik);
 	// Number of input.release_all runs (incl. client changes with keys held): drivers holding no key watch it
 	ENGINE_API u32 release_count();
+	// Agent input activity: input.run sequences still running, keys in the held set (drivers' keys included)
+	ENGINE_API bool running();
+	ENGINE_API u32 held_count();
 	// CInput::OnFrame hook
 	void on_frame();
 }

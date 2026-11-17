@@ -586,6 +586,16 @@ u32 release_count()
 	return releases;
 }
 
+bool running()
+{
+	return std::any_of(seqs.begin(), seqs.end(), [](const sequence& s) { return !s.done; });
+}
+
+u32 held_count()
+{
+	return (u32)held.size();
+}
+
 void on_frame()
 {
 	if (!enabled)

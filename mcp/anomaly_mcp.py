@@ -1472,7 +1472,8 @@ async def game_events(instance: str | None = None, since: int | None = None, typ
     hit_type, bone, level, position), hit (attacker, victim, count, damage, health_before/after, hit_type, bone, weapon;
     first hit per pair at once, then one summary per 1 s), combat (state enter/switch/leave, npc, enemy, previous),
     relation (kind personal (actor only)/community_goodwill/community_relation/bulk, from/to or community/to_community,
-    old, new, count).
+    old, new, count), guard_fight (idle guard, see game_guard: phase start {id, name, section, distance, attacking} /
+    end {id, name, section, shots, hits, killed, ms, end}).
     since: only events with seq > since (page with the returned last_seq); without it the newest `limit` are returned.
     types: type names or fnmatch patterns (e.g. ['task_*']). limit: max 500. Script errors repeating within 5 s are
     coalesced: count = total so far, since_last = occurrences this event stands for. Fatal errors (kind callback/
@@ -2677,7 +2678,7 @@ def nav_move(inst, p, wait, wait_timeout, method="nav.move_to", status_method="n
 @tool
 async def game_move_to(instance: str | None = None, position: list[float] | None = None, id: int | None = None,
                        stop_distance: float | None = None, timeout: float = 120, sprint: bool = True,
-                       wait: bool = True, wait_timeout: float = 300, status: bool = False,
+                       engage: bool | str = True, wait: bool = True, wait_timeout: float = 300, status: bool = False,
                        stop: bool = False) -> dict:
     """Walk the actor to `position` [x,y,z] or to an online object `id` (followed while it moves) along the AI-map
     path, like a player: the engine turns the camera toward the next path corner and holds the forward key each input
@@ -2693,6 +2694,14 @@ async def game_move_to(instance: str | None = None, position: list[float] | None
     open a talk -> aborted dialog), then jump, then replan, then give up; turning in place 3 s without progress ->
     replan. Paths keep ~0.3 m off the AI-map edges at corners. Short look-ahead rays see props/vehicles that are not on
     the AI map (not creatures or doors) and replan around them. The target snaps to an AI node on its own floor.
+    engage (default True): every 200 ms while walking (not at doors) look for a visible hostile creature within 50 m
+    (capped at the weapon's fire distance): monsters hostile to the actor and stalkers whose relation to the actor is
+    enemy, never neutral/friendly; whoever attacks the actor first, then the nearest. Walking pauses and the weapon in
+    hands shoots it until dead (game_shoot logic, aims at a visible bone; lost from sight 1.5 s -> next target), then
+    the path is replanned and the walk goes on (fight time does not count toward timeout). No weapon / out of ammo /
+    jam that reload does not clear -> engaging stops for this move (engage.stopped) and it walks on;
+    engage="required" makes that state engage_failed instead. engage=False: never shoots. Low health is only
+    reported (health).
     Result: state reached / stuck (stuck_at, blocker = what is ahead) / timeout / no_path (reason) / unreachable
     (reason target_floor_off_mesh: no AI node on the target's floor, at once; target_off_mesh: walked to the nearest
     node `goal` but the target is beyond stop_distance; wrong_floor: under/over the target after a replan) /
@@ -2703,7 +2712,9 @@ async def game_move_to(instance: str | None = None, position: list[float] | None
     crosshair hit instead), door (the game_objects door facts)}], blocked_door,
     distance_left, position, path_length, travelled, elapsed_ms, frames, waypoint/waypoints, goal / goal_on_mesh,
     blocker {what object/creature/level_geometry, id, name, section, material, distance}, recovery (steps tried: use,
-    jump, replan, replan_turning, skip_corner, door, avoid:<id>, ...), tick_us {avg, max}. Keys are released at the
+    jump, replan, replan_turning, skip_corner, door, avoid:<id>, ...), tick_us {avg, max}, engage {mode, stopped},
+    fights [{id, name, section, shots, hits, killed, ms, end (shoot state, e.g. target_dead, not_visible,
+    los_blocked, timeout, aborted:<reason>)}], fight_ms, health (actor). Keys are released at the
     end. wait=False returns at once ({id, state: running}); status=True polls the current/last move, stop=True aborts
     it. With game_nav overlay on, the path is drawn."""
     inst = get(instance)
@@ -2711,7 +2722,9 @@ async def game_move_to(instance: str | None = None, position: list[float] | None
         return {"instance": inst.id, **await run(world_call, inst, "nav.move_status", {"stop": int(stop)})}
     if (position is None) == (id is None):
         raise ValueError("give exactly one of position [x, y, z] or id")
-    p = {"timeout_ms": int(timeout * 1000), "sprint": int(sprint)}
+    if engage not in (True, False, "required"):
+        raise ValueError('engage must be True, False or "required"')
+    p = {"timeout_ms": int(timeout * 1000), "sprint": int(sprint), "engage": 2 if engage == "required" else int(engage)}
     if position is not None:
         p["to"] = nav_vec(position, "position")
     else:
@@ -2742,18 +2755,21 @@ async def game_shoot(instance: str | None = None, id: int | None = None, part: s
                      stop: bool = False) -> dict:
     """Shoot creature `id` with the weapon in hands like a player: every input frame the engine turns the camera so
     the weapon's fire ray points at `part` ("chest", "head" or a bone name; the bone's collision shape centre, else
-    the bbox centre) and re-aims after each recoil kick; the fire action is pressed only while that fire ray (the
+    the bbox centre) and re-aims after each recoil kick. Every 100 ms the eye's line of sight to candidate points is
+    checked (the requested part, head, chest, pelvis, limbs, bbox centre): it aims at the requested one while visible,
+    else at a visible one (target.bone, bone_switches); none visible for 300 ms -> not_visible (blocker = what hides
+    the requested part; a target never seen is not turned toward). The fire action is pressed only while that fire ray (the
     ray bullets leave along before spread) hits the target first. Real ballistics: spread, recoil, ammo, jams and fire
     modes stay the game's, so misses at range are normal. Automatic fire: bursts of `burst` rounds, released when the
     aim drifts off; single/burst modes: one press per shot. Empty magazine -> normal reload if spare ammo; jam ->
     reload (unjams in the engine). ads: aim down sights while shooting. fire=False: track only (keep aiming until
     max_seconds / stop; use game_input meanwhile). Movement stays yours (game_move_to). Honours MCP pause/game_step.
     Shot count: `shots` rounds, or until_dead. For the outcome only, game_kill(by_actor=True) is quicker.
-    Result: state done / target_dead / target_gone / los_blocked (blocker: what, id, name, material, distance; held
-    fire 1.5 s) / out_of_range (weapon fire distance) / out_of_ammo / jammed / no_weapon (reason: nothing in hands,
+    Result: state done / target_dead / target_gone / not_visible (blocker) / los_blocked (the barrel's line of fire
+    blocked 1.5 s; blocker: what, id, name, material, distance) / out_of_range (weapon fire distance) / out_of_ammo / jammed / no_weapon (reason: nothing in hands,
     knife, binoculars, not a firearm, grenade launcher mode) / timeout / aborted (dialog, actor_dead, level_change,
     keys_released = game_input_release or disconnect, replaced by game_move_to/game_use, stopped); target {id, name,
-    section, part, bone, position, distance, health_before, health, killer_id, killed_by_actor}, shots, hits and
+    section, part, bone, visible, bone_switches, position, distance, health_before, health, killer_id, killed_by_actor}, shots, hits and
     hit_power and hit_bones (the actor's hits on it as the engine registered them), other_hits/other_ids (anything
     else the actor hit), weapon, ammo {mag_before, total_before, mag, total}, reloads, jams, aim_error_deg,
     elapsed_ms, frames. wait=False returns at once; status=True polls, stop=True aborts."""
@@ -2766,6 +2782,22 @@ async def game_shoot(instance: str | None = None, id: int | None = None, part: s
          "timeout_ms": int(max_seconds * 1000), "fire": int(fire), "ads": int(ads)}
     return await run(nav_move, inst, p, wait, wait_timeout if wait_timeout is not None else max_seconds + 30,
                      "nav.shoot", "nav.shoot_status")
+
+
+@tool
+async def game_guard(instance: str | None = None, on: bool | None = None) -> dict:
+    """Idle guard (on by default, again for every new supervisor connection): while no game_move_to / game_use /
+    game_shoot runs and the agent sends no input, the actor shoots visible hostile creatures within 50 m with the weapon
+    in hands (same target rules and shooting as game_move_to engage). Paused while any UI is open (inventory, PDA,
+    talk, menus, console), while MCP-paused, loading, dead, in a vehicle, while game_input steps run or MCP-held keys
+    are down, and for 1 s after any of these; a running guard fight is aborted by any of them (so game_talk,
+    game_ui_click, game_use never fight the guard for the camera). Fights are `guard_fight` game events (phase start /
+    end, see game_events). on=True/False switches it; no argument = status. Result: on, state (off, watching,
+    fighting, resuming, no_weapon (reason), or the pause reason: ui, driver, input, mcp_paused, loading, actor_dead,
+    vehicle, no_actor), fighting {id, name, shots, ms}, fights (count), last_fight, tick_us {avg, max}."""
+    inst = get(instance)
+    p = {} if on is None else {"on": int(bool(on))}
+    return {"instance": inst.id, **await run(world_call, inst, "nav.guard", p)}
 
 
 # ---------------------------------------------------------------- game_input
@@ -4424,7 +4456,8 @@ async def game_emission(kind: str = "surge", action: str = "status", instance: s
 
 WT_EVENT_TYPES = ("script_error", "level_loaded", "level_unloaded", "actor_spawned", "actor_died", "game_saved",
                   "game_loaded", "menu_opened", "menu_closed", "task_given", "task_completed", "task_failed",
-                  "task_in_progress", "task_stage", "info_given", "info_removed", "death", "hit", "combat", "relation")
+                  "task_in_progress", "task_stage", "info_given", "info_removed", "death", "hit", "combat", "relation",
+                  "guard_fight")
 WT_OPS = ("eq", "ne", "lt", "le", "gt", "ge", "in", "match", "exists", "within")
 WT_LEAVES = {  # leaf key -> extra keys it accepts (besides the comparison ops where marked by "ops")
     "in_control": (), "loaded": (), "mode": (), "dialog": ("open",), "event": ("where",), "log": (),
