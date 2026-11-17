@@ -2796,18 +2796,49 @@ async def game_move_to(instance: str | None = None, position: list[float] | None
     return await run(nav_move, inst, p, wait, wait_timeout)
 
 
+def game_use_run(inst, id, approach, stand, wait_timeout):
+    res = nav_move(inst, {"id": id}, True, wait_timeout, "nav.use")
+    why = res.get("reason")
+    door = "before" in res.get("use", {})
+    # a script may act only closer than the engine's use range (e.g. 1.5 m): walk up and press once more
+    if not approach or res.get("available") is False or "center" not in res or not (
+            (res.get("state") == "failed" and why in ("out_of_range", "pick_missed"))
+            or (res.get("state") == "used" and why == "no_effect" and not door)):
+        return {**res, "approached": False}
+    c, a = res["center"], res["actor"]
+    d = 1.5 if door else stand
+    if res["distance_xz"] <= d + 0.3 and why != "pick_missed":
+        return {**res, "approached": False}
+    dx, dz = a[0] - c[0], a[2] - c[2]
+    k = d / max(math.hypot(dx, dz), 1e-3)
+    y = a[1] if abs(a[1] - c[1]) < 2 else c[1]
+    mv = nav_move(inst, {"to": nav_vec([c[0] + dx * k, y, c[2] + dz * k], "stand"), "stop_distance": "0.3",
+                         "sprint": 0, "engage": 0, "timeout_ms": 20000}, True, 30)
+    second = nav_move(inst, {"id": id}, True, wait_timeout, "nav.use")
+    return {**second, "approached": True,
+            "approach": {"state": mv.get("state"), "reason": mv.get("reason"), "travelled": mv.get("travelled"),
+                         "first": {k: res.get(k) for k in ("state", "reason", "distance", "distance_xz", "pick_range")}}}
+
+
 @tool
-async def game_use(instance: str | None = None, id: int | None = None, wait_timeout: float = 15) -> dict:
+async def game_use(instance: str | None = None, id: int | None = None, approach: bool = True, stand: float = 1.1,
+                   wait_timeout: float = 15) -> dict:
     """Use an object like a player (talk to an NPC, take an item, open/close a door, open a box): turn the camera
     onto it (living NPC: chest; else the centre, then points above/below) until the crosshair pick is that object
-    within use range (2 m), press use once and report. No walking: get within ~2 m first (game_move_to id=...).
+    within use range (2 m), press use once and report. approach (default True): when the first try fails
+    out_of_range / pick_missed, or a non-door use had no_effect (e.g. a script that acts only within 1.5 m), walk
+    (game_move_to, no sprint/engage) to a spot `stand` m (1.1; doors 1.5) from the object's centre on the actor's side
+    and try once more. Far objects work too, but a long walk is better done with game_move_to first.
     Result: state used (reason dialog_opened = talk/loot/trade window, taken, door_toggled, no_effect, gone) / failed
     (reason out_of_range, pick_missed: pick = what the crosshair hit instead, e.g. "blocked by level geometry") /
-    timeout; use {id, name, section, position, before/after (doors), presses, pick, door}."""
+    timeout; use {id, name, section, position, before/after (doors), presses, pick, door}; actor (position),
+    distance (eye to the aim point, m), distance_xz (feet to the object's centre), center, pick_range (crosshair pick
+    distance at the press or when out of range); approached (bool), approach {state, reason, travelled, first
+    {state, reason, distance, distance_xz, pick_range of the first try}}."""
     if id is None:
         raise ValueError("id required (an online object, e.g. from game_objects)")
     inst = get(instance)
-    return await run(nav_move, inst, {"id": int(id)}, True, wait_timeout, "nav.use")
+    return await run(game_use_run, inst, int(id), approach, max(0.5, float(stand)), wait_timeout)
 
 
 @tool
@@ -3616,24 +3647,46 @@ def game_talk_run(inst, id, n, text, line_chars, log_last, timeout):
         raise RuntimeError("no talk window is open (walk up to an NPC, look at the body, game_input use)")
     if v["mode"] != "talk":
         raise RuntimeError(f"the talk window is under a {v['mode']} window; close it first (game_input ESC)")
+    # CUITalkWnd::AskQuestion drops a choice while the option list waits for its rebuild (pending: just opened, an
+    # info portion given): pick from the rebuilt list
+    deadline = time.monotonic() + 2
+    while v.get("pending") and v.get("open") and time.monotonic() < deadline:
+        time.sleep(0.03)
+        v = talk_get(inst)
     o = talk_pick(v, id, n, text)
     before = v.get("log_count", 0)
-    via = f"key {o['key']}" if o.get("key") else talk_scroll_click(inst, o.get("id"), o["n"])
-    if o.get("key"):
-        input_run(inst, [{"key": o["key"]}], True, 10)
-    # the partner answers in the same frame; the option list is rebuilt on the next one
-    deadline = time.monotonic() + timeout
+    ids = [x.get("id") for x in v["options"]]
+    retried = False
     while True:
-        a = talk_get(inst, before)
-        if not a.get("open") or a.get("loading") or a["mode"] != "talk" or (
-                not a.get("pending") and (a.get("log_count", 0) != before or a.get("dialog") != v.get("dialog")
-                                          or [x.get("id") for x in a["options"]] != [x.get("id") for x in v["options"]])):
+        via = f"key {o['key']}" if o.get("key") else talk_scroll_click(inst, o.get("id"), o["n"])
+        if o.get("key"):
+            input_run(inst, [{"key": o["key"]}], True, 10)
+        # the partner answers in the same frame; the option list is rebuilt on the next one
+        t_press = time.monotonic()
+        deadline = t_press + timeout
+        while True:
+            a = talk_get(inst, before)
+            if not a.get("open") or a.get("loading") or a["mode"] != "talk" or (
+                    not a.get("pending") and (a.get("log_count", 0) != before or a.get("dialog") != v.get("dialog")
+                                              or [x.get("id") for x in a["options"]] != ids)):
+                break
+            # nothing at all after 1 s: the press was dropped (pending rebuild between our read and the key) -> once more
+            if not retried and not a.get("pending") and time.monotonic() - t_press > 1 and (
+                    [x.get("id") for x in a["options"]] == ids):
+                break
+            if time.monotonic() > deadline:
+                break
+            time.sleep(0.03)
+        if retried or not a.get("open") or a.get("loading") or a["mode"] != "talk" or a.get("log_count", 0) != before \
+                or a.get("dialog") != v.get("dialog") or [x.get("id") for x in a["options"]] != ids \
+                or time.monotonic() > deadline:
             break
-        if time.monotonic() > deadline:
-            break
-        time.sleep(0.03)
+        retried = True
+        o = talk_pick(a, o.get("id"), None, None) if o.get("id") is not None else o
     out = {"instance": inst.id, "chose": {"n": o["n"], "id": o.get("id"), "dialog": o.get("dialog"),
                                           "text": ui_text(o), "via": via}}
+    if retried:
+        out["chose"]["retried"] = True
     if a.get("open") and not a.get("loading"):
         out["new_lines"] = [talk_line(e, line_chars) for e in a.get("log", [])]
         if a["mode"] == "talk" and a.get("log_count", 0) == before and a.get("dialog") == v.get("dialog"):
@@ -3667,8 +3720,9 @@ async def game_talk(instance: str | None = None, id: str | None = None, n: int |
     log_count}. open false = no talk window.
     Choose by id (phrase id from options; ids are the game's dialog XML ids, the same in vanilla and mods), n or
     text (exact / glob / substring): presses the option's number key, or scrolls the list and clicks it (n > 10), so
-    preconditions, scripts and sounds run as for a player; waits until the window updated (timeout s). Returns
-    chose {n, id, dialog, text, via}, new_lines (said since the choice), then the new view (log omitted unless
+    preconditions, scripts and sounds run as for a player; waits until the window updated (timeout s). The game
+    ignores a choice while the option list is being rebuilt, so it first waits for that (pending) and repeats a press
+    that changed nothing within 1 s once (chose.retried). Returns chose {n, id, dialog, text, via}, new_lines (said since the choice), then the new view (log omitted unless
     log_last). The dialog closing or switching to trade -> open false / mode trade (+ game_mode, dialog_window).
     line_chars: log lines longer than this are cut (truncated = full length); 0 = no limit. Option text is never cut."""
     inst = get(instance)
