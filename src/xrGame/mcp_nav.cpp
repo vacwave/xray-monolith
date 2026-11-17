@@ -1594,6 +1594,7 @@ namespace
 		LPCSTR action = "none", reason = nullptr;
 		Fvector pos, gate, stand; // gate = leaf centre while shut (the doorway); stand = where to open it from
 		u32 presses = 0, check_t = 0;
+		float range = -1.f; // nav.use: HUD pick range to the object at the press (or when it was beyond use range)
 		bool done = false; // opened or given up: not acted on again in this move
 		bool was_locked = false;
 	};
@@ -2119,6 +2120,7 @@ namespace
 				mcp_input::hold_key(g_mv.tap_dik, true);
 				g_mv.jump_tap = true;
 				r.presses++;
+				r.range = rq.range;
 				r.action = "use";
 				r.pick.clear();
 				g_mv.phase = 3;
@@ -2127,7 +2129,10 @@ namespace
 			}
 			g_mv.aim_ok = 0;
 			if (rq.O == o)
+			{
 				r.pick = "out_of_range";
+				r.range = rq.range;
+			}
 			else if (rq.O)
 				r.pick = xr_string("blocked by ") + rq.O->cName().c_str();
 			else
@@ -2553,6 +2558,17 @@ namespace
 		if (g_mv.use_only)
 		{
 			r.str("mode", "use").i("elapsed_ms", g_mv.elapsed).i("frames", g_mv.frames);
+			CGameObject* o = g_actor && g_pGameLevel && g_pGameLevel->name() == g_mv.level ? online(g_mv.target_id) : nullptr;
+			if (o)
+			{
+				// eye to the first aim point (what the out_of_range check uses); feet to the object's centre (horizontal)
+				Fvector c, p = g_actor->Position();
+				o->Center(c);
+				r.vec("actor", p).num("distance", Device.vCameraPosition.distance_to(aim_point(o, 0)), 2);
+				r.vec("center", c).num("distance_xz", p.distance_to_xz(c), 2);
+			}
+			if (g_mv.doors[0].range >= 0.f)
+				r.num("pick_range", g_mv.doors[0].range, 2);
 			return r.raw("use", door_json(g_mv.doors[0])).done();
 		}
 		r.vec("target", g_mv.target);
