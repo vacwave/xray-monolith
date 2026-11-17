@@ -44,6 +44,7 @@
 bool mcp_world_is_door(CGameObject* o); // xrGame/mcp_world.cpp
 LPCSTR mcp_door_state(CGameObject* o, xr_string* json, bool* usable);
 extern void (*g_mcp_on_hit)(CEntity* victim, const SHit* hit); // xrGame/Entity.cpp
+extern u32 g_mcp_actor_shots; // xrGame/WeaponFire.cpp
 
 namespace
 {
@@ -2755,7 +2756,7 @@ namespace
 		u32 want = 1, burst = 3, burst_n = 0, burst_from = 0, timeout_ms = 30000, elapsed = 0, frames = 0, conn = 0, releases = 0;
 		int fire_dik = 0, reload_dik = 0, zoom_dik = 0;
 		bool fire_down = false, tap = false, reload_tap = false, zoom_down = false;
-		u32 shots = 0, reloads = 0, jams = 0, on_frames = 0;
+		u32 shots = 0, reloads = 0, jams = 0, on_frames = 0, fired = 0;
 		int mag = 0, mag_before = -1, total_before = -1, mag_after = -1, total_after = -1;
 		u32 wstate = 0, press_t = 0, release_t = 0, zoom_t = 0, nowpn_t = 0, blocked_t = 0, range_t = 0, los_t = 0;
 		u32 settle_t = 0, unjam_t = 0, unjam_tries = 0, reload_t = 0, reload_tries = 0, dead_t = 0;
@@ -3251,7 +3252,9 @@ namespace
 		}
 		g_sh.nowpn = false;
 
-		// shots = rounds that left the magazine outside reloads (a cleared jam ejects one)
+		// shots = the actor's fired rounds (CWeapon::FireTrace counter, so g_infinite_mag counts too)
+		g_sh.shots += g_mcp_actor_shots - g_sh.fired;
+		g_sh.fired = g_mcp_actor_shots;
 		int mag = w->GetAmmoElapsed();
 		if (w->ID() != g_sh.wid)
 		{
@@ -3259,13 +3262,8 @@ namespace
 			g_sh.weapon = w->cNameSect_str();
 			g_sh.wstate = st;
 		}
-		else
-		{
-			if (mag < g_sh.mag && st != CWeapon::eReload && g_sh.wstate != CWeapon::eReload)
-				g_sh.shots += g_sh.mag - mag;
-			if (st == CWeapon::eReload && g_sh.wstate != CWeapon::eReload && !g_sh.misfire)
-				g_sh.reloads++;
-		}
+		else if (st == CWeapon::eReload && g_sh.wstate != CWeapon::eReload && !g_sh.misfire)
+			g_sh.reloads++;
 		g_sh.mag = mag;
 		g_sh.wstate = st;
 
@@ -3429,6 +3427,7 @@ namespace
 			s.total_before = s.total_after = w->GetSuitableAmmoTotal();
 			s.wstate = w->GetState();
 		}
+		s.fired = g_mcp_actor_shots;
 		g_sh = s;
 		{
 			xrCriticalSectionGuard guard(g_hits_lock);

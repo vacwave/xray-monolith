@@ -2891,6 +2891,8 @@ void CCC_RegisterCommands()
 	{
 		CMD3(CCC_Mask, "g_god", &psActorFlags, AF_GODMODE);
 		CMD3(CCC_Mask, "g_unlimitedammo", &psActorFlags, AF_UNLIMITEDAMMO);
+		CMD3(CCC_Mask, "g_infinite_mag", &psActorFlags, AF_INFINITE_MAG);
+		CMD3(CCC_Mask, "g_norecoil", &psActorFlags, AF_NORECOIL);
 	}
 	if (0 != Core.isDebug())
 	{

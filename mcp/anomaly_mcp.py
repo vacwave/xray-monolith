@@ -999,7 +999,7 @@ def info_or_error(inst, timeout=5):
 
 def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_args=None, timeout=180,
            full_dumps=False, hang_timeout=None, load_timeout=None, slot_index=None, load=None,
-           keep_shader_cache=False, debug=True):
+           keep_shader_cache=False, debug=True, cheats=True, god=True, infinite_mag=True, norecoil=True):
     params ={k: v for k, v in locals().items() if k != "slot_index"}
     game_root = Path(game_root) if game_root else DEFAULT_GAME_ROOT
     mo2 = mo2_setup(game_root)
@@ -1089,11 +1089,19 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
         inst.call("lua.exec", {"code": MUTE_LUA, "quiet": 1}, timeout=timeout)
     except Exception as e:
         warnings.append(f"mute via options failed: {e}")
+    # process-wide actor flags: set once, they hold across loads, new games and level changes
+    cheat_state = {n: bool(cheats and on) for n, on in
+                   (("g_god", god), ("g_infinite_mag", infinite_mag), ("g_norecoil", norecoil))}
+    for n, on in cheat_state.items():
+        try:
+            inst.call("console.exec", {"cmd": f"{n} {'on' if on else 'off'}"}, timeout=timeout)
+        except Exception as e:
+            warnings.append(f"{n} failed: {e}")
     return {"instance": iid, "pid": pid, "port": port, "profile": profile, "appdata": str(appdata),
             "game_root": str(game_root), "exe": str(exe),
             "mo2": {"profile": mo2[1], "game_path": str(fs_root), "mods_active": mo2[4][0],
                     "mods_total": mo2[4][1]} if mo2 else None,
-            "args": args[1:], "copied_dlls": copied, "full_dumps": full_dumps, "engine_info": info,
+            "args": args[1:], "copied_dlls": copied, "full_dumps": full_dumps, "cheats": cheat_state, "engine_info": info,
             "warnings": warnings or None}
 
 
@@ -1236,11 +1244,16 @@ async def game_launch(exe: str | None = None, game_root: str | None = None, show
                       new_game: bool = False, extra_args: str | None = None, timeout: float = 180,
                       full_dumps: bool = False, hang_timeout: float | None = None,
                       load_timeout: float | None = None, load: str | None = None,
-                      keep_shader_cache: bool = False, debug: bool = True) -> dict:
+                      keep_shader_cache: bool = False, debug: bool = True, cheats: bool = True, god: bool = True,
+                      infinite_mag: bool = True, norecoil: bool = True) -> dict:
     """Launch a game instance (silent/minimized unless show_window) and connect to it.
 
     debug: pass -dbg (debug mode: script error details, debug console commands and menus); default on.
-    g_god / g_unlimitedammo exist in any MCP game, with or without it.
+    Cheats (on by default, set once via the console; they hold across loads, new games and level changes): god
+    (g_god), infinite_mag (g_infinite_mag: the actor's magazine never empties; not the grenade launcher / RPG),
+    norecoil (g_norecoil: no camera recoil kick); cheats=False turns all three off. Result cheats {cvar: on};
+    game_state actor.cheats shows the live state. g_unlimitedammo (infinite reserve) is not touched here
+    (the slot's user.ltx template turns it on).
     game_root: default C:\\AnomalyMO2 (the testers' MO2: C:\\Anomaly with their mods); C:\\Anomaly = plain vanilla;
     C:\\GAMMA counts against the GAMMA cap. An MO2 folder (ModOrganizer.exe, no fsgame.ltx) is started through its own
     MO2 (`run`, MO2's selected profile, active mods and gamePath), which is killed once the game runs; refused while
@@ -1259,7 +1272,7 @@ async def game_launch(exe: str | None = None, game_root: str | None = None, show
     game_restart) and the game recompiles it; true keeps it (a new slot is seeded from the game root's cache)."""
     t0 = time.time()
     res = await run(launch, exe, game_root, show_window, new_game, extra_args, timeout, full_dumps, hang_timeout,
-                    load_timeout, None, load, keep_shader_cache, debug)
+                    load_timeout, None, load, keep_shader_cache, debug, cheats, god, infinite_mag, norecoil)
     if load:
         res["load"] = await run(load_wait, instances[res["instance"]], load, 0, 0, t0 + (load_timeout or 600), t0)
     return res
@@ -2813,7 +2826,7 @@ async def game_shoot(instance: str | None = None, id: int | None = None, part: s
     aim drifts off; single/burst modes: one press per shot. Empty magazine -> normal reload if spare ammo; jam ->
     reload (unjams in the engine). ads: aim down sights while shooting. fire=False: track only (keep aiming until
     max_seconds / stop; use game_input meanwhile). Movement stays yours (game_move_to). Honours MCP pause/game_step.
-    Shot count: `shots` rounds, or until_dead. For the outcome only, game_kill(by_actor=True) is quicker.
+    Shot count: `shots` rounds fired (counted in the engine's fire path, so g_infinite_mag counts too), or until_dead. For the outcome only, game_kill(by_actor=True) is quicker.
     Result: state done / target_dead / target_gone / not_visible (blocker) / los_blocked (the barrel's line of fire
     blocked 1.5 s; blocker: what, id, name, material, distance) / out_of_range (weapon fire distance) / out_of_ammo / jammed / no_weapon (reason: nothing in hands,
     knife, binoculars, not a firearm, grenade launcher mode) / timeout / aborted (dialog, actor_dead, level_change,
@@ -4485,7 +4498,7 @@ async def game_actor(heal: bool = False, health: float | None = None, stamina: f
                      instance: str | None = None) -> dict:
     """Set actor stats (0..1): health, stamina, radiation, satiety, psy_health; bleeding 0 stops bleeding; money =
     exact amount (RU). heal = health/stamina/psy 1, radiation 0, bleeding stopped (explicit values win). Returns before
-    and after. Other toggles are console cvars (console_exec): "g_god on" (god mode), "g_unlimitedammo on";
+    and after. Other toggles are console cvars (console_exec): "g_god on" (god mode), "g_unlimitedammo on", "g_infinite_mag on", "g_norecoil on";
     faction: game_teleport(faction=...)."""
     inst = get(instance)
     return with_error_hint(inst, await run(lambda: actor_set(inst, heal=heal, health=health, stamina=stamina,

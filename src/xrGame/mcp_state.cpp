@@ -505,6 +505,8 @@ namespace
 				ac.str("community", a->CharacterInfo().Community().id().c_str());
 				ac.i("rank", a->Rank()).i("reputation", a->Reputation());
 				ac.b("god_mode", !!GodMode());
+				ac.raw("cheats", jobj().b("god", !!psActorFlags.test(AF_GODMODE)).b("infinite_mag", !!psActorFlags.test(AF_INFINITE_MAG))
+					.b("norecoil", !!psActorFlags.test(AF_NORECOIL)).b("unlimited_ammo", !!psActorFlags.test(AF_UNLIMITEDAMMO)).done());
 				if (a->Holder())
 					ac.b("in_vehicle", true);
 				if (PIItem o = a->inventory().ItemFromSlot(OUTFIT_SLOT))
