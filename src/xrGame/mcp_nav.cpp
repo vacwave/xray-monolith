@@ -224,9 +224,15 @@ namespace
 		}
 
 		// nearest node centre in 3D (only nodes with comp_of[id] == comp when comp_of is given): rings of cells up to
-		// 50 m, then a full scan
-		u32 nearest(const Fvector& p, float& dist, bool& scanned, const u32* comp_of = nullptr, u32 comp = 0) const
+		// 50 m, then a full scan; yw > 1 weighs height differences more (keeps a target on its own floor)
+		u32 nearest(const Fvector& p, float& dist, bool& scanned, const u32* comp_of = nullptr, u32 comp = 0,
+		            float yw = 1.f) const
 		{
+			auto d2 = [&](u32 id)
+			{
+				Fvector c = centre(id);
+				return _sqr(c.x - p.x) + _sqr(c.z - p.z) + _sqr(yw * (c.y - p.y));
+			};
 			scanned = false;
 			int x0 = cx(p.x), z0 = cz(p.z);
 			int max_ring = iCeil(50.f / cell);
@@ -248,7 +254,7 @@ namespace
 						{
 							if (comp_of && comp_of[id] != comp)
 								continue;
-							float d = centre(id).distance_to(p);
+							float d = _sqrt(d2(id));
 							if (d < bd)
 							{
 								bd = d;
@@ -265,7 +271,7 @@ namespace
 				{
 					if (comp_of && comp_of[id] != comp)
 						continue;
-					float d = centre(id).distance_to_sqr(p);
+					float d = d2(id);
 					if (d < bd)
 					{
 						bd = d;
@@ -328,7 +334,60 @@ namespace
 			}
 			return maxd;
 		}
+
+		// b is a linked neighbour of a, or two links away (diagonal cell)
+		bool near_linked(u32 a, u32 b) const
+		{
+			if (a == b)
+				return true;
+			const CLevelGraph::CVertex* v = lg.vertex(a);
+			for (int k = 0; k < 4; ++k)
+			{
+				u32 n = v->link(k);
+				if (!lg.valid_vertex_id(n))
+					continue;
+				if (n == b)
+					return true;
+				const CLevelGraph::CVertex* w = lg.vertex(n);
+				for (int j = 0; j < 4; ++j)
+					if (w->link(j) == b)
+						return true;
+			}
+			return false;
+		}
+
+		// node at (x, z) within 1 m of y and linked to `from` (not across a thin wall), else invalid
+		u32 floor_node(float x, float y, float z, u32 from) const
+		{
+			u32 id = node_near_y(cx(x), cz(z), y, x, z);
+			if (id == invalid || _abs(plane_y(id, x, z) - y) > 1.f || (from != invalid && !near_linked(from, id)))
+				return invalid;
+			return id;
+		}
+
+		// a straight walk a-b keeps r metres of AI map on both sides (sampled every half cell, not within r of the
+		// ends: those are corners)
+		bool clear(const Fvector& a, const Fvector& b, float r) const
+		{
+			float dx = b.x - a.x, dz = b.z - a.z, len = _sqrt(dx * dx + dz * dz);
+			if (len < 2 * r)
+				return true;
+			dx /= len;
+			dz /= len;
+			for (float t = r; t <= len - r; t += cell * .5f)
+			{
+				float x = a.x + dx * t, z = a.z + dz * t, y = a.y + (b.y - a.y) * t / len;
+				u32 c = floor_node(x, y, z, invalid);
+				if (c == invalid)
+					return false;
+				y = plane_y(c, x, z);
+				if (floor_node(x - dz * r, y, z + dx * r, c) == invalid || floor_node(x + dz * r, y, z - dx * r, c) == invalid)
+					return false;
+			}
+			return true;
+		}
 	};
+	const float clearance = .32f; // kept between a walked line and the AI map edge (the actor capsule grazed walls)
 
 	// Per-node visit stamps (no clearing between searches)
 	struct stamps
@@ -550,9 +609,12 @@ namespace
 			return s;
 		}
 		bool sc;
-		s.id = m.nearest(p, s.dist, sc);
+		s.id = m.nearest(p, s.dist, sc, nullptr, 0, 3.f);
 		if (s.id != invalid)
+		{
 			s.point = m.centre(s.id);
+			s.dist = s.point.distance_to(p);
+		}
 		return s;
 	}
 
@@ -877,7 +939,7 @@ namespace
 				u32 nb = v->link(k);
 				if (!m.lg.valid_vertex_id(nb) || !m.lg.is_accessible(nb))
 					continue;
-				if (avoid && std::find(avoid->begin(), avoid->end(), nb) != avoid->end())
+				if (avoid && std::binary_search(avoid->begin(), avoid->end(), nb)) // sorted by mover_plan
 					continue;
 				float ng = g + m.cell;
 				if (st.seen(nb) && gcost[nb] <= ng)
@@ -899,7 +961,11 @@ namespace
 		u32 a = 0;
 		Fvector2 ap;
 		ap.set(from.x, from.z);
-		auto visible = [&](u32 k) { return m.lg.check_vertex_in_direction(path[a], ap, path[k]); };
+		Fvector a3 = from;
+		auto visible = [&](u32 k)
+		{
+			return m.lg.check_vertex_in_direction(path[a], ap, path[k]) && m.clear(a3, m.centre(path[k]), clearance);
+		};
 		while (a + 1 < n)
 		{
 			// gallop forward, then binary search the last visible node
@@ -928,9 +994,30 @@ namespace
 			}
 			a = lo;
 			out_idx.push_back(a);
-			Fvector c = m.centre(path[a]);
-			ap.set(c.x, c.z);
+			a3 = m.centre(path[a]);
+			ap.set(a3.x, a3.z);
 		}
+	}
+
+	// a path corner (node centre) moved up to 0.25 m away from the AI map edges around it (stays in its own cell)
+	Fvector corner_point(const navmap& m, u32 id)
+	{
+		Fvector c = m.centre(id), push;
+		push.set(0, 0, 0);
+		for (int dx = -1; dx <= 1; ++dx)
+			for (int dz = -1; dz <= 1; ++dz)
+				if ((dx || dz) && m.floor_node(c.x + dx * m.cell, c.y, c.z + dz * m.cell, id) == invalid)
+				{
+					push.x -= dx * (dz ? .7071f : 1.f);
+					push.z -= dz * (dx ? .7071f : 1.f);
+				}
+		float l = _sqrt(push.x * push.x + push.z * push.z);
+		if (l < .1f)
+			return c;
+		c.x += push.x / l * .25f;
+		c.z += push.z / l * .25f;
+		c.y = m.plane_y(id, c.x, c.z);
+		return c;
 	}
 
 	struct path_result
@@ -981,7 +1068,7 @@ namespace
 			corners(m, pr.nodes, from, idx);
 			pr.points.push_back(from);
 			for (u32 k : idx)
-				pr.points.push_back(k + 1 == pr.nodes.size() ? to_point : m.centre(pr.nodes[k]));
+				pr.points.push_back(k + 1 == pr.nodes.size() ? to_point : corner_point(m, pr.nodes[k]));
 			if (idx.empty())
 				pr.points.push_back(to_point);
 			for (size_t k = 1; k < pr.points.size(); ++k)
@@ -1520,7 +1607,8 @@ namespace
 		xr_vector<Fvector> path;
 		u32 wp = 0;
 		shared_str level;
-		int fwd = 0, sprint_dik = 0, jump_dik = 0, use_dik = 0, tap_dik = 0;
+		int fwd = 0, sprint_dik = 0, jump_dik = 0, use_dik = 0, tap_dik = 0, back_dik = 0;
+		bool back_down = false;
 		u32 check_t = 0, fwd_ms = 0, stuck = 0, stuck_total = 0, replans = 0, sprint_t = 0, replan_t = 0;
 		Fvector stuck_at;
 		xr_vector<door_rec> doors;
@@ -1535,6 +1623,20 @@ namespace
 		u32 phase_t = 0, poll_t = 0, aim_try = 0, aim_ok = 0, aim_bad = 0;
 		Fvector phase_pos;
 		u16 blocked = u16(-1);
+		Fvector goal;          // the target snapped to the AI map (the path's end)
+		bool goal_on = true;   // the target itself is on the map (else the walk ends at goal)
+		bool end_replan = false;
+		bool no_skip = false;  // walk to the next corner (no skip-ahead): after a stuck / doorway replan
+		u32 idle = 0;          // stuck checks without progress while not holding forward (turning in place)
+		u32 stuck_rep = 0;     // stuck replans in a row within 1 m of rep_at
+		Fvector rep_at = { flt_max, flt_max, flt_max };
+		u32 ray_t = 0;
+		u16 ray_id = u16(-1);  // object hit by the look-ahead rays at the last cast
+		xr_vector<u16> obst;   // obstacles already avoided
+		xr_string blocker;     // last obstacle seen (json)
+		xr_vector<xr_string> tried; // recovery steps taken
+		double tick_us = 0;
+		float tick_max = 0;
 	};
 	mover_t g_mv;
 
@@ -1549,7 +1651,9 @@ namespace
 			mcp_input::hold_key(g_mv.sprint_dik, false);
 		if (g_mv.jump_tap && mcp_input::is_held(g_mv.tap_dik))
 			mcp_input::hold_key(g_mv.tap_dik, false);
-		g_mv.fwd_down = g_mv.sprint_tap = g_mv.jump_tap = false;
+		if (g_mv.back_down && mcp_input::is_held(g_mv.back_dik))
+			mcp_input::hold_key(g_mv.back_dik, false);
+		g_mv.fwd_down = g_mv.sprint_tap = g_mv.jump_tap = g_mv.back_down = false;
 	}
 
 	void mover_finish(LPCSTR state, LPCSTR reason = nullptr)
@@ -1576,6 +1680,15 @@ namespace
 			reason = "off_mesh";
 			return false;
 		}
+		if (_abs(st.point.y - g_mv.target.y) >= 2.4f)
+		{
+			reason = "target_floor_off_mesh"; // no AI node on the target's floor: "reached" (|dy| < 2.5) is impossible
+			return false;
+		}
+		g_mv.goal = st.point;
+		g_mv.goal_on = st.on_mesh || st.point.distance_to_xz(g_mv.target) < .35f;
+		std::sort(g_mv.avoid.begin(), g_mv.avoid.end());
+		g_mv.avoid.erase(std::unique(g_mv.avoid.begin(), g_mv.avoid.end()), g_mv.avoid.end());
 		path_result pr;
 		level_path(m, s, c.origin, st.id, st.point, 400000, 200.f, pr, &g_mv.avoid);
 		if (!pr.found)
@@ -1594,6 +1707,14 @@ namespace
 		}
 		path_doors();
 		return true;
+	}
+
+	void plan_failed(LPCSTR why) { mover_finish(xr_strcmp(why, "target_floor_off_mesh") ? "no_path" : "unreachable", why); }
+
+	void mover_tried(LPCSTR step, u16 id = u16(-1))
+	{
+		if (g_mv.tried.size() < 24)
+			g_mv.tried.push_back(id == u16(-1) ? xr_string(step) : xr_string(step) + ":" + std::to_string(id).c_str());
 	}
 
 	CGameObject* online(u16 id)
@@ -1768,6 +1889,11 @@ namespace
 	// back to walking (stuck detection restarts)
 	void door_end()
 	{
+		if (g_mv.back_down)
+		{
+			mcp_input::hold_key(g_mv.back_dik, false);
+			g_mv.back_down = false;
+		}
 		g_mv.act = -1;
 		g_mv.phase = 0;
 		g_mv.poll_t = g_mv.elapsed;
@@ -1920,10 +2046,28 @@ namespace
 				door_phase(g_mv.act, 2);
 			else if (aim)
 				*aim = r.stand;
+			if (g_mv.sprint_dik && !g_mv.sprint_tap && (g_actor->MovingState() & mcSprint) && pos.distance_to_xz(r.stand) < 3.f)
+			{
+				// a sprint overshoots the stand point into the leaf's swing: the opening leaf then sweeps the actor
+				// behind it (Sidorovich's door)
+				mcp_input::hold_key(g_mv.sprint_dik, true);
+				g_mv.sprint_tap = true;
+				g_mv.sprint_t = g_mv.elapsed;
+			}
 			return;
 		}
+		// still inside the leaf's swing (a sprint overshot the stand point): back off before the press, or the opening
+		// leaf sweeps the actor behind it
+		Fvector h = o->Position();
+		bool back = g_mv.phase == 2 && !g_mv.use_only && g_mv.back_dik && t < 2000 &&
+		            pos.distance_to_xz(h) < 2.f * r.gate.distance_to_xz(h) + .25f;
+		if (back != g_mv.back_down)
+		{
+			mcp_input::hold_key(g_mv.back_dik, back);
+			g_mv.back_down = back;
+		}
 		const collide::rq_result& rq = HUD().GetRQ();
-		bool closer = g_mv.phase == 2 && !g_mv.use_only && rq.O == o && rq.range >= use_range;
+		bool closer = g_mv.phase == 2 && !g_mv.use_only && !back && rq.O == o && rq.range >= use_range;
 		if (g_mv.fwd_down != closer)
 		{
 			mcp_input::hold_key(g_mv.fwd, closer); // step toward a door just out of use range
@@ -1938,7 +2082,7 @@ namespace
 				g_mv.aim_ok = 0;
 				return;
 			}
-			if (closer)
+			if (closer || back)
 				return;
 			if (rq.O == o && rq.range < use_range)
 			{
@@ -2033,10 +2177,122 @@ namespace
 		return e.done();
 	}
 
+	xr_string blocker_json(const collide::rq_result& r);
+
+	// a thing the AI map does not know about that the actor should walk around (not a creature: it moves; not a door:
+	// the door logic opens it; not loose items or the move's own target)
+	bool obstacle(CObject* o)
+	{
+		if (!o || o->getDestroy() || o->H_Parent() || o->ID() == g_mv.target_id || smart_cast<CEntityAlive*>(o))
+			return false;
+		CGameObject* g = smart_cast<CGameObject*>(o);
+		return g && !mcp_world_is_door(g) && !smart_cast<CInventoryItem*>(o);
+	}
+
+	// nearest hit of six short horizontal rays toward aim (knee and chest height; body centre and both shoulders):
+	// objects_only -> only obstacle() objects count
+	bool ahead_hit(const Fvector& pos, const Fvector& aim, float range, bool objects_only, collide::rq_result& hit)
+	{
+		Fvector dir;
+		dir.set(aim.x - pos.x, 0, aim.z - pos.z);
+		float len = dir.magnitude();
+		if (len < .3f)
+			return false;
+		dir.div(len);
+		range = _min(range, len);
+		bool any = false;
+		hit.range = flt_max;
+		const float hs[2] = { .45f, 1.2f }, ss[3] = { -.3f, 0.f, .3f };
+		for (float h : hs)
+			for (float s : ss)
+			{
+				Fvector p;
+				p.set(pos.x + dir.z * s, pos.y + h, pos.z - dir.x * s);
+				collide::rq_result r;
+				if (Level().ObjectSpace.RayPick(p, dir, range, collide::rqtBoth, r, g_actor) && r.range < hit.range &&
+				    (!objects_only || obstacle(r.O)))
+				{
+					hit = r;
+					any = true;
+				}
+			}
+		return any;
+	}
+
+	// the same object ahead on two casts 100 ms apart: its AI nodes (box grown by 0.4 m, not the actor's own spot)
+	// join g_mv.avoid and the path is replanned; no other route -> they are dropped again (the stuck steps follow)
+	void obstacle_scan(const Fvector& pos, const Fvector& aim)
+	{
+		if (g_mv.elapsed - g_mv.ray_t < 100)
+			return;
+		g_mv.ray_t = g_mv.elapsed;
+		collide::rq_result r;
+		u16 id = ahead_hit(pos, aim, 1.8f, true, r) ? r.O->ID() : u16(-1);
+		bool confirmed = id != u16(-1) && id == g_mv.ray_id;
+		g_mv.ray_id = id;
+		if (!confirmed || std::find(g_mv.obst.begin(), g_mv.obst.end(), id) != g_mv.obst.end())
+			return;
+		g_mv.obst.push_back(id);
+		g_mv.blocker = blocker_json(r);
+		CObject* o = r.O;
+		Fvector c;
+		o->Center(c);
+		float rad = o->Radius();
+		if (rad > 6.f)
+			return mover_tried("obstacle_too_big", id);
+		Fbox b;
+		if (o->Visual())
+			b.set(o->Visual()->getVisData().box);
+		else
+			b.set(-rad, -rad, -rad, rad, rad, rad);
+		b.grow(.4f);
+		Fmatrix inv;
+		inv.invert(o->XFORM());
+		navmap m(ai().level_graph());
+		xr_vector<u32> keep = g_mv.avoid;
+		int n = iCeil((rad + .5f) / m.cell);
+		for (int x = m.cx(c.x) - n; x <= m.cx(c.x) + n; ++x)
+			for (int z = m.cz(c.z) - n; z <= m.cz(c.z) + n; ++z)
+			{
+				u32 f, l;
+				if (!m.cell_nodes(x, z, f, l))
+					continue;
+				for (u32 nd = f; nd < l; ++nd)
+				{
+					Fvector p = m.centre(nd), lp;
+					if (p.distance_to_xz(pos) < .8f || p.distance_to_xz(g_mv.goal) < .5f)
+						continue;
+					inv.transform_tiny(lp, p);
+					if (lp.x >= b.min.x && lp.x <= b.max.x && lp.z >= b.min.z && lp.z <= b.max.z && lp.y >= b.min.y - 1.5f && lp.y <= b.max.y)
+						g_mv.avoid.push_back(nd);
+				}
+			}
+		if (g_mv.avoid.size() == keep.size())
+			return mover_tried("obstacle_off_map", id);
+		g_mv.replans++;
+		LPCSTR why;
+		if (mover_plan(why))
+			return mover_tried("avoid", id);
+		g_mv.avoid.swap(keep);
+		mover_tried("avoid_no_route", id);
+	}
+
+	void mover_step(u32 dt);
+
 	void mover_tick(u32 dt)
 	{
 		if (!g_mv.active)
 			return;
+		CTimer t;
+		t.Start();
+		mover_step(dt);
+		float us = t.GetElapsed_sec() * 1e6f;
+		g_mv.tick_us += us;
+		g_mv.tick_max = _max(g_mv.tick_max, us);
+	}
+
+	void mover_step(u32 dt)
+	{
 		// taps last one input frame
 		if (g_mv.sprint_tap)
 		{
@@ -2078,7 +2334,7 @@ namespace
 			g_mv.target = o->Position();
 			LPCSTR why;
 			if (g_mv.target.distance_to(g_mv.path.back()) > 2.f && g_mv.elapsed - g_mv.replan_t > 1000 && !mover_plan(why))
-				return mover_finish("no_path", why);
+				return plan_failed(why);
 		}
 
 		Fvector pos = g_actor->Position();
@@ -2091,23 +2347,53 @@ namespace
 
 		// next corner: reached ones are skipped, and so is a corner whose successor is already in straight walkable line
 		const CLevelGraph& lg = ai().level_graph();
+		// (on the corner's floor: a corner straight above or below is not reached)
 		u32 last = (u32)g_mv.path.size() - 1;
-		while (g_mv.wp < last && pos.distance_to_xz(g_mv.path[g_mv.wp]) < .7f)
+		while (g_mv.wp < last && pos.distance_to_xz(g_mv.path[g_mv.wp]) < .5f && _abs(pos.y - g_mv.path[g_mv.wp].y) < 2.f)
+		{
 			g_mv.wp++;
+			g_mv.no_skip = false;
+		}
 		u32 node = g_actor->ai_location().level_vertex_id();
-		if (g_mv.wp < last && lg.valid_vertex_id(node) && lg.inside(node, pos))
+		// (the map's straight line can still be blocked: door frames, where the stuck replan came from)
+		if (g_mv.wp < last && !g_mv.no_skip && lg.valid_vertex_id(node) && lg.inside(node, pos))
 		{
 			const Fvector& nx = g_mv.path[g_mv.wp + 1];
-			u32 nn = navmap(lg).node_at(nx);
-			if (nn != invalid && lg.check_vertex_in_direction(node, Fvector2().set(pos.x, pos.z), nn))
+			navmap m(lg);
+			u32 nn = m.node_at(nx);
+			if (nn != invalid && lg.check_vertex_in_direction(node, Fvector2().set(pos.x, pos.z), nn) && m.clear(pos, nx, clearance))
 				g_mv.wp++;
 		}
-		Fvector aim = g_mv.wp >= last ? g_mv.target : g_mv.path[g_mv.wp]; // copy: a door replan replaces the path
+		// copy: a door replan replaces the path; an off-map target: walk to its snapped point (not into the wall)
+		Fvector aim = g_mv.wp < last ? g_mv.path[g_mv.wp] : g_mv.goal_on ? g_mv.target : g_mv.path[last];
+		if (g_mv.wp >= last && pos.distance_to_xz(aim) < .35f && (!g_mv.goal_on || _abs(pos.y - g_mv.target.y) >= 2.5f))
+		{
+			// at the path end, target not reached: never turn on the spot under / over it
+			if (_abs(pos.y - g_mv.target.y) < 2.5f)
+				return mover_finish("unreachable", "target_off_mesh");
+			LPCSTR why;
+			if (g_mv.end_replan)
+				return mover_finish("unreachable", "wrong_floor");
+			g_mv.end_replan = true;
+			g_mv.replans++;
+			mover_tried("replan_wrong_floor");
+			if (!mover_plan(why))
+				return plan_failed(why);
+			return;
+		}
 		if (g_mv.via)
 		{
 			// poll_t = when the door opened
 			if (pos.distance_to_xz(g_mv.via_pt) < .4f || g_mv.elapsed - g_mv.poll_t > 3000 || g_mv.phase)
+			{
 				g_mv.via = false;
+				LPCSTR why; // the path planned while the door was shut may graze its frame: re-pull it from the doorway
+				if (!g_mv.phase && mover_plan(why))
+				{
+					g_mv.no_skip = true;
+					return;
+				}
+			}
 			else
 				aim = g_mv.via_pt;
 		}
@@ -2142,29 +2428,49 @@ namespace
 		}
 		if (g_mv.fwd_down)
 			g_mv.fwd_ms += dt;
-		if (g_mv.sprint && g_mv.fwd_down && _abs(d) < 20.f && !(g_actor->MovingState() & mcSprint) && g_mv.elapsed - g_mv.sprint_t > 1500)
+		if (g_mv.sprint && !g_mv.phase && g_mv.fwd_down && _abs(d) < 20.f && !(g_actor->MovingState() & mcSprint) && g_mv.elapsed - g_mv.sprint_t > 1500)
 		{
 			mcp_input::hold_key(g_mv.sprint_dik, true);
 			g_mv.sprint_tap = true;
 			g_mv.sprint_t = g_mv.elapsed;
 		}
+		if (!g_mv.phase && g_mv.fwd_down)
+		{
+			obstacle_scan(pos, aim);
+			if (!g_mv.active)
+				return;
+		}
 
 		// stuck: under 0.3 m of progress per second of holding forward -> open a door within 2 m (else tap use), jump,
-		// replan, give up
+		// replan, give up; 3 s without progress while turning in place (forward never held long) -> replan, give up
 		if (!g_mv.phase && g_mv.elapsed - g_mv.check_t >= 1000)
 		{
-			bool held_long = g_mv.fwd_ms > 600;
-			if (held_long && pos.distance_to(g_mv.check_pos) < .3f)
+			bool held_long = g_mv.fwd_ms > 600, moved = pos.distance_to(g_mv.check_pos) >= .3f;
+			g_mv.idle = moved || held_long ? 0 : g_mv.idle + 1;
+			if (!moved && (held_long || g_mv.idle >= 3))
 			{
+				if (!held_long)
+				{
+					g_mv.idle = 0;
+					g_mv.stuck = _max(g_mv.stuck, 2u);
+				}
 				g_mv.stuck++;
 				g_mv.stuck_total++;
 				g_mv.stuck_at = pos;
+				if (g_mv.wp < last && pos.distance_to_xz(g_mv.path[g_mv.wp]) < 1.f)
+				{
+					g_mv.wp++; // a corner the capsule cannot get closer to
+					mover_tried("skip_corner");
+				}
 				LPCSTR why;
 				if (g_mv.stuck == 1)
 				{
 					int ds = door_stuck(pos);
 					if (ds > 0)
+					{
+						mover_tried("door");
 						return; // door phase started (or the door failed: avoided / blocked_door)
+					}
 					if (ds < 0)
 						g_mv.stuck = 2; // an open door near: no use tap
 				}
@@ -2173,17 +2479,27 @@ namespace
 					g_mv.tap_dik = g_mv.stuck == 1 ? g_mv.use_dik : g_mv.jump_dik;
 					mcp_input::hold_key(g_mv.tap_dik, true);
 					g_mv.jump_tap = true;
+					mover_tried(g_mv.stuck == 1 ? "use" : "jump");
 				}
-				else if (g_mv.stuck <= 3)
+				else if (g_mv.stuck <= 3 && (g_mv.rep_at.distance_to(pos) > 1.f || g_mv.stuck_rep < 3))
 				{
+					// replans that keep ending at the same spot count toward giving up
+					g_mv.stuck_rep = g_mv.rep_at.distance_to(pos) > 1.f ? 1 : g_mv.stuck_rep + 1;
+					g_mv.rep_at = pos;
 					g_mv.replans++;
+					mover_tried(held_long ? "replan" : "replan_turning");
 					if (!mover_plan(why))
-						return mover_finish("no_path", why);
+						return plan_failed(why);
+					g_mv.no_skip = true;
 				}
 				else
+				{
+					collide::rq_result r; // what is in front now
+					g_mv.blocker = ahead_hit(pos, aim, 1.5f, false, r) ? blocker_json(r) : jobj().str("what", "none_ahead").done();
 					return mover_finish("stuck");
+				}
 			}
-			else if (pos.distance_to(g_mv.check_pos) >= .3f)
+			else if (moved)
 				g_mv.stuck = 0;
 			g_mv.check_pos = pos;
 			g_mv.check_t = g_mv.elapsed;
@@ -2226,6 +2542,19 @@ namespace
 		r.i("stuck_checks", g_mv.stuck_total).i("replans", g_mv.replans);
 		if (g_mv.stuck_total)
 			r.vec("stuck_at", g_mv.stuck_at);
+		if (!g_mv.path.empty())
+			r.vec("goal", g_mv.goal).b("goal_on_mesh", g_mv.goal_on);
+		if (g_mv.blocker.size())
+			r.raw("blocker", g_mv.blocker);
+		if (g_mv.tried.size())
+		{
+			xr_string a = "[";
+			for (const xr_string& s : g_mv.tried)
+				a += (a.size() > 1 ? "," : "") + js(s.c_str());
+			r.raw("recovery", a + "]");
+		}
+		if (g_mv.frames)
+			r.raw("tick_us", jobj().num("avg", g_mv.tick_us / g_mv.frames, 1).num("max", g_mv.tick_max, 0).done());
 		return r.done();
 	}
 
@@ -2271,6 +2600,7 @@ namespace
 		m.sprint = int_param(params, "sprint", 0) != 0;
 		m.fwd = get_action_dik(kFWD);
 		m.sprint_dik = get_action_dik(kSPRINT_TOGGLE);
+		m.back_dik = get_action_dik(kBACK);
 		m.jump_dik = get_action_dik(kJUMP);
 		m.use_dik = get_action_dik(kUSE);
 		if (!m.fwd)
@@ -2284,7 +2614,7 @@ namespace
 		g_mv.state = "running";
 		LPCSTR why = nullptr;
 		if (!mover_plan(why))
-			mover_finish("no_path", why);
+			plan_failed(why);
 		out = mover_json();
 		return true;
 	}

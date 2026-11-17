@@ -2674,13 +2674,20 @@ async def game_move_to(instance: str | None = None, position: list[float] | None
     walked through without use (a press would close them). A door that stays shut (locked without on_use, use had no
     effect after 2 presses, pick missed) -> replan around it, else state blocked_door. Stuck (no progress for 1 s
     while holding forward): open a shut door within 2 m, else tap use (none next to an open door; facing an NPC it may
-    open a talk -> aborted dialog), then jump, then replan, then give up.
-    Result: state reached / stuck (stuck_at) / timeout / no_path (reason) / blocked_door (reason locked, no_effect,
+    open a talk -> aborted dialog), then jump, then replan, then give up; turning in place 3 s without progress ->
+    replan. Paths keep ~0.3 m off the AI-map edges at corners. Short look-ahead rays see props/vehicles that are not on
+    the AI map (not creatures or doors) and replan around them. The target snaps to an AI node on its own floor.
+    Result: state reached / stuck (stuck_at, blocker = what is ahead) / timeout / no_path (reason) / unreachable
+    (reason target_floor_off_mesh: no AI node on the target's floor, at once; target_off_mesh: walked to the nearest
+    node `goal` but the target is beyond stop_distance; wrong_floor: under/over the target after a replan) /
+    blocked_door (reason locked, no_effect,
     pick_missed; blocked_door = its id) / aborted (reason: dialog, actor_dead, level_change, keys_released =
     game_input_release or supervisor disconnect, target_gone, replaced, stopped), doors [{id, name, section, position,
     before, after (states as in game_objects), action (none, use, opened, avoided), presses, reason, pick (what the
     crosshair hit instead), door (the game_objects door facts)}], blocked_door,
-    distance_left, position, path_length, travelled, elapsed_ms, frames, waypoint/waypoints. Keys are released at the
+    distance_left, position, path_length, travelled, elapsed_ms, frames, waypoint/waypoints, goal / goal_on_mesh,
+    blocker {what object/creature/level_geometry, id, name, section, material, distance}, recovery (steps tried: use,
+    jump, replan, replan_turning, skip_corner, door, avoid:<id>, ...), tick_us {avg, max}. Keys are released at the
     end. wait=False returns at once ({id, state: running}); status=True polls the current/last move, stop=True aborts
     it. With game_nav overlay on, the path is drawn."""
     inst = get(instance)
