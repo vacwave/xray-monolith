@@ -2416,26 +2416,56 @@ async def game_object(id: int, instance: str | None = None) -> dict:
     return await run(world_call, inst, "world.object", {"id": int(id)})
 
 
+TASK_LONG = ("description", "def")  # dropped from the compact (default) game_tasks output
+
+
+def tasks_call(inst, ids, active_only, history, full):
+    exact = len(ids) == 1 and not any(c in ids[0] for c in "*?[")
+    p = {"history": int(bool(history) and not active_only)}
+    if exact:
+        p["id"] = ids[0]
+    res = world_call(inst, "tasks.get", p)
+    if not res.get("available"):
+        return res
+
+    def keep(t):
+        return not ids or any(fnmatch.fnmatchcase(t.get("id", ""), i) for i in ids)
+    for k in ("tasks", "history"):
+        if k in res:
+            res[k] = [t for t in res[k] if keep(t)]
+            if not full:
+                for t in res[k]:
+                    for f in TASK_LONG:
+                        t.pop(f, None)
+    if ids and "history" in res and not exact:
+        res.pop("history_omitted", None)  # counts the unfiltered registry
+    if not full:
+        res["compact"] = "description/def omitted: full=True or id to include them"
+    return res
+
+
 @tool
-async def game_tasks(instance: str | None = None, id: str | None = None, history: bool = True) -> dict:
-    """Quest state as the PDA knows it (read-only). tasks: every task in progress (or only `id`): id, title,
-    description (translated, as shown in the PDA), type (storyline/additional), active, state, received (game time),
-    stage (script stage; changes fire `task_stage` events), status (task_manager status), pending (complete/fail
-    decided, applied on the next task update or at hand-in), forced_status, target (PDA marker object: id, name,
-    character, section, kind, level, alive, online, position; distance (m from the actor) and bearing (deg to turn
-    right) only when it is on the actor's level; null = no marker), giver (id, name, character, level, alive), def
-    (task ltx strings: stage_complete, target_functor, status_functor, condlist_N, on_complete, on_fail).
-    history=true adds completed/failed tasks, newest first (max 50): id, title, description, state, finished (game
-    time), finished_game_ms, last_stage/giver when seen this session. History is the engine task registry, saved with
-    the game: it follows the loaded save and survives reconnects and level changes.
+async def game_tasks(instance: str | None = None, id: str | list[str] | None = None, active_only: bool = False,
+                     history: bool = True, full: bool | None = None) -> dict:
+    """Quest state as the PDA knows it (read-only). tasks: every task in progress: id, title, type
+    (storyline/additional), active (the PDA's active task), state, received (game time), stage (script stage; changes
+    fire `task_stage` events), status (task_manager status), pending (complete/fail decided, applied on the next task
+    update or at hand-in), forced_status, target (PDA marker object: id, name, character, section, kind, level, alive,
+    online, position; distance (m from the actor) and bearing (deg to turn right) only when it is on the actor's
+    level; null = no marker), giver (id, name, character, level, alive); with full: description (translated, as shown
+    in the PDA) and def (task ltx strings: stage_complete, target_functor, status_functor, condlist_N, on_complete,
+    on_fail).
+    id: one task id, or a list (or "a,b"); fnmatch patterns allowed (e.g. "esc_*"); filters tasks and history.
+    full: include description/def (default: only when id is given; compact otherwise). active_only: in-progress tasks
+    only (no history). history=true adds completed/failed tasks, newest first (max 50): id, title, state, finished (game time),
+    finished_game_ms, last_stage/giver when seen this session (+ description with full). History is the engine task
+    registry, saved with the game: it follows the loaded save and survives reconnects and level changes.
     Wait for a stage: game_wait {"event": "task_stage", "where": {"id": ..., "stage": 1}} or {"state":
     "tasks.<id>.stage", "eq": 1}; completion: {"event": "task_completed", "where": {"id": ...}}.
     Outside a level: {available: false, reason: no_level/loading/no_actor}."""
     inst = get(instance)
-    p = {"history": int(bool(history))}
-    if id:
-        p["id"] = id
-    return await run(world_call, inst, "tasks.get", p)
+    ids = [i.strip() for i in (id.split(",") if isinstance(id, str) else id or []) if i and i.strip()]
+    return await run(tasks_call, inst, ids, active_only, history, bool(ids) if full is None else full)
 
 
 INFOS_MAX = 500
