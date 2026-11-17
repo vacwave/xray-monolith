@@ -1595,6 +1595,12 @@ TP_PLACE = r'''
 exec_console_cmd("main_menu off")
 local p = vector():set(POS[1], POS[2], POS[3])
 local bad, r = 4294967295, 0
+if NOSNAP then -- exact point; on the AI map = a node below/above it within 2 m
+  local v = level.vertex_id(p)
+  local dy = v < bad and p.y - level.vertex_position(v).y
+  db.actor:set_actor_position(p)
+  return "exact", fmt(p), tostring(dy and math.abs(dy) <= 2 or false), dy and string.format("%.2f", dy) or ""
+end
 if level.vertex_id(p) >= bad then -- off the AI map: snap to the nearest node within 30 m
   local found
   for d = 1, 30 do
@@ -1666,7 +1672,7 @@ def tp_wait(inst, want_level, deadline):
         time.sleep(1)
 
 
-def teleport(inst, faction, level, position, cvars, timeout):
+def teleport(inst, faction, level, position, cvars, timeout, snap=True):
     t0 = time.time()
     deadline = t0 + timeout
     for name in (faction, level):
@@ -1677,7 +1683,7 @@ def teleport(inst, faction, level, position, cvars, timeout):
     err, mode, cur_level, cur_fac, loc, loc_level = tp_exec(inst, TP_INFO, fac=faction, lvl=level)
     if err:
         raise ValueError(err)
-    notes, load_s, fac_set = [], 0.0, None
+    notes, load_s, fac_set, exact = [], 0.0, None, None
     if mode == "menu":
         faction = faction or "stalker"
         level = level or loc_level
@@ -1708,10 +1714,14 @@ def teleport(inst, faction, level, position, cvars, timeout):
         tp_wait(inst, level, deadline)
         load_s += time.time() - t
     if position is not None:
-        placed = tp_exec(inst, TP_PLACE, pos=position)
+        placed = tp_exec(inst, ("" if snap else "local NOSNAP = true ") + TP_PLACE, pos=position)
         if placed[0] == "error":
             raise RuntimeError(placed[1])
-        if placed[2] != "0":
+        if placed[0] == "exact":
+            exact = {"on_ai_map": placed[2] == "true", "node_dy": float(placed[3]) if placed[3] else None}
+            if not exact["on_ai_map"]:
+                notes.append("snap=False: the point is off the AI map (may be inside geometry or fall)")
+        elif placed[2] != "0":
             notes.append(f"position off the AI map, snapped {placed[2]} m to {placed[1]}")
     lvl, pos, fac, pda, gave, money = tp_exec(inst, TP_FINAL, fac=fac_set)
     if gave:
@@ -1723,23 +1733,125 @@ def teleport(inst, faction, level, position, cvars, timeout):
         applied.append({"cmd": cmd, "lines": lines})
     return {"instance": inst.id, "level": lvl, "position": [float(c) for c in pos.split(",")], "faction": fac,
             "pda": pda or None, "money": int(float(money)), "load_s": round(load_s, 1),
-            "total_s": round(time.time() - t0, 1), "cvars": applied or None, "notes": notes or None}
+            "total_s": round(time.time() - t0, 1), "cvars": applied or None, "notes": notes or None,
+            **({"exact": exact} if exact else {})}
 
 
 @tool
 async def game_teleport(instance: str | None = None, faction: str | None = None, level: str | None = None,
                         position: list[float] | None = None, cvars: list[str] | None = None,
-                        timeout: float = 600) -> dict:
+                        snap: bool = True, timeout: float = 600) -> dict:
     """Get a playable session on a map: returns once the actor is in control there (or errors/times out).
 
     Main menu: starts a new game as faction (default stalker) with its stock kit (PDA included) on level (default:
     the faction's start). The stock start location on that level is used, else a smart terrain's graph vertex;
     two loads (fake_start, then the level). In game: other level -> level change; position [x, y, z] -> moves the
-    actor there (snapped to the nearest AI node if off the map). faction in game only switches the actor's
+    actor there (snapped to the nearest AI node if off the map; snap=False: the exact point, result `exact`
+    {on_ai_map, node_dy} - off the map it may be inside geometry or fall). faction in game only switches the actor's
     community in place. cvars: console commands applied after arrival (e.g. ["g_god on"]).
     Unknown level/faction -> error listing the valid ones. Result: level, position, faction, load_s, notes."""
     inst = get(instance)
-    return with_error_hint(inst, await run(paused_around, inst, teleport, inst, faction, level, position, cvars, timeout))
+    return with_error_hint(inst, await run(paused_around, inst, teleport, inst, faction, level, position, cvars, timeout,
+                                                   snap))
+
+
+# ---------------------------------------------------------------- game_changelevel
+# Same packet as walking into the changer and confirming its dialog (CChangeLevelWnd::OnOk -> M_CHANGE_LEVEL with the
+# changer's dest gvid/lvid/position/angles), sent via _g ChangeLevel. Anomaly has no script-side changer locks (the
+# xr_effects enable/disable_level_changer are commented out), so "locked" = the engine flag is_level_changer_enabled().
+
+CL_INFO = r"""
+local sim, gg, out, apos = alife(), game_graph(), {}, db.actor:position()
+for _, id in ipairs(@IDS@) do
+  local o, se = level.object_by_id(id), sim:object(id)
+  if o and se and se.dest_game_vertex_id then
+    local gv, p = se.dest_game_vertex_id, se.dest_position
+    local lvl = gg:valid_vertex_id(gv) and sim:level_name(gg:vertex(gv):level_id()) or ""
+    local ok, d = pcall(utils_stpk.get_level_changer_data, se) -- the only reader of the dest angles
+    local dir = ok and d and d.dest_direction or VEC_ZERO
+    out[#out + 1] = table.concat({id, o:name(), lvl, gv, se.dest_level_vertex_id,
+      string.format("%.2f,%.2f,%.2f", p.x, p.y, p.z), string.format("%.4f,%.4f,%.4f", dir.x, dir.y, dir.z),
+      tostring(o:is_level_changer_enabled()), string.format("%.1f", o:position():distance_to(apos)),
+      tostring(se.hint or "")}, "|")
+  end
+end
+return unpack(out)
+"""
+
+CL_GO = r"""
+exec_console_cmd("main_menu off")
+local d = @DEST@
+ChangeLevel(vector():set(d[1], d[2], d[3]), d[7], d[8], vector():set(d[4], d[5], d[6]))
+return "ok"
+"""
+
+CL_WHERE = r"""
+local p = db.actor:position()
+return level.name(), string.format("%.2f,%.2f,%.2f", p.x, p.y, p.z)
+"""
+
+
+def cl_changers(inst):
+    ids = [o["id"] for o in nav_level_changers(inst) if o.get("id") is not None]
+    code = CL_INFO.replace("@IDS@", "{%s}" % ",".join(str(int(i)) for i in ids))
+    out = []
+    for line in inst.call("lua.exec", {"code": code}, timeout=30)["results"]:
+        id, name, lvl, gv, lv, pos, dir, en, dist, hint = line.split("|")
+        out.append({"id": int(id), "name": name, "dest_level": lvl, "dest_game_vertex": int(float(gv)),
+                    "dest_level_vertex": int(float(lv)), "dest_position": [float(c) for c in pos.split(",")],
+                    "dest_direction": [float(c) for c in dir.split(",")], "enabled": en == "true",
+                    "distance": float(dist), "hint": hint or None})
+    return out
+
+
+def changelevel(inst, changer, override, timeout):
+    t0 = time.time()
+    if inst.call("lua.exec", {"code": TP_PROBE}, timeout=10)["results"][:1] in ([], [""]):
+        raise RuntimeError("not in a game (main menu or loading); use game_teleport / game_load first")
+    lcs = cl_changers(inst)
+    key = str(changer).strip()
+    hit = ([c for c in lcs if str(c["id"]) == key] or [c for c in lcs if c["name"] == key] or
+           sorted([c for c in lcs if c["dest_level"] == key], key=lambda c: (not c["enabled"], c["distance"])))
+    brief = [{k: c[k] for k in ("id", "name", "dest_level", "enabled", "distance")} for c in lcs]
+    if not hit:
+        return {"instance": inst.id, "error": "NoChanger", "reason": f"no level changer matches {key!r}",
+                "changers": brief}
+    c, notes = hit[0], []
+    if len(hit) > 1:
+        notes.append(f"{len(hit)} changers lead to {key}; used the nearest enabled one ({c['name']}, {c['distance']} m)")
+    used = {k: c[k] for k in ("id", "name", "dest_level", "dest_game_vertex", "dest_position", "enabled", "hint")}
+    if not c["dest_level"]:
+        raise RuntimeError(f"changer {c['name']} has an invalid destination game vertex {c['dest_game_vertex']}")
+    if not c["enabled"]:
+        if not override:
+            return {"instance": inst.id, "error": "LevelLocked", "changer": used,
+                    "reason": "level changer disabled (engine flag, enable_level_changer(false))" +
+                              (f"; hint {c['hint']}" if c["hint"] not in (None, "level_changer_invitation") else "")}
+        notes.append("changer is locked; override=True changed level anyway")
+    from_level = inst.call("lua.exec", {"code": CL_WHERE}, timeout=10)["results"][0]
+    dest = "{%s}" % ",".join(repr(float(v)) for v in
+                             (*c["dest_position"], *c["dest_direction"], c["dest_level_vertex"], c["dest_game_vertex"]))
+    inst.call("lua.exec", {"code": CL_GO.replace("@DEST@", dest)}, timeout=30)
+    t = time.time()
+    tp_wait(inst, c["dest_level"], t0 + timeout)
+    load_s = time.time() - t
+    lvl, pos = inst.call("lua.exec", {"code": CL_WHERE}, timeout=10)["results"][:2]
+    return {"instance": inst.id, "level": lvl, "position": [float(v) for v in pos.split(",")], "from_level": from_level,
+            "changer": used, "load_s": round(load_s, 1), "total_s": round(time.time() - t0, 1),
+            "notes": notes or None}
+
+
+@tool
+async def game_changelevel(instance: str | None = None, changer: str | int = "", override: bool = False,
+                           timeout: float = 600) -> dict:
+    """Go through an adjacent-level changer on this level as if the actor walked into it and confirmed (no need to
+    stand in its trigger): the changer's own destination (game/level vertex, position, angles), stock ChangeLevel
+    (autosave first). changer: object id, object name, or destination level name (several -> the nearest enabled; noted).
+    No match -> {error: NoChanger, changers: [id, name, dest_level, enabled, distance]}. A disabled changer ->
+    {error: LevelLocked, reason, changer} without changing level; override=True changes anyway. Returns once the
+    actor is in control on the new level: level, position, from_level, changer used, load_s."""
+    inst = get(instance)
+    return with_error_hint(inst, await run(paused_around, inst, changelevel, inst, changer, override, timeout))
 
 
 # ---------------------------------------------------------------- game_save / game_load / game_saves
@@ -2548,13 +2660,13 @@ def nav_move(inst, p, wait, wait_timeout, method="nav.move_to", status_method="n
 
 @tool
 async def game_move_to(instance: str | None = None, position: list[float] | None = None, id: int | None = None,
-                       stop_distance: float | None = None, timeout: float = 120, sprint: bool = False,
+                       stop_distance: float | None = None, timeout: float = 120, sprint: bool = True,
                        wait: bool = True, wait_timeout: float = 300, status: bool = False,
                        stop: bool = False) -> dict:
     """Walk the actor to `position` [x,y,z] or to an online object `id` (followed while it moves) along the AI-map
     path, like a player: the engine turns the camera toward the next path corner and holds the forward key each input
     frame (same injected input as game_input), so it respects MCP pause / game_step (no progress while paused; stepped
-    frames advance it). No teleporting. sprint: tap sprint_toggle while running straight.
+    frames advance it). No teleporting. sprint (default on): tap sprint_toggle while running straight; False = run.
     stop_distance (m, horizontal): default 1 (1.5 for objects). timeout: seconds of input time (game time while MCP
     time control is used). Doors (ph_door logic, cabinet doors ignored): a shut door within 2.4 m ahead on the path is
     opened like a player: step to a spot in front of it outside its swing, look at it until the crosshair pick is the
