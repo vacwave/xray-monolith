@@ -29,7 +29,7 @@ All tools take an optional `instance` (default: the last launched or attached on
 
 | Tool | What it does |
 |---|---|
-| `game_launch` | `exe` (default `<repo>\_build\_game\bin_dbg\AnomalyDX11AVX.exe`), `game_root` (default `C:\Anomaly`), `show_window`, `new_game`, `extra_args`, `timeout`, `full_dumps`, `hang_timeout`, `load_timeout`, `load` (start straight into a save already in the slot's savedgames; waits until the actor is in control, result `load` as game_load), `keep_shader_cache` (default false: the slot's shader cache is deleted before launch), `debug` (default true: passes `-dbg`) |
+| `game_launch` | `exe` (default: MO2's `AnomalyDX11AVX.exe` entry for an MO2 root, else `<repo>\_build\_game\bin_dbg\AnomalyDX11AVX.exe`), `game_root` (default `C:\AnomalyMO2`, the testers' MO2; `C:\Anomaly` = vanilla), `show_window`, `new_game`, `extra_args`, `timeout`, `full_dumps`, `hang_timeout`, `load_timeout`, `load` (start straight into a save already in the slot's savedgames; waits until the actor is in control, result `load` as game_load), `keep_shader_cache` (default false: the slot's shader cache is deleted before launch), `debug` (default true: passes `-dbg`) |
 | `game_attach` | attach to a running `-mcp_port` game by `port` or `appdata` dir |
 | `game_status` | pid, alive, exit code, port, `crashed`, `hung` (+ frame stall, loading), `engine.info`, log rate (lines/s), last lines |
 | `game_list` | instances of this supervisor and the caps |
@@ -96,7 +96,12 @@ capped at 20k chars, and `omitted` says what was left out. The engine itself ret
 
 ## Launching
 
-- Profile: `gamma` when `game_root` is `C:\GAMMA`, else `vanilla`.
+- Default `game_root` is `C:\AnomalyMO2`: the testers' MO2 (game `C:\Anomaly`, their selected profile and active
+  mods as MO2 has them, read-only). `game_root=C:\Anomaly` = plain vanilla without MO2; `C:\GAMMA` = GAMMA.
+- Profile: `gamma` when `game_root` is `C:\GAMMA`, else `vanilla` (`C:\AnomalyMO2` shares the vanilla slots and cap).
+- Default exe for an MO2 root: MO2's own `AnomalyDX11AVX.exe` executable entry (`<gamePath>\bin`, the exe testers
+  start); else `<repo>\_build\_game\bin_dbg\AnomalyDX11AVX.exe`. Result: `game_root`, `exe`, `mo2` {`profile`,
+  `game_path`, `mods_active`, `mods_total`} (null without MO2).
 - MO2 folder as `game_root` (ModOrganizer.exe, no fsgame.ltx, e.g. `C:\GAMMA`): the supervisor starts its own MO2
   (`ModOrganizer.exe -p <selected_profile> run <exe> -a "<args>"`, `-fsltx` from MO2's `gamePath`), takes the game
   (MO2's child), kills that MO2 and tracks the game like any launch (port after ~30 s, game_launch ~45 s). Refused

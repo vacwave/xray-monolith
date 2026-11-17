@@ -36,7 +36,7 @@ REPO = Path(__file__).resolve().parent.parent
 RUN_DIR = REPO / ".mcp-run"
 TEMPLATE_USER_LTX = Path(__file__).resolve().parent / "templates" / "user.ltx"
 DEFAULT_EXE = REPO / "_build" / "_game" / "bin_dbg" / "AnomalyDX11AVX.exe"
-DEFAULT_GAME_ROOT = Path(r"C:\Anomaly")
+DEFAULT_GAME_ROOT = Path(r"C:\AnomalyMO2")  # testers' MO2: game C:\Anomaly + their mods; C:\Anomaly = plain vanilla
 GAMMA_ROOT = Path(r"C:\GAMMA")
 STATE_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "anomaly-mcp"
 SLOT_DIR = STATE_DIR / "slots"
@@ -923,7 +923,8 @@ def copy_missing_dlls(game_root, exe_dir):
 
 
 def mo2_setup(root):
-    """MO2 folder (ModOrganizer.exe, no fsgame.ltx) -> (ModOrganizer.exe, profile, game path from its ini), else None."""
+    """MO2 folder (ModOrganizer.exe, no fsgame.ltx) -> (ModOrganizer.exe, profile, game path, MO2's own DX11-AVX
+    executable, (active mods, total mods)) from its ini and the profile's modlist.txt, else None."""
     if (root / "fsgame.ltx").is_file() or not (root / "ModOrganizer.exe").is_file():
         return None
     ini = (root / "ModOrganizer.ini").read_text(encoding="utf-8", errors="replace")
@@ -933,12 +934,17 @@ def mo2_setup(root):
         if not m:
             raise ValueError(f"no {key} in {root / 'ModOrganizer.ini'}")
         return m.group(1).replace("\\\\", "\\")
-    return root / "ModOrganizer.exe", val("selected_profile"), Path(val("gamePath"))
+    profile, game_path = val("selected_profile"), Path(val("gamePath"))
+    bins = [Path(b.replace("\\\\", "\\")) for b in re.findall(r"^\d+\\binary=(.*?)\s*$", ini, re.M)]
+    exe = next((b for b in bins if b.name.lower() == DEFAULT_EXE.name.lower()), game_path / "bin" / DEFAULT_EXE.name)
+    mods = [l for l in (root / "profiles" / profile / "modlist.txt").read_text(encoding="utf-8", errors="replace")
+            .splitlines() if l[:1] in "+-" and l[1:] and not l.endswith("_separator")]
+    return root / "ModOrganizer.exe", profile, game_path, exe, (sum(l[0] == "+" for l in mods), len(mods))
 
 
 def mo2_run(mo2, args):
     """Start the game through our own MO2 (usvfs overlay), return the game's pid, then kill that MO2."""
-    mo2_exe, profile, _ = mo2
+    mo2_exe, profile = mo2[:2]
     others = [pid for pid, _, name in processes() if name.lower() == mo2_exe.name.lower()]
     if others:
         raise RuntimeError(f"ModOrganizer.exe is already running (pid {', '.join(map(str, others))}); close MO2 first "
@@ -995,11 +1001,11 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
            full_dumps=False, hang_timeout=None, load_timeout=None, slot_index=None, load=None,
            keep_shader_cache=False, debug=True):
     params ={k: v for k, v in locals().items() if k != "slot_index"}
-    exe = Path(exe) if exe else DEFAULT_EXE
     game_root = Path(game_root) if game_root else DEFAULT_GAME_ROOT
+    mo2 = mo2_setup(game_root)
+    exe = Path(exe) if exe else mo2[3] if mo2 else DEFAULT_EXE  # MO2: the DX11-AVX exe from its executables list
     if not exe.is_file():
         raise FileNotFoundError(f"exe not found: {exe}")
-    mo2 = mo2_setup(game_root)
     fs_root = mo2[2] if mo2 else game_root
     if not (fs_root / "fsgame.ltx").is_file():
         raise FileNotFoundError(f"no fsgame.ltx in {fs_root}")
@@ -1084,6 +1090,9 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
     except Exception as e:
         warnings.append(f"mute via options failed: {e}")
     return {"instance": iid, "pid": pid, "port": port, "profile": profile, "appdata": str(appdata),
+            "game_root": str(game_root), "exe": str(exe),
+            "mo2": {"profile": mo2[1], "game_path": str(fs_root), "mods_active": mo2[4][0],
+                    "mods_total": mo2[4][1]} if mo2 else None,
             "args": args[1:], "copied_dlls": copied, "full_dumps": full_dumps, "engine_info": info,
             "warnings": warnings or None}
 
@@ -1232,9 +1241,12 @@ async def game_launch(exe: str | None = None, game_root: str | None = None, show
 
     debug: pass -dbg (debug mode: script error details, debug console commands and menus); default on.
     g_god / g_unlimitedammo exist in any MCP game, with or without it.
-    exe: default <repo>/_build/_game/bin_dbg/AnomalyDX11AVX.exe. game_root: default C:\\Anomaly (C:\\GAMMA counts
-    against the GAMMA cap); an MO2 folder (ModOrganizer.exe, no fsgame.ltx, e.g. C:\\GAMMA) is started through its own
-    MO2 (`run`, MO2's selected profile and gamePath), which is killed once the game runs; refused while any MO2 runs.
+    game_root: default C:\\AnomalyMO2 (the testers' MO2: C:\\Anomaly with their mods); C:\\Anomaly = plain vanilla;
+    C:\\GAMMA counts against the GAMMA cap. An MO2 folder (ModOrganizer.exe, no fsgame.ltx) is started through its own
+    MO2 (`run`, MO2's selected profile, active mods and gamePath), which is killed once the game runs; refused while
+    any MO2 runs. exe: default for an MO2 root = MO2's own AnomalyDX11AVX.exe entry (<gamePath>\\bin), else
+    <repo>/_build/_game/bin_dbg/AnomalyDX11AVX.exe. Result: game_root, exe, mo2 {profile, game_path, mods_active,
+    mods_total} (null without MO2).
     The game saves its options (axr_options.ltx) into the slot's appdata, never into the game's. new_game: start a new game straight into a level. extra_args: more engine args.
     timeout: seconds to wait for the first engine.info reply after connecting (a new_game level load blocks it).
     full_dumps: Windows Error Reporting writes full dumps (GBs) instead of mid dumps; the setting is global per exe
