@@ -36,6 +36,7 @@
 #include "CustomMonster.h"
 #include "memory_manager.h"
 #include "enemy_manager.h"
+#include "ClimableObject.h"
 #include "mcp_events.h"
 #include <queue>
 
@@ -1660,6 +1661,12 @@ namespace
 		u32 scan_t = 0, fight_ms = 0;
 		xr_vector<fight_rec> fights;
 		xr_vector<std::pair<u16, u32>> skip; // targets not engaged again until (elapsed)
+		float engage_range = 50.f;
+		bool hunt = false;            // hunt: target_id is fought whenever visible; ends target_dead / target_gone
+		bool hunt_seen = false;
+		xr_string hunt_name;
+		u32 hunt_t = 0, plan_fails = 0;
+		xr_string ladder;             // a ladder near a target without a route (json)
 	};
 	mover_t g_mv;
 
@@ -1736,7 +1743,13 @@ namespace
 		return true;
 	}
 
-	void plan_failed(LPCSTR why) { mover_finish(xr_strcmp(why, "target_floor_off_mesh") ? "no_path" : "unreachable", why); }
+	void ladder_hint();
+
+	void plan_failed(LPCSTR why)
+	{
+		ladder_hint();
+		mover_finish(g_mv.hunt || !xr_strcmp(why, "target_floor_off_mesh") ? "unreachable" : "no_path", why);
+	}
 
 	void mover_tried(LPCSTR step, u16 id = u16(-1))
 	{
@@ -2310,6 +2323,7 @@ namespace
 
 	void mover_step(u32 dt);
 	bool mover_engage(u32 dt);
+	bool hunt_step();
 
 	void mover_tick(u32 dt)
 	{
@@ -2358,6 +2372,8 @@ namespace
 				return mover_finish("timeout");
 			return door_tick(dt, g_actor->Position());
 		}
+		if (g_mv.hunt && hunt_step())
+			return;
 		if (mover_engage(dt))
 			return;
 		if (g_mv.target_id != u16(-1))
@@ -2367,17 +2383,35 @@ namespace
 				return mover_finish("aborted", "target_gone");
 			g_mv.target = o->Position();
 			LPCSTR why;
-			if (g_mv.target.distance_to(g_mv.path.back()) > 2.f && g_mv.elapsed - g_mv.replan_t > 1000 && !mover_plan(why))
-				return plan_failed(why);
+			if (g_mv.target.distance_to(g_mv.path.back()) > 2.f && g_mv.elapsed - g_mv.replan_t > 1000)
+			{
+				if (mover_plan(why))
+					g_mv.plan_fails = 0;
+				else if (!g_mv.hunt || ++g_mv.plan_fails >= 5)
+					return plan_failed(why);
+				else
+					g_mv.replan_t = g_mv.elapsed; // a hunted creature briefly off the map: keep the old path, retry in 1 s
+			}
 		}
 
 		Fvector pos = g_actor->Position();
 		g_mv.travelled += pos.distance_to(g_mv.last_pos);
 		g_mv.last_pos = pos;
-		if (pos.distance_to_xz(g_mv.target) <= g_mv.stop && _abs(pos.y - g_mv.target.y) < 2.5f)
-			return mover_finish("reached");
 		if (g_mv.elapsed - g_mv.fight_ms > g_mv.timeout_ms)
 			return mover_finish("timeout");
+		if (pos.distance_to_xz(g_mv.target) <= g_mv.stop && _abs(pos.y - g_mv.target.y) < 2.5f)
+		{
+			if (!g_mv.hunt)
+				return mover_finish("reached");
+			// next to the hunted creature but it is not visible: wait for it (no stuck checks meanwhile)
+			if (g_mv.fwd_down)
+				mcp_input::hold_key(g_mv.fwd, false);
+			g_mv.fwd_down = false;
+			g_mv.check_t = g_mv.elapsed;
+			g_mv.check_pos = pos;
+			g_mv.fwd_ms = 0;
+			return;
+		}
 
 		// next corner: reached ones are skipped, and so is a corner whose successor is already in straight walkable line
 		const CLevelGraph& lg = ai().level_graph();
@@ -2575,6 +2609,17 @@ namespace
 		r.vec("target", g_mv.target);
 		if (g_mv.target_id != u16(-1))
 			r.i("target_id", g_mv.target_id);
+		if (g_mv.hunt)
+		{
+			jobj h;
+			h.i("id", g_mv.target_id).str("name", g_mv.hunt_name.c_str()).b("seen", g_mv.hunt_seen);
+			CEntityAlive* ea = g_pGameLevel && g_pGameLevel->name() == g_mv.level ? smart_cast<CEntityAlive*>(online(g_mv.target_id)) : nullptr;
+			if (ea)
+				h.b("alive", !!ea->g_Alive()).vec("position", ea->Position());
+			r.raw("hunt", h.done());
+		}
+		if (g_mv.ladder.size())
+			r.raw("ladder", g_mv.ladder);
 		if (g_mv.doors.size())
 		{
 			xr_string a = "[";
@@ -2608,7 +2653,7 @@ namespace
 		if (g_mv.frames)
 			r.raw("tick_us", jobj().num("avg", g_mv.tick_us / g_mv.frames, 1).num("max", g_mv.tick_max, 0).done());
 		jobj e;
-		e.str("mode", g_mv.engage == 2 ? "required" : g_mv.engage ? "on" : "off");
+		e.str("mode", g_mv.engage == 2 ? "required" : g_mv.engage ? "on" : "off").num("range", g_mv.engage_range, 0);
 		if (g_mv.engage_off)
 			e.str("stopped", g_mv.engage_off);
 		r.raw("engage", e.done());
@@ -2625,6 +2670,7 @@ namespace
 	}
 
 	void shoot_replace(); // a running nav.shoot ends "replaced": both turn the camera
+	bool engage_weapon(LPCSTR& why);
 
 	bool nav_move_to(LPCSTR params, xr_string& out)
 	{
@@ -2665,6 +2711,19 @@ namespace
 		m.timeout_ms = (u32)_max<s64>(1000, _min<s64>(int_param(params, "timeout_ms", 120000), 3600000));
 		m.sprint = int_param(params, "sprint", 0) != 0;
 		m.engage = (int)_max<s64>(0, _min<s64>(int_param(params, "engage", 1), 2));
+		m.engage_range = _max(5.f, _min(num_param(params, "engage_range", 50.f), 300.f));
+		if (int_param(params, "hunt", 0))
+		{
+			CCustomMonster* cm = id >= 0 && id < 0xffff ? smart_cast<CCustomMonster*>(online((u16)id)) : nullptr;
+			if (!cm || !cm->g_Alive())
+			{
+				out = "hunt needs id of a living online creature";
+				return false;
+			}
+			m.hunt = true;
+			m.hunt_name = cm->cName().c_str();
+			m.engage = 2; // a hunt without a working weapon cannot succeed
+		}
 		m.fwd = get_action_dik(kFWD);
 		m.sprint_dik = get_action_dik(kSPRINT_TOGGLE);
 		m.back_dik = get_action_dik(kBACK);
@@ -2680,7 +2739,9 @@ namespace
 		g_mv.active = true;
 		g_mv.state = "running";
 		LPCSTR why = nullptr;
-		if (!mover_plan(why))
+		if (g_mv.hunt && !engage_weapon(why))
+			mover_finish("engage_failed", why); // nothing to kill it with: fail before walking
+		else if (!mover_plan(why))
 			plan_failed(why);
 		out = mover_json();
 		return true;
@@ -3742,7 +3803,7 @@ namespace
 			return false;
 		g_mv.scan_t = g_mv.elapsed;
 		bool att = false;
-		CCustomMonster* m = engage_pick(50.f, g_mv.skip, g_mv.elapsed, att);
+		CCustomMonster* m = engage_pick(g_mv.engage_range, g_mv.skip, g_mv.elapsed, att);
 		if (!m)
 			return false;
 		LPCSTR why;
@@ -3880,6 +3941,99 @@ namespace
 			r.raw("tick_us", jobj().num("avg", g_gd.tick_us / g_gd.frames, 1).num("max", g_gd.tick_max, 0).done());
 		out = r.done();
 		return true;
+	}
+
+	// ------------------------------------------------------------------ hunt (move_to hunt=1): follow one creature (replanned
+	// as it moves), fight hostiles on the way, switch to the hunted one whenever it is visible within engage range
+
+	// the hunted creature when a fight on it can start now (alive, in range, a candidate point visible from the eye)
+	CCustomMonster* hunt_visible()
+	{
+		CCustomMonster* m = smart_cast<CCustomMonster*>(online(g_mv.target_id));
+		if (!m || !m->g_Alive() || !m->Visual() || skipped(g_mv.skip, m->ID(), g_mv.elapsed))
+			return nullptr;
+		float range = g_mv.engage_range;
+		LPCSTR why;
+		if (CWeapon* w = shoot_weapon(why))
+			range = _min(range, w->GetFireDistance());
+		const Fvector& eye = Device.vCameraPosition;
+		if (eye.distance_to(m->Position()) > range)
+			return nullptr;
+		xr_vector<u16> pts;
+		u32 budget = 16;
+		shoot_cands(m, "chest", pts);
+		return visible_cand(m, pts, 0, eye, nullptr, budget) >= 0 ? m : nullptr;
+	}
+
+	// before mover_engage: end on the target's death / loss, else start (or switch to) the fight on it when visible;
+	// true = nothing else to do this tick
+	bool hunt_step()
+	{
+		bool own = g_mv.fighting && g_sh.active && g_sh.owner == own_move;
+		if (own && g_sh.target == g_mv.target_id)
+			return false; // mover_engage runs the fight on it
+		if (!own)
+		{
+			CObject* o = Level().Objects.net_Find(g_mv.target_id);
+			if (!o || o->getDestroy())
+			{
+				mover_finish("target_gone");
+				return true;
+			}
+			CEntityAlive* ea = smart_cast<CEntityAlive*>(o);
+			if (ea && !ea->g_Alive())
+			{
+				mover_finish("target_dead");
+				return true;
+			}
+			if (g_mv.fighting)
+				return false; // a fight just ended: mover_engage replans first
+		}
+		if (g_mv.elapsed - g_mv.hunt_t < 200 || g_mv.phase || g_mv.via || g_mv.engage_off)
+			return false;
+		g_mv.hunt_t = g_mv.elapsed;
+		CCustomMonster* m = hunt_visible();
+		if (!m)
+			return false;
+		g_mv.hunt_seen = true;
+		LPCSTR why;
+		if (!engage_weapon(why))
+		{
+			mover_finish("engage_failed", why);
+			return true;
+		}
+		if (own)
+			shoot_finish("aborted", "hunt_target"); // records the other fight
+		else
+			mover_release();
+		g_mv.fighting = true;
+		engage_start(m, own_move);
+		return true;
+	}
+
+	// plan failure: a ladder near the target whose top reaches its height (ladder climbs are not AI-map links)
+	void ladder_hint()
+	{
+		g_mv.ladder.clear();
+		float best = 15.f;
+		CObjectList& list = Level().Objects;
+		for (u32 n = 0, cnt = list.o_count(); n < cnt; n++)
+		{
+			CClimableObject* l = smart_cast<CClimableObject*>(list.o_get_by_iterator(n));
+			if (!l || l->getDestroy())
+				continue;
+			Fvector lo, up;
+			l->LowerPoint(lo);
+			l->UpperPoint(up);
+			float d = up.distance_to_xz(g_mv.target);
+			if (d < best && g_mv.target.y > lo.y + 2.f && g_mv.target.y < up.y + 3.f)
+			{
+				best = d;
+				jobj j;
+				j.i("id", l->ID()).str("name", l->cName().c_str()).vec("lower", lo).vec("upper", up).num("distance_xz", d, 1);
+				g_mv.ladder = j.str("note", "the route needs a ladder climb: ladders are not linked on the AI map").done();
+			}
+		}
 	}
 
 	void driver_tick(u32 dt)

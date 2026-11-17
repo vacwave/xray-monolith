@@ -2796,6 +2796,200 @@ async def game_move_to(instance: str | None = None, position: list[float] | None
     return await run(nav_move, inst, p, wait, wait_timeout)
 
 
+# ---------------------------------------------------------------- game_hunt
+# The engine hunts an online creature (nav.move_to hunt=1); the supervisor resolves the target (alife), changes level
+# through the route's level changer (game_changelevel), walks toward an offline target until it comes online, and
+# ends area targets (squad / smart terrain) with arrived_area.
+
+HUNT_OBJ = r"""
+local sim, id = alife(), @ID@
+if type(id) == "string" then id = get_story_object_id(id) end
+local se = id and sim:object(id)
+if not se then return "" end
+local c, k, p, o = se:clsid(), "other", se.position, level.object_by_id(id)
+if IsStalker(nil, c) then k = "stalker" elseif IsMonster(nil, c) then k = "monster"
+elseif c == clsid.online_offline_group_s or c == clsid.online_offline_group then
+  k = "squad"
+  local cm = se.commander_id and sim:object(se:commander_id())
+  local co = cm and level.object_by_id(cm.id)
+  if co then p = co:position() elseif cm then p = cm.position end
+elseif c == clsid.smart_terrain then k = "smart_terrain"
+elseif c == clsid.space_restrictor or c == clsid.script_restr then k = "restrictor" end
+if o and k ~= "squad" then p = o:position() end
+local alive = true
+if k == "stalker" or k == "monster" then
+  if o then alive = o:alive() else alive = se:alive() end
+end
+local lvl = sim:level_name(game_graph():vertex(se.m_game_vertex_id):level_id())
+return table.concat({id, k, lvl, string.format("%.2f,%.2f,%.2f", p.x, p.y, p.z), tostring(alive), tostring(o ~= nil),
+  se:name()}, "|")
+"""
+
+HUNT_AREA_KINDS = ("squad", "smart_terrain", "restrictor")
+
+
+def hunt_obj(inst, ref):
+    code = HUNT_OBJ.replace("@ID@", str(int(ref)) if isinstance(ref, int) else json.dumps(str(ref)))
+    out = inst.call("lua.exec", {"code": code}, timeout=10)["results"]
+    if not out or not out[0]:
+        return None
+    id, kind, lvl, pos, alive, online, name = out[0].split("|", 6)
+    return {"id": int(float(id)), "kind": kind, "level": lvl, "position": [float(v) for v in pos.split(",")],
+            "alive": alive == "true", "online": online == "true", "name": name}
+
+
+def hunt_level(inst):
+    return inst.call("lua.exec", {"code": TP_PROBE}, timeout=10)["results"][:1] or [""]
+
+
+def hunt_run(inst, id, task, story_id, timeout, sprint, engage_range, area_radius):
+    t0 = time.monotonic()
+    end = t0 + timeout
+    out = {"instance": inst.id, "fights": [], "levels": [], "steps": []}
+
+    def left():
+        return max(1.0, end - time.monotonic())
+
+    def finish(state, **kw):
+        out.update(state=state, **kw)
+        out["elapsed_s"] = round(time.monotonic() - t0, 1)
+        if not out["fights"]:
+            del out["fights"]
+        if not out["levels"]:
+            del out["levels"]
+        return out
+
+    def walk(p):
+        p = {"timeout_ms": int(left() * 1000), "sprint": int(sprint), "engage": 1,
+             "engage_range": str(float(engage_range)), **p}
+        res = nav_move(inst, p, True, left() + 30)
+        out["fights"] += res.get("fights", [])
+        out["steps"].append({k: res.get(k) for k in ("state", "reason", "travelled", "elapsed_ms", "hunt", "ladder")
+                             if res.get(k) is not None})
+        return res
+
+    ref = id
+    if task is not None:
+        tk = world_call(inst, "tasks.get", {"id": task, "history": 0})
+        if tk.get("available") is False:
+            return finish("aborted", reason=tk.get("reason"))
+        cur = next((t for t in tk.get("tasks", []) if t.get("id") == task), None)
+        if cur is None:
+            return finish("no_target", reason=f"task {task!r} is not in progress")
+        out["task"] = {k: cur.get(k) for k in ("id", "title", "stage")}
+        if not cur.get("target") or cur["target"].get("exists") is False:
+            return finish("no_target", reason="the task has no target marker (target null)")
+        ref = int(cur["target"]["id"])
+    elif story_id is not None:
+        ref = story_id
+    last_offline = None
+    for _ in range(40):
+        if time.monotonic() >= end:
+            return finish("timeout")
+        tgt = hunt_obj(inst, ref)
+        if tgt is None:
+            return finish("target_gone" if "target" in out else "no_target", reason="no such alife object")
+        out["target"] = tgt
+        ref = tgt["id"]
+        creature = tgt["kind"] in ("stalker", "monster")
+        if creature and not tgt["alive"]:
+            return finish("target_dead")
+        level = hunt_level(inst)[0]
+        if not level:
+            return finish("aborted", reason="not in a level")
+        if tgt["level"] != level:
+            # cross-level: the game-graph route's changer on this level, entered like game_changelevel
+            np = world_call(inst, "nav.path", {"to_level": tgt["level"], "to": nav_vec(tgt["position"], "position")})
+            lc = np.get("level_changer")
+            if not np.get("found") or not lc:
+                return finish("unreachable", reason=f"no level route / changer from {level} to {tgt['level']}")
+            cl = paused_around(inst, changelevel, inst, lc["id"], False, left())
+            if cl.get("error"):
+                return finish("unreachable", reason=f"{cl['error']}: {cl.get('reason')}", changer=cl.get("changer"))
+            out["levels"].append({"from": level, "to": cl.get("level"), "changer": lc.get("name"),
+                                  "load_s": cl.get("load_s")})
+            continue
+        if not creature:
+            res = walk({"to": nav_vec(tgt["position"], "position"),
+                        "stop_distance": str(float(area_radius if tgt["kind"] in HUNT_AREA_KINDS else 1.5))})
+            st, why = res.get("state"), res.get("reason")
+            near = res.get("distance_left") is not None and res["distance_left"] <= area_radius
+            if st == "reached" or (st == "unreachable" and why == "target_off_mesh" and near):
+                if tgt["kind"] not in HUNT_AREA_KINDS:
+                    return finish("arrived", position=res.get("position"))
+                ho = world_call(inst, "world.objects", {"position": nav_vec(tgt["position"], "position"),
+                                                        "radius": str(float(max(area_radius * 3, 50))),
+                                                        "kinds": "stalker,monster", "hostile_only": 1, "los": 1,
+                                                        "limit": 30})
+                hs = [{k: o.get(k) for k in ("id", "name", "section", "kind", "distance", "los", "position")}
+                      for o in ho.get("objects", [])]
+                return finish("arrived_area", position=res.get("position"), hostiles=hs,
+                              hostiles_visible=[h for h in hs if h.get("los")])
+            if st == "aborted" and why == "level_change":
+                continue
+            return finish(st, reason=why, ladder=res.get("ladder"))
+        if tgt["online"]:
+            res = walk({"id": tgt["id"], "hunt": 1})
+            st = res.get("state")
+            if st == "target_gone" or (st == "aborted" and res.get("reason") == "level_change"):
+                continue  # went offline / released / we changed level: resolve again
+            return finish(st, reason=res.get("reason"), ladder=res.get("ladder"), hunt=res.get("hunt"),
+                          health=res.get("health"))
+        # offline (beyond the online radius): walk toward its server position until it comes online
+        if last_offline and math.dist(last_offline, tgt["position"]) < 1 and out["steps"] and \
+                out["steps"][-1].get("state") == "reached":
+            return finish("target_offline", reason="reached its last known position; it is still offline")
+        last_offline = tgt["position"]
+        r = world_call(inst, "nav.move_to", {"to": nav_vec(tgt["position"], "position"), "stop_distance": "3",
+                                             "timeout_ms": int(left() * 1000), "sprint": int(sprint), "engage": 1,
+                                             "engage_range": str(float(engage_range))})
+        while not r.get("done") and time.monotonic() < end:
+            time.sleep(0.5)
+            try:
+                r = inst.call("nav.move_status", {}, timeout=5)
+            except TimeoutError:
+                continue
+            now = hunt_obj(inst, ref)
+            if now is None or now["online"] or math.dist(now["position"], tgt["position"]) > 15:
+                r = inst.call("nav.move_status", {"stop": 1}, timeout=5)
+                break
+        out["fights"] += r.get("fights", [])
+        out["steps"].append({k: r.get(k) for k in ("state", "reason", "travelled", "elapsed_ms") if r.get(k) is not None})
+        if r.get("state") in ("no_path", "unreachable", "stuck", "engage_failed", "blocked_door") or \
+                (r.get("state") == "aborted" and r.get("reason") not in ("stopped", "level_change")):
+            return finish("unreachable" if r.get("state") == "no_path" else r.get("state"), reason=r.get("reason"),
+                          ladder=r.get("ladder"))
+    return finish("timeout", reason="too many retargets")
+
+
+@tool
+async def game_hunt(instance: str | None = None, id: int | None = None, task: str | None = None,
+                    story_id: str | None = None, timeout: float = 600, sprint: bool = True,
+                    engage_range: float = 100, area_radius: float = 10) -> dict:
+    """Hunt one creature `id`, or the target of quest `task` (task id from game_tasks; or a `story_id`), like a player
+    on foot. A creature online: game_move_to toward it (replanned as it moves), every 200 ms shooting any visible
+    hostile within engage_range (100 m, capped by the weapon's fire distance) and switching to the hunted creature
+    whenever it is visible in range (also a neutral one: hunting means killing it); ends when it dies. Offline (beyond
+    the online radius): walk to its server position until it comes online. On another level: the game-graph route's
+    level changer on this level is entered with game_changelevel (no walking to the changer), then it goes on there,
+    hop by hop. An area target (squad, smart terrain) is walked to (within area_radius m of its centre / squad
+    commander) and ends arrived_area with hostiles around it (los = visible from the actor now); any other object
+    (item, stash) ends arrived. Ladders are not AI-map links: a target reachable only by a ladder ends unreachable
+    (ladder {id, name, lower, upper, note} when one is near).
+    Result: state target_dead / arrived_area / arrived / unreachable (reason: no_route, off_mesh,
+    target_floor_off_mesh, ...) / target_offline / target_gone / timeout / engage_failed (no weapon / ammo / jam) /
+    aborted (actor_dead, dialog, keys_released, ...) / stuck / no_target; target {id, kind, level, position, alive,
+    online, name}, task {id, title, stage}, fights [{id, name, section, shots, hits, killed, ms, end}] (end
+    aborted:hunt_target = left for the hunted one), levels [{from, to, changer, load_s}], steps (each walk: state,
+    reason, travelled, hunt {id, name, seen, alive, position}), hostiles / hostiles_visible (areas), elapsed_s.
+    timeout: wall seconds for the whole hunt."""
+    if sum(x is not None for x in (id, task, story_id)) != 1:
+        raise ValueError("give exactly one of id, task or story_id")
+    inst = get(instance)
+    return await run(hunt_run, inst, None if id is None else int(id), task, story_id, float(timeout), sprint,
+                     float(engage_range), max(1.0, float(area_radius)))
+
+
 def game_use_run(inst, id, approach, stand, wait_timeout):
     res = nav_move(inst, {"id": id}, True, wait_timeout, "nav.use")
     why = res.get("reason")
