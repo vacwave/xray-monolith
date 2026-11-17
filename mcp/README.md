@@ -39,7 +39,7 @@ All tools take an optional `instance` (default: the last launched or attached on
 | `game_dump` | minidump of the live game (all thread stacks, ~100 MB) into `.mcp-run\<id>\dumps` |
 | `console_exec` | engine console command → printed lines |
 | `lua_exec` | Lua chunk or expression list → `results` + printed lines (`print` goes to the log during the call) |
-| `log_tail` | `n` (≤1000), `grep` regex, `since` seq, from the supervisor's 20k-line buffer |
+| `log_tail` | supervisor's 20k-line buffer: newest `n` (≤1000), or with `since` (seq marker) the first `n` lines after it (oldest first; older lines fetched from the engine's 10k ring, `lost` if gone); `pattern` regex (`ignore_case`; alias `grep`) → `matches` [{seq, line}]; `last_seq` (newest now, the next marker), `matched`, `truncated`, `next_since`. Replaces `grep -a` on log files: `m = log_tail(n=1).last_seq`, act, `log_tail(pattern=..., since=m)` |
 | `game_teleport` | playable session on a map: from the main menu a new game as `faction` (stock kit incl. PDA, put into the PDA slot) on `level`; in game a level change and/or move to `position` [x,y,z] (snapped onto the AI map; `snap=False` = the exact point, reports `exact.on_ai_map`); then `cvars` (console commands). Returns when the actor is in control: level, position, faction, `load_s`, notes. Unknown level/faction → error with the valid list |
 | `game_changelevel` | go through an adjacent-level changer as if walked into and confirmed (no need to stand in its trigger): `changer` = id, name or destination level (several → nearest enabled); its own destination, stock ChangeLevel (autosave). No match → `NoChanger` + the level's changers; disabled changer → `LevelLocked` unless `override=True`. Returns on arrival: level, position, from_level, changer, load_s |
 | `game_save` | `name` (cleaned to letters/digits/`_-.`, overwrites) → saved in the instance's appdata `savedgames`; returns when on disk: file, size, parts (scop/scoc/dds), level, position, money, `save_s`. Console save: UI vetoes (campfire-only, Agony/timer, emission/combat) do not apply. Errors at the main menu, while loading, actor dead |
@@ -89,6 +89,9 @@ last fatal `script_error`. Script errors repeating within 5 s are coalesced by t
 - `{"dialog": "inventory"}` / `{"dialog": "talk", "open": false}`
 - `{"count": {"kinds": ["monster"], "radius": 50, "alive": true, "hostile_only": true}, "eq": 0}`, `{"object": 1234, "is": "dead"}`
 - `{"any": [{"lua": "db.actor:money() >= 5000"}, {"log": "Quest .* done"}, {"sim_ms": 10000}]}`
+- Log race: a wait only sees lines written after it starts, so a line printed by the action that triggers it can come
+  first. Take `m = log_tail(n=1).last_seq`, act, then `game_wait({"log": "regex", "ignore_case": true}, log_since=m)`
+  (or `{"log": ..., "since": m}` per condition); next wait `log_since` = returned `log_seq`
 
 Output safeguards: consecutive identical lines are collapsed to `line ×N`, long lines are clipped, each result is
 capped at 20k chars, and `omitted` says what was left out. The engine itself returns at most 500 lines per exec
