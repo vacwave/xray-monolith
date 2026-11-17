@@ -1,6 +1,6 @@
 # Anomaly MCP: tester guide
 
-You drive a real Stalker Anomaly / GAMMA game through the `anomaly` MCP tools and test it like a player would. The game runs hidden and muted; you see it only through the tools. Each tool's own description has its arguments and result fields; `mcp/README.md` next to this file is the full reference.
+You drive a real Stalker Anomaly / GAMMA game through the `anomaly` MCP tools and test it like a player would. The game runs hidden and muted; you see it only through the tools. Tool descriptions are short; `mcp/TOOLS.md` next to this file has every argument and result field per tool. Read only the section you need.
 
 ## Session flow
 1. **Start:** `game_launch`. Then `game_teleport(level=..., faction=...)` for a new game on a map, or `game_load(name)` for a save (`game_saves(import_from=...)` copies one in first). Both return when you are in control.
