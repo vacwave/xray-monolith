@@ -1215,10 +1215,37 @@ def exec_result(res):
 # ---------------------------------------------------------------- MCP tools
 
 server = MCPServer("anomaly", instructions=(
-    "Drives X-Ray Monolith (Stalker Anomaly) game instances. Start with game_launch, then use lua_exec / "
-    "console_exec / log_tail / game_status, and game_stop when done. After a crash use game_last_crash and "
-    "game_restart; on a hang (game_status hung) use game_dump, then game_stop. Each tool takes an optional instance id "
-    "(default: the last launched or attached)."))
+    "Drive a real Stalker Anomaly / GAMMA game (X-Ray Monolith engine) and test it like a player. The game runs "
+    "hidden and muted; you see it only through these tools. Every tool takes an optional `instance` (default: the "
+    "last launched or attached). Longer guide: mcp/TESTER_GUIDE.md in the repo.\n"
+    "Flow: game_launch -> game_teleport (new game on a map) or game_load (a save) -> look -> act -> verify with "
+    "game_wait and state -> game_stop. Always stop the games you launched.\n"
+    "- Start / stop: game_launch (default C:\\AnomalyMO2 = Anomaly with the tester's mods; game_root C:\\Anomaly = "
+    "plain vanilla, C:\\GAMMA = GAMMA; god mode, infinite magazine and no recoil are ON unless you turn them off), "
+    "game_attach (a game already running with -mcp_port), game_list, game_status, game_restart, game_stop.\n"
+    "- Look: game_state first (cheap snapshot: mode, actor, hands, crosshair target, world), game_screenshot (see "
+    "the frame), game_screenshot_burst (cutscenes / animations to files), game_objects (what is around), "
+    "game_object (one object in detail), game_ui (widgets on screen), game_nav / game_nav_map (where can I walk).\n"
+    "- Move: game_move_to (walk to a point or object; opens doors, shoots hostiles on the way), game_changelevel "
+    "(go through a level changer), game_teleport (new game, another level, or an exact position).\n"
+    "- Interact: game_use (talk to / take / open an object by id), game_talk (read and choose dialogue options), "
+    "game_ui_click (click a widget by its text), game_input (keys, mouse, looking, drag: anything else a player "
+    "does), game_input_release (let go of held keys).\n"
+    "- Fight: game_shoot (shoot one target), game_hunt (go and kill a creature or a quest's target, also on "
+    "another level), game_clear_area (kill every hostile in an area), game_guard (idle self-defence, ON by "
+    "default: turn it off when the test must not shoot).\n"
+    "- Quests: game_tasks (tasks, stages, targets), game_infos (story flags: read, give, remove), game_events "
+    "(what happened: tasks, deaths, hits, combat, relations, saves, level loads, script errors).\n"
+    "- Wait: game_wait for an event, state, object, log line or Lua condition. Never sleep or poll in a loop.\n"
+    "- Set up a scenario: game_spawnable (what can be spawned), game_spawn, game_give (items to the actor), "
+    "game_actor (health, money, stats), game_kill, game_release (remove objects), game_weather, game_emission, "
+    "game_time (pause, speed, jump the clock), game_step (advance a paused game frame by frame), game_save / "
+    "game_load / game_saves.\n"
+    "- Diagnose: log_tail (engine log, regex filter), game_events(types=['script_error']), game_perf (frame "
+    "times), game_lua_profile (which script costs time). Crash: game_last_crash, then game_restart. Hang "
+    "(game_status hung): game_dump, then game_stop.\n"
+    "- Last resort: lua_exec / console_exec when no tool does the job; say so in your report (a tool gap). A Lua "
+    "error inside a game callback crashes the game."))
 
 
 def run(fn, *args):
@@ -4265,7 +4292,7 @@ async def game_talk(instance: str | None = None, id: str | None = None, n: int |
                     text: str | None = None, line_chars: int = 2000, log_last: int | None = None,
                     timeout: float = 3) -> dict:
     """The NPC conversation, complete (all options and log lines, also those scrolled out of view), and choosing an
-    option like a player. Open the talk first: look at the NPC's body within 2 m and game_input {"action": "use"}.
+    option like a player. Open the talk first: game_use(id) on the NPC.
 
     No choice: {open, mode (talk | trade | upgrade | other window over the talk), partner {id, name, section,
     character, profile, community, trade, upgrade}, topic (true = topic list, options are dialogs), dialog (current
