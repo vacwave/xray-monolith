@@ -3045,6 +3045,120 @@ async def game_screenshot(instance: str | None = None, max_width: int = 1024, fo
     return await run(screenshot, inst, max_width, format, quality, save_path, timeout)
 
 
+def burst_wait_log(inst, rx, since, timeout):
+    """First buffered log line with seq > since matching rx, waiting on inst.wake; (seq, line, arrival) or None."""
+    deadline = time.monotonic() + timeout
+    while True:
+        with inst.wake:  # the reader notifies under this lock after updating the ring: no missed line
+            for e in inst.lines(since=since):
+                if rx.search(e[1]):
+                    return e
+                since = e[0]
+            if inst.dead or time.monotonic() >= deadline:
+                return None
+            inst.wake.wait(min(0.25, max(0.001, deadline - time.monotonic())))
+
+
+def screenshot_burst(inst, every, duration, max_width, fmt, quality, folder, start_on_log, log_since, ignore_case,
+                     start_timeout, inline_every):
+    if inst.call("engine.heartbeat", timeout=5).get("loading"):
+        raise RuntimeError("a level is loading: the loading screen cannot be captured; retry once game_status shows "
+                           "the level")
+    p = Path(folder or time.strftime("burst_%Y%m%d_%H%M%S"))
+    p = (p if p.is_absolute() else RUN_DIR / inst.id / "screenshots" / p).resolve()
+    p.mkdir(parents=True, exist_ok=True)
+    out = {"instance": inst.id, "folder": str(p)}
+    if start_on_log:
+        rx = re.compile(start_on_log, re.I if ignore_case else 0)
+        hit = burst_wait_log(inst, rx, inst.last_seq if log_since is None else log_since, start_timeout)
+        if hit is None:
+            raise TimeoutError(f"no log line matched {start_on_log!r} within {start_timeout} s"
+                               + (" (the game exited)" if inst.dead else "") + "; nothing captured")
+        out["trigger"] = {"seq": hit[0], "line": hit[1][:MAX_LINE_CHARS],
+                          "latency_ms": round((time.time() - hit[2]) * 1000, 1) if hit[2] else None}
+    ext = "png" if fmt == "png" else "jpg"
+    frames, inline = [], []
+    t0 = time.perf_counter()
+    i = 0
+    while True:
+        due = t0 + i * every
+        now = time.perf_counter()
+        if (now if every == 0 else due) - t0 > duration + 1e-6 or len(frames) >= 1000:
+            break
+        if due > now:
+            time.sleep(due - now)
+        tb = time.perf_counter()
+        f = {"i": i, "t": round(tb - t0, 3)}
+        try:  # one capture at a time: a newer screenshot.begin supersedes a pending one in the engine
+            rid = inst.call("screenshot.begin", {"max_width": max_width, "format": fmt, "quality": quality},
+                            timeout=5)["id"]
+            while True:
+                res = inst.call("screenshot.get", {"id": rid}, timeout=5)
+                if not res.get("pending"):
+                    break
+                if time.perf_counter() - tb > 5:
+                    raise TimeoutError("no frame within 5 s (loading or stalled)")
+                time.sleep(0.005)
+            data = base64.b64decode(res["data"])
+            path = p / f"{i:03d}_{f['t']:07.3f}s.{ext}"
+            path.write_bytes(data)
+            f.update(frame=res.get("frame"), path=str(path), ms=round((time.perf_counter() - tb) * 1000, 1))
+            if inline_every and i % inline_every == 0:
+                inline.append((i, res["data"]))
+            out.setdefault("size", [res.get("width"), res.get("height")])
+            out.setdefault("level", res.get("level"))
+        except Exception as e:
+            f["error"] = f"{type(e).__name__}: {e}"
+            if inst.dead:
+                frames.append(f)
+                break
+        frames.append(f)
+        # next slot on the grid; when a capture overran it, take the next one at once instead of bursting to catch up
+        i = max(i + 1, math.floor((time.perf_counter() - t0) / every + 1e-9)) if every > 0 else i + 1
+    ok = [f for f in frames if "path" in f]
+    gaps = [b["t"] - a["t"] for a, b in zip(ok, ok[1:])]
+    out.update(requested_every=every, duration=duration, count=len(ok), errors=len(frames) - len(ok),
+               achieved_every=round(sum(gaps) / len(gaps), 3) if gaps else None,
+               max_gap=round(max(gaps), 3) if gaps else None,
+               capture_ms_avg=round(sum(f["ms"] for f in ok) / len(ok), 1) if ok else None,
+               skipped_slots=sum(1 for a, b in zip(frames, frames[1:]) if b["i"] > a["i"] + 1), frames=frames)
+    mime = "image/png" if fmt == "png" else "image/jpeg"
+    return ([TextContent(type="text", text=json.dumps(out))]
+            + [c for i, d in inline for c in (TextContent(type="text", text=f"frame {i}"),
+                                               ImageContent(type="image", data=d, mime_type=mime))])
+
+
+@tool
+async def game_screenshot_burst(instance: str | None = None, every: float = 0.5, duration: float = 10,
+                                max_width: int = 1024, format: str = "jpeg", quality: int = 70,
+                                folder: str | None = None, start_on_log: str | None = None,
+                                log_since: int | None = None, ignore_case: bool = False, start_timeout: float = 60,
+                                inline_every: int = 0) -> list[TextContent | ImageContent]:
+    """Capture a series of frames (cutscenes, animations, sliding) to files; returns paths + timestamps, not images.
+
+    Captures at t = 0, every, 2*every, ... up to duration s (inclusive) into folder (relative -> .mcp-run/<id>/
+    screenshots/<folder>; default burst_<date>_<time>), files `<i>_<t>s.jpg|png`, at max_width/format/quality like
+    game_screenshot. One capture takes ~3 rendered frames (~0.1 s at 30 fps), so every below that is not reachable:
+    a capture that overruns its slot starts the next one at once (no catch-up), `skipped_slots` counts the misses.
+    start_on_log: regex (re.search; ignore_case) on log lines with seq > log_since (default: lines arriving after
+    this call; pass a log_tail last_seq taken before the action to also catch a line printed meanwhile); waits up to
+    start_timeout s, then t = 0 at the match (`trigger` {seq, line, latency_ms from the line's arrival}).
+    Result JSON: folder, frames [{i, t (s since start), frame, path, ms} or error], count, achieved_every (mean gap),
+    max_gap, capture_ms_avg. inline_every=k also returns every k-th frame as an inline image (0 = none; view the
+    files with an image reader instead)."""
+    inst = get(instance)
+    if format not in ("jpeg", "png"):
+        raise ValueError('format must be "jpeg" or "png"')
+    if not 1 <= quality <= 100 or max_width < 0:
+        raise ValueError("quality must be 1..100 and max_width >= 0")
+    if every < 0 or duration < 0 or inline_every < 0 or (every == 0 and duration == 0):
+        raise ValueError("every, duration and inline_every must be >= 0 (every=0: back to back)")
+    if every > 0 and duration / every > 1000 or duration > 600:
+        raise ValueError("at most 1000 frames and 600 s per burst")
+    return await run(screenshot_burst, inst, every, duration, max_width, format, quality, folder, start_on_log,
+                     log_since, ignore_case, start_timeout, inline_every)
+
+
 # ---------------------------------------------------------------- game_time / game_step
 # Engine time.* (xrEngine/mcp_time.cpp): an MCP pause on top of the device pause, fixed-dt step frames, the simulation
 # time factor. The game clock rate (in-game time per simulation second) is the level's game time factor (Lua).

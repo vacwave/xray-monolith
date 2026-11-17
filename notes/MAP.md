@@ -4,7 +4,7 @@
 - Console, logging, crash handler/minidumps, MCP no-dialog crash paths → `xrEngine/XR_IOConsole.cpp`, `xrCore/log.cpp`, `xrCore/xrDebugNew.cpp` → `logging.md`
 - Lua scripting from C++ → `xrServerEntities/script_engine.*`, `script_process.cpp`, `xrGame/console_commands.cpp` (CCC_ScriptCommand) → `scripting.md`
 - Input / actions, MCP input injection (input.run, game_input) → `xrEngine/Xr_input.cpp`, `xrEngine/mcp_input.*`, `xrGame/mcp_input.cpp`, `xrGame/Level_input.cpp`, `xr_level_controller.cpp`, `level_script.cpp` → `input.md`
-- Screenshots / render (MCP screenshot.begin/get, game_screenshot) → `Layers/xrRender/r__screenshot.cpp`, `xrEngine/Render.h`, `xrEngine/mcp_screenshot.*`, R4 `DoAsyncScreenshot` → `render.md`
+- Screenshots / render (MCP screenshot.begin/get, game_screenshot, game_screenshot_burst) → `Layers/xrRender/r__screenshot.cpp`, `xrEngine/Render.h`, `xrEngine/mcp_screenshot.*`, R4 `DoAsyncScreenshot` → `render.md`
 - Game state (actor, level, time, new-game/faction scripts, level change, save/load files and paths; MCP state.get / game_state snapshot: mode, UI, actor, hands, target, world) → `xrGame/Actor*.cpp`, `Level.h`, `level_script.cpp`, `xrGame/mcp_state.cpp` → `gamestate.md`
 - Quest state (MCP tasks.get/infos.get, game_tasks (id/active_only/compact filters)/game_infos, task_stage/info_* events, task history) → `xrGame/mcp_tasks.cpp`, `GametaskManager.cpp`, `GameTask.h`, `actor_communication.cpp`, scripts `task_manager`/`task_objects` → `gamestate.md`
 - Combat/death/relation game events (death, hit coalescing, combat enter/switch/leave, goodwill changes) → `xrGame/mcp_combat.cpp`, hooks in `Entity.cpp` (CEntity::Hit), `entity_alive.cpp` (Die), `enemy_manager.cpp` (try_change_enemy), `relation_registry.cpp` (setters) → `mcp.md`

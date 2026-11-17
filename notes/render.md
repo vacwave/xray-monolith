@@ -11,3 +11,5 @@
 - Sizes/timings at 1920x1080: default 1024x576 JPEG q70 ~35-60 KB; PNG 800 px ~400 KB; full-res PNG 1.6 MB (~100 ms, worker); a shot ~80-110 ms round trip (3 frames at the 30 fps cap); 20 in a row: no memory growth.
 - Metadata frame/level are taken at request time: a request just before a level load is read back after it (seen 4 s later), and may even show the loading screen (End() also runs in LoadDraw).
 - Loading screen is not reliably capturable (main thread blocked, requests not drained): the supervisor refuses while `engine.heartbeat.loading`, else a blocked get times out with a clean error.
+- Engine keeps ONE capture job (`current`): a new screenshot.begin supersedes a pending one, so captures cannot be pipelined; round trip ~95-105 ms = 3 rendered frames at the 30 fps cap -> burst floor ~0.1 s/frame (scales with fps).
+- `game_screenshot_burst` (goal 44): measured vanilla l01_escape 30 fps cap, 1024 px JPEG: every 0.5 -> 0.500 (max gap 0.502), 0.2 -> 0.200 (0.201), every=0 -> 0.100 back to back; files ~32 KB.
