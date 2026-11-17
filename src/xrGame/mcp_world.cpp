@@ -10,7 +10,9 @@
 #include "CustomMonster.h"
 #include "memory_manager.h"
 #include "enemy_manager.h"
+#include "danger_manager.h"
 #include "visual_memory_manager.h"
+#include "stalker_movement_manager_smart_cover.h"
 #include "monster_community.h"
 #include "ai/stalker/ai_stalker.h"
 #include "InventoryOwner.h"
@@ -344,7 +346,149 @@ namespace
 				e.str("smart", sm->name_replace());
 	}
 
-	xr_string object_entry(ctx& c, CGameObject* o, kind_t k, CEntityAlive* ea, float dist, bool los, bool detail)
+	bool lua_flag(lua_State* L, int t, LPCSTR k, int& v)
+	{
+		lua_getfield(L, t, k);
+		bool has = lua_type(L, -1) == LUA_TBOOLEAN;
+		if (has)
+			v = lua_toboolean(L, -1);
+		lua_pop(L, 1);
+		return has;
+	}
+
+	xr_string lua_str(lua_State* L, int t, LPCSTR k)
+	{
+		lua_getfield(L, t, k);
+		xr_string r = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+		lua_pop(L, 1);
+		return r;
+	}
+
+	u16 squad_of(u16 id)
+	{
+		CSE_ALifeMonsterAbstract* m = smart_cast<CSE_ALifeMonsterAbstract*>(server_object(id));
+		return m ? m->m_group_id : u16(-1);
+	}
+
+	// Script-owned facts (xr_logic db.storage, story_objects); every access guarded, never creates managers.
+	// Args: object id, squad id (-1 none), full (logic details). Returns nil when nothing is known
+	const char* facts_chunk =
+		"local id, sq, full = ...\n"
+		"local r, any = {}, false\n"
+		"local so = rawget(_G, 'story_objects') local m = type(so) == 'table' and rawget(so, 'story_id_by_object_id')\n"
+		"if type(m) == 'table' then r.story_id = m[id] if sq >= 0 then r.squad_story_id = m[sq] end any = r.story_id or r.squad_story_id end\n"
+		"local db = rawget(_G, 'db') local s = type(db) == 'table' and rawget(db, 'storage') local st = type(s) == 'table' and s[id]\n"
+		"if type(st) == 'table' then\n"
+		"  if type(st.active_section) == 'string' then any = true r.section = st.active_section end\n"
+		"  if full and (r.section or st.ini_filename) then\n"
+		"    any = true r.scheme = st.active_scheme r.logic = st.section_logic r.file = st.ini_filename\n"
+		"    r.keys, r.vals = {}, {}\n"
+		"    pcall(function() local ini, sec = st.ini, r.section if not ini or not sec then return end\n"
+		"      for i = 0, math.min(ini:line_count(sec), 12) - 1 do local ok, k, v = ini:r_line(sec, i, '', '')\n"
+		"        if ok then r.keys[#r.keys + 1] = k r.vals[#r.vals + 1] = string.sub(tostring(v), 1, 120) end end end)\n"
+		"  end\n"
+		"end\n"
+		"return any and r or nil\n";
+
+	struct script_facts
+	{
+		lua_State* L = nullptr;
+		int top = 0, fn = 0;
+		script_facts()
+		{
+			L = g_ai_space ? ai().script_engine().lua() : nullptr;
+			if (!L || !lua_checkstack(L, 16))
+			{
+				L = nullptr;
+				return;
+			}
+			top = lua_gettop(L);
+			if (!luaL_loadbuffer(L, facts_chunk, xr_strlen(facts_chunk), "=world.facts"))
+				fn = lua_gettop(L);
+		}
+		~script_facts()
+		{
+			if (L)
+				lua_settop(L, top);
+		}
+		void add(jobj& e, u16 id, bool full)
+		{
+			if (!fn)
+				return;
+			u16 sq = squad_of(id);
+			int base = lua_gettop(L);
+			lua_pushvalue(L, fn);
+			lua_pushinteger(L, id);
+			lua_pushinteger(L, sq == u16(-1) ? -1 : sq);
+			lua_pushboolean(L, full);
+			if (lua_pcall(L, 3, 1, 0))
+			{
+				if (full)
+					e.str("script_error", lua_tostring(L, -1));
+			}
+			else if (lua_istable(L, -1))
+			{
+				int t = lua_gettop(L);
+				for (LPCSTR k : { "story_id", "squad_story_id" })
+				{
+					xr_string v = lua_str(L, t, k);
+					if (v.size())
+						e.str(k, v.c_str());
+				}
+				xr_string sec = lua_str(L, t, "section");
+				if (sec.size())
+					e.str("active_section", sec.c_str());
+				if (full)
+				{
+					jobj lg;
+					for (LPCSTR k : { "scheme", "logic", "file" })
+					{
+						xr_string v = lua_str(L, t, k);
+						if (v.size())
+							lg.str(k, v.c_str());
+					}
+					jobj set;
+					lua_getfield(L, t, "keys");
+					lua_getfield(L, t, "vals");
+					if (lua_istable(L, -2) && lua_istable(L, -1))
+						for (int i = 1; ; i++)
+						{
+							lua_rawgeti(L, -2, i);
+							lua_rawgeti(L, -2, i);
+							bool ok = lua_type(L, -2) == LUA_TSTRING;
+							if (ok)
+								set.str(lua_tostring(L, -2), lua_isstring(L, -1) ? lua_tostring(L, -1) : "");
+							lua_pop(L, 2);
+							if (!ok)
+								break;
+						}
+					if (set.s.size())
+						lg.raw("settings", set.done());
+					if (lg.s.size())
+						e.raw("logic", lg.done());
+				}
+			}
+			lua_settop(L, base);
+		}
+	};
+
+	LPCSTR danger_name(CDangerObject::EDangerType t)
+	{
+		switch (t)
+		{
+		case CDangerObject::eDangerTypeBulletRicochet: return "ricochet";
+		case CDangerObject::eDangerTypeAttackSound: return "attack_sound";
+		case CDangerObject::eDangerTypeEntityAttacked: return "entity_attacked";
+		case CDangerObject::eDangerTypeEntityDeath: return "entity_death";
+		case CDangerObject::eDangerTypeFreshEntityCorpse: return "corpse";
+		case CDangerObject::eDangerTypeAttacked: return "attacked";
+		case CDangerObject::eDangerTypeGrenade: return "grenade";
+		case CDangerObject::eDangerTypeEnemySound: return "enemy_sound";
+		default: return "other";
+		}
+	}
+
+	xr_string object_entry(ctx& c, CGameObject* o, kind_t k, CEntityAlive* ea, float dist, bool los, bool detail, script_facts* sf)
 	{
 		jobj e;
 		e.i("id", o->ID()).str("kind", kind_names[k]).str("section", o->cNameSect_str()).str("name", o->cName().c_str());
@@ -381,15 +525,31 @@ namespace
 					e.str("relation", r);
 			if (alive)
 			{
-				if (CAI_Stalker* st = smart_cast<CAI_Stalker*>(o))
-					if (st->wounded())
-						e.b("wounded", true);
+				CAI_Stalker* st = smart_cast<CAI_Stalker*>(o);
+				if (st && st->wounded())
+					e.b("wounded", true);
 				if (CCustomMonster* cm = smart_cast<CCustomMonster*>(o))
 				{
 					const CEntityAlive* en = cm->memory().enemy().selected();
 					e.b("in_combat", !!en);
 					if (en)
 						e.i("enemy_id", en->ID());
+					if (en && detail)
+					{
+						jobj ej;
+						ej.i("id", en->ID()).str("name", en->cName().c_str()).str("section", en->cNameSect_str());
+						if (const CInventoryOwner* eo = smart_cast<const CInventoryOwner*>(en))
+							ej.str("display", eo->Name());
+						e.raw("enemy", ej.done());
+					}
+					if (detail && st)
+					{
+						EMentalState ms = st->movement().mental_state();
+						e.str("mental_state", ms == eMentalStateFree ? "free" : ms == eMentalStatePanic ? "panic" : "danger");
+					}
+					if (detail)
+						if (const CDangerObject* dg = cm->memory().danger().selected())
+							e.str("danger", danger_name(dg->type()));
 					if (c.actor)
 						e.b("sees_actor", cm->memory().visual().visible_now(c.actor));
 				}
@@ -463,6 +623,8 @@ namespace
 			mcp_door_state(o, &d, nullptr);
 			e.raw("door", d);
 		}
+		if (sf)
+			sf->add(e, o->ID(), detail && k != k_door);
 		return e.done();
 	}
 
@@ -485,25 +647,7 @@ namespace
 
 	const char* door_keys[] = { "on_use", "on_info", "on_info2", "on_actor_in_zone", "on_actor_not_in_zone", "on_timer" };
 
-	bool lua_flag(lua_State* L, int t, LPCSTR k, int& v)
-	{
-		lua_getfield(L, t, k);
-		bool has = lua_type(L, -1) == LUA_TBOOLEAN;
-		if (has)
-			v = lua_toboolean(L, -1);
-		lua_pop(L, 1);
-		return has;
-	}
-
-	xr_string lua_str(lua_State* L, int t, LPCSTR k)
-	{
-		lua_getfield(L, t, k);
-		xr_string r = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
-		lua_pop(L, 1);
-		return r;
-	}
-
-	xr_string offline_entry(ctx& c, CSE_ALifeDynamicObject* se, kind_t k, float dist)
+	xr_string offline_entry(ctx& c, CSE_ALifeDynamicObject* se, kind_t k, float dist, script_facts* sf)
 	{
 		jobj e;
 		e.i("id", se->ID).str("kind", kind_names[k]).str("section", se->s_name.c_str()).str("name", se->name_replace());
@@ -513,6 +657,8 @@ namespace
 		if (CSE_ALifeCreatureAbstract* cr = smart_cast<CSE_ALifeCreatureAbstract*>(se))
 			e.b("alive", cr->g_Alive());
 		squad_fields(e, se->ID);
+		if (sf)
+			sf->add(e, se->ID, false);
 		return e.done();
 	}
 
@@ -701,11 +847,12 @@ namespace
 		}
 		if (!summary)
 		{
+			script_facts sf;
 			u32 m = _min((u32)found.size(), limit);
 			std::partial_sort(found.begin(), found.begin() + m, found.end(), [](const cand& a, const cand& b) { return a.d < b.d; });
 			xr_string arr = "[";
 			for (u32 n = 0; n < m; n++)
-				arr += (n ? "," : "") + object_entry(c, found[n].o, found[n].k, found[n].ea, found[n].d, los, false);
+				arr += (n ? "," : "") + object_entry(c, found[n].o, found[n].k, found[n].ea, found[n].d, los, false, &sf);
 			root.raw("objects", arr + "]");
 			if (found.size() > m)
 				root.i("omitted", found.size() - m);
@@ -715,7 +862,7 @@ namespace
 				std::partial_sort(ofound.begin(), ofound.begin() + om, ofound.end(), [](const ocand& a, const ocand& b) { return a.d < b.d; });
 				xr_string oa = "[";
 				for (u32 n = 0; n < om; n++)
-					oa += (n ? "," : "") + offline_entry(c, ofound[n].se, ofound[n].k, ofound[n].d);
+					oa += (n ? "," : "") + offline_entry(c, ofound[n].se, ofound[n].k, ofound[n].d, &sf);
 				root.raw("offline", oa + "]");
 				if (ofound.size() > om)
 					root.i("offline_omitted", ofound.size() - om);
@@ -745,19 +892,20 @@ namespace
 		}
 		jobj root;
 		root.b("available", true);
+		script_facts sf;
 		CObject* ob = Level().Objects.net_Find((u16)id);
 		CGameObject* o = ob && !ob->getDestroy() ? smart_cast<CGameObject*>(ob) : nullptr;
 		if (o)
 		{
 			CEntityAlive* ea;
 			kind_t k = classify(o, ea);
-			root.raw("object", object_entry(c, o, k, ea, o->Position().distance_to(c.origin), true, true));
+			root.raw("object", object_entry(c, o, k, ea, o->Position().distance_to(c.origin), true, true, &sf));
 			if (CObject* p = o->H_Parent())
 				root.i("parent_id", p->ID()).str("parent_section", p->cNameSect_str());
 		}
 		else if (CSE_ALifeDynamicObject* se = server_object((u16)id))
 		{
-			root.raw("object", offline_entry(c, se, classify_se(se), se->o_Position.distance_to(c.origin)));
+			root.raw("object", offline_entry(c, se, classify_se(se), se->o_Position.distance_to(c.origin), &sf));
 			if (se->ID_Parent != u16(-1))
 				root.i("parent_id", se->ID_Parent);
 		}
