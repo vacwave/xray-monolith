@@ -819,6 +819,9 @@ bool CRenderDevice::IsSilent() const
 
 void CRenderDevice::SetWindowStyle(LONG_PTR style)
 {
+	// MCP: borderless popups get a system menu and minimize box so the taskbar can minimize them
+	if (Core.ParamsData.test(ECoreParams::mcp_port) && (style & WS_POPUP))
+		style |= WS_SYSMENU | WS_MINIMIZEBOX;
 	if (IsSilent())
 		style |= GetWindowLongPtr(m_hWnd, GWL_STYLE) & (WS_VISIBLE | WS_MINIMIZE);
 	SetWindowLongPtr(m_hWnd, GWL_STYLE, style);
@@ -838,7 +841,8 @@ void CRenderDevice::SetWindowRect(HWND after, int x, int y, int w, int h, UINT f
 	SetRect(&wp.rcNormalPosition, x, y, x + w, y + h);
 	wp.showCmd = SW_SHOWMINNOACTIVE;
 	SetWindowPlacement(m_hWnd, &wp);
-	SetWindowPos(m_hWnd, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+	// Still apply the z-order: HWND_NOTOPMOST drops the WS_EX_TOPMOST the window is created with
+	SetWindowPos(m_hWnd, after, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 void CRenderDevice::UpdateClientRect()
