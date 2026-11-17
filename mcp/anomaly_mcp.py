@@ -1338,22 +1338,66 @@ async def lua_exec(code: str, instance: str | None = None, timeout: float = 30) 
 
 
 @tool
-async def log_tail(instance: str | None = None, n: int = 100, grep: str | None = None,
-                   since: int | None = None) -> dict:
-    """Last n (max 1000) log lines from the supervisor buffer (survives reconnects and game exit).
-    grep: regex filter applied before taking n. since: only lines with seq > since. Repeats are collapsed."""
+async def log_tail(instance: str | None = None, n: int = 100, pattern: str | None = None, since: int | None = None,
+                   ignore_case: bool = False, grep: str | None = None) -> dict:
+    """Log lines from the supervisor buffer (20k lines; survives reconnects and game exit).
+
+    Without since: the newest n (max 1000). With since (a seq marker): lines with seq > since, oldest first, the first
+    n of them; `truncated` = matches left out, continue with since=next_since. Lines the buffer no longer holds are
+    fetched from the engine ring (10k) while the game runs; `lost` counts lines neither holds.
+    pattern: regex (re.search; ignore_case for case-insensitive; `grep` is an alias) -> `matches` [{seq, line}];
+    without a pattern -> `lines` (repeats collapsed). last_seq = the newest seq buffered now: pass it as since (here
+    or as game_wait log_since) to see only what comes after. Grep after an action: m = log_tail(n=1).last_seq; act;
+    log_tail(pattern=..., since=m)."""
     inst = get(instance)
     n = max(1, min(n, 1000))
+    pattern = pattern or grep
+    rx = re.compile(pattern, re.I if ignore_case else 0) if pattern else None
     items = inst.lines(since=since)
-    if grep:
-        rx = re.compile(grep)
+    lost = 0
+    if since is not None:
+        first = items[0][0] if items else inst.last_seq + 1
+        if first > since + 1 and inst.sock and not inst.dead:
+            try:  # older than the buffer holds: the engine ring may still have them
+                res = await run(inst.call, "log.tail", {"since": since}, 10)
+                have = {e[0] for e in items}
+                items = sorted(items + [(l["seq"], l["line"], 0) for l in res["lines"] if l["seq"] not in have])
+            except Exception as e:
+                log.info("[%s] log_tail engine fill failed: %s", inst.id, e)
+            first = items[0][0] if items else inst.last_seq + 1
+        lost = max(0, first - since - 1)
+    if rx:
         items = [e for e in items if rx.search(e[1])]
     matched = len(items)
-    items = items[-n:]
-    lines, note = bound([l for _, l, _ in items])
-    return {"instance": inst.id, "alive": not inst.dead, "first_seq": items[0][0] if items else None,
-            "last_seq": items[-1][0] if items else inst.last_seq, "matched": matched, "returned_raw": len(items),
-            "lines": lines, "omitted": note}
+    items = items[:n] if since is not None else items[-n:]
+    out = {"instance": inst.id, "alive": not inst.dead, "last_seq": inst.last_seq, "matched": matched,
+           "truncated": matched - len(items)}
+    if since is not None:
+        out["next_since"] = items[-1][0] if out["truncated"] and items else max(inst.last_seq, since)
+        if lost:
+            out["lost"] = lost
+    if not rx:
+        lines, note = bound([l for _, l, _ in items], keep="head" if since is not None else "tail")
+        out.update(first_seq=items[0][0] if items else None, lines=lines, omitted=note)
+        return out
+    kept, size = [], 0
+    order = items if since is not None else reversed(items)  # keep the oldest after since, else the newest
+    for seq, line, _ in order:
+        if len(line) > MAX_LINE_CHARS:
+            line = line[:MAX_LINE_CHARS] + f" …[+{len(line) - MAX_LINE_CHARS} chars]"
+        if size + len(line) + 20 > MAX_OUTPUT_CHARS:
+            break
+        kept.append({"seq": seq, "line": line})
+        size += len(line) + 20
+    if since is None:
+        kept.reverse()
+    out["matches"] = kept
+    if len(kept) < len(items):
+        out["truncated"] += len(items) - len(kept)
+        out["omitted"] = f"{len(items) - len(kept)} matches over the output cap ({MAX_OUTPUT_CHARS} chars)"
+        if since is not None:
+            out["next_since"] = kept[-1]["seq"] if kept else since
+    return out
 
 
 # ---------------------------------------------------------------- game events
@@ -4465,7 +4509,7 @@ WT_EVENT_TYPES = ("script_error", "level_loaded", "level_unloaded", "actor_spawn
                   "guard_fight")
 WT_OPS = ("eq", "ne", "lt", "le", "gt", "ge", "in", "match", "exists", "within")
 WT_LEAVES = {  # leaf key -> extra keys it accepts (besides the comparison ops where marked by "ops")
-    "in_control": (), "loaded": (), "mode": (), "dialog": ("open",), "event": ("where",), "log": (),
+    "in_control": (), "loaded": (), "mode": (), "dialog": ("open",), "event": ("where",), "log": ("since", "ignore_case"),
     "sim_ms": (), "frames": (), "game_clock": (), "state": ("ops",), "has_item": ("ops",),
     "object": ("is", "field", "ops"), "count": ("ops",), "lua": (), "hung": (), "crash": ()}
 WT_OBJECT_IS = ("exists", "gone", "alive", "dead", "online", "offline")
@@ -4537,7 +4581,9 @@ def wt_compile(spec, where="until"):
             raise ValueError(f"{where}: game_clock must be 'HH:MM'")
         n["target_ms"] = (int(m[1]) * 60 + int(m[2])) * 60000
     if k == "log":
-        n["rx"] = re.compile(v)
+        n["rx"] = re.compile(v, re.I if spec.get("ignore_case") else 0)
+        if "since" in spec and not (isinstance(spec["since"], int) and spec["since"] >= 0):
+            raise ValueError(f"{where}: log since must be a seq >= 0 (log_tail last_seq)")
     if k == "event":
         if not isinstance(v, str):
             raise ValueError(f"{where}: event takes a type name or glob, e.g. 'task_*'")
@@ -4797,7 +4843,7 @@ def wt_eval(n, snap, ctx):
         return n["met"]
     if k == "log":
         if "hit" not in n:
-            items = inst.lines(since=n.get("pos", ctx["log_since"]))
+            items = inst.lines(since=n.get("pos", n["spec"].get("since", ctx["log_since"])))
             for seq, line, _ in items:
                 if n["rx"].search(line):
                     n["hit"] = {"seq": seq, "line": line[:MAX_LINE_CHARS]}
@@ -5029,7 +5075,8 @@ async def game_wait(until: str | dict | list, instance: str | None = None, timeo
     {"in_control": "l01_escape"} (on that level; a new game is in control on fake_start first) | {"mode": "dialog"} or a list of modes (game_state mode: in_game,
     dialog, dead, paused, main_menu, in_game_menu, console, tutorial, loading) | {"dialog": "talk"} (a dialog whose
     kind/class/script_class/script_mode/menu_mode matches the glob is open; "open": false = none is) |
-    {"event": "task_given", "where": {"id": "my_task"}} (data fields; strings are globs) | {"log": "regex"} |
+    {"event": "task_given", "where": {"id": "my_task"}} (data fields; strings are globs) |
+    {"log": "regex", "ignore_case": true, "since": seq} (a log line with seq > since; default log_since) |
     {"sim_ms": 5000} (simulation time; follows game_time sim_speed and game_step) | {"frames": 100} |
     {"game_clock": "21:00"} (game clock reaches HH:MM, next day if already past) |
     {"state": "actor.health", "lt": 0.5} (any game_state path, sections inventory./tasks./stats. fetched as needed;
@@ -5048,7 +5095,10 @@ async def game_wait(until: str | dict | list, instance: str | None = None, timeo
     or game exit always ends the wait at once (failed_on crash/exit with the crash record).
     since: event seq; event conditions only match events with seq > since (default: the newest when the call starts).
     Chain waits with the returned event_seq (the matched event's seq) so nothing is missed. log_since / log_seq: the
-    same for log lines. timeout_s (30, max 3600): a timeout is a normal result: met false, timed_out true,
+    same for log lines. Race: by default only lines written after the call starts count, so a line printed by an
+    action issued just before the wait is missed. Take the marker first: m = log_tail(n=1).last_seq (or a previous
+    log_seq), act, then game_wait({"log": ...}, log_since=m) (or the condition's own since) - lines already buffered
+    after m match at once. timeout_s (30, max 3600): a timeout is a normal result: met false, timed_out true,
     conditions with the last observed values. poll_ms (50): state/object/Lua conditions are polled (one batched
     engine round trip, one frame); events and log lines are pushed and wake the wait at once. During a level load
     polled conditions read "loading" and the wait goes on. sim_ms / game_clock while MCP-paused (no game_step
