@@ -29,7 +29,7 @@ All tools take an optional `instance` (default: the last launched or attached on
 
 | Tool | What it does |
 |---|---|
-| `game_launch` | `exe` (default `<repo>\_build\_game\bin_dbg\AnomalyDX11AVX.exe`), `game_root` (default `C:\Anomaly`), `show_window`, `new_game`, `extra_args`, `timeout`, `full_dumps`, `hang_timeout`, `load_timeout`, `load` (start straight into a save already in the slot's savedgames; waits until the actor is in control, result `load` as game_load), `keep_shader_cache` (default false: the slot's shader cache is deleted before launch) |
+| `game_launch` | `exe` (default `<repo>\_build\_game\bin_dbg\AnomalyDX11AVX.exe`), `game_root` (default `C:\Anomaly`), `show_window`, `new_game`, `extra_args`, `timeout`, `full_dumps`, `hang_timeout`, `load_timeout`, `load` (start straight into a save already in the slot's savedgames; waits until the actor is in control, result `load` as game_load), `keep_shader_cache` (default false: the slot's shader cache is deleted before launch), `debug` (default true: passes `-dbg`) |
 | `game_attach` | attach to a running `-mcp_port` game by `port` or `appdata` dir |
 | `game_status` | pid, alive, exit code, port, `crashed`, `hung` (+ frame stall, loading), `engine.info`, log rate (lines/s), last lines |
 | `game_list` | instances of this supervisor and the caps |

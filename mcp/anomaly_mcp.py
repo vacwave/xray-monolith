@@ -993,8 +993,8 @@ def info_or_error(inst, timeout=5):
 
 def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_args=None, timeout=180,
            full_dumps=False, hang_timeout=None, load_timeout=None, slot_index=None, load=None,
-           keep_shader_cache=False):
-    params = {k: v for k, v in locals().items() if k != "slot_index"}
+           keep_shader_cache=False, debug=True):
+    params ={k: v for k, v in locals().items() if k != "slot_index"}
     exe = Path(exe) if exe else DEFAULT_EXE
     game_root = Path(game_root) if game_root else DEFAULT_GAME_ROOT
     if not exe.is_file():
@@ -1023,6 +1023,8 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
         args = [str(exe), "-fsltx", str(fs_root / "fsgame.ltx"), "-appdata", str(appdata), "-mcp_port", "0"]
         if show_window:
             args.append("-showwindow")
+        if debug:
+            args.append("-dbg")
         if new_game:
             args += ["-start", "server(all/single/alife/new)", "client(localhost)"]
         elif load:
@@ -1225,9 +1227,11 @@ async def game_launch(exe: str | None = None, game_root: str | None = None, show
                       new_game: bool = False, extra_args: str | None = None, timeout: float = 180,
                       full_dumps: bool = False, hang_timeout: float | None = None,
                       load_timeout: float | None = None, load: str | None = None,
-                      keep_shader_cache: bool = False) -> dict:
+                      keep_shader_cache: bool = False, debug: bool = True) -> dict:
     """Launch a game instance (silent/minimized unless show_window) and connect to it.
 
+    debug: pass -dbg (debug mode: script error details, debug console commands and menus); default on.
+    g_god / g_unlimitedammo exist in any MCP game, with or without it.
     exe: default <repo>/_build/_game/bin_dbg/AnomalyDX11AVX.exe. game_root: default C:\\Anomaly (C:\\GAMMA counts
     against the GAMMA cap); an MO2 folder (ModOrganizer.exe, no fsgame.ltx, e.g. C:\\GAMMA) is started through its own
     MO2 (`run`, MO2's selected profile and gamePath), which is killed once the game runs; refused while any MO2 runs.
@@ -1243,7 +1247,7 @@ async def game_launch(exe: str | None = None, game_root: str | None = None, show
     game_restart) and the game recompiles it; true keeps it (a new slot is seeded from the game root's cache)."""
     t0 = time.time()
     res = await run(launch, exe, game_root, show_window, new_game, extra_args, timeout, full_dumps, hang_timeout,
-                    load_timeout, None, load, keep_shader_cache)
+                    load_timeout, None, load, keep_shader_cache, debug)
     if load:
         res["load"] = await run(load_wait, instances[res["instance"]], load, 0, 0, t0 + (load_timeout or 600), t0)
     return res
