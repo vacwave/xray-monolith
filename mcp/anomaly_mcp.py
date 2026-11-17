@@ -2790,7 +2790,8 @@ async def game_move_to(instance: str | None = None, position: list[float] | None
     (capped at the weapon's fire distance): monsters hostile to the actor and stalkers whose relation to the actor is
     enemy, never neutral/friendly; whoever attacks the actor first, then the nearest. Walking pauses and the weapon in
     hands shoots it until dead (game_shoot logic, aims at a visible bone; lost from sight 1.5 s -> next target), then
-    the path is replanned and the walk goes on (fight time does not count toward timeout). No weapon / out of ammo /
+    the path is replanned and the walk goes on (fight time does not count toward timeout). Nothing in hands -> the
+    best firearm with ammo (slot 2/3, loaded first) is drawn like its slot key (result drew). No weapon / out of ammo /
     jam that reload does not clear -> engaging stops for this move (engage.stopped) and it walks on;
     engage="required" makes that state engage_failed instead. engage=False: never shoots. Low health is only
     reported (health).
@@ -2872,7 +2873,7 @@ def hunt_level(inst):
     return inst.call("lua.exec", {"code": TP_PROBE}, timeout=10)["results"][:1] or [""]
 
 
-def hunt_run(inst, id, task, story_id, timeout, sprint, engage_range, area_radius):
+def hunt_run(inst, id, task, story_id, timeout, sprint, engage_range, area_radius, clear=False, clear_radius=50.0):
     t0 = time.monotonic()
     end = t0 + timeout
     out = {"instance": inst.id, "fights": [], "levels": [], "steps": []}
@@ -2894,8 +2895,8 @@ def hunt_run(inst, id, task, story_id, timeout, sprint, engage_range, area_radiu
              "engage_range": str(float(engage_range)), **p}
         res = nav_move(inst, p, True, left() + 30)
         out["fights"] += res.get("fights", [])
-        out["steps"].append({k: res.get(k) for k in ("state", "reason", "travelled", "elapsed_ms", "hunt", "ladder")
-                             if res.get(k) is not None})
+        out["steps"].append({k: res.get(k) for k in ("state", "reason", "travelled", "elapsed_ms", "hunt", "ladder",
+                                                     "drew") if res.get(k) is not None})
         return res
 
     ref = id
@@ -2947,6 +2948,10 @@ def hunt_run(inst, id, task, story_id, timeout, sprint, engage_range, area_radiu
             if st == "reached" or (st == "unreachable" and why == "target_off_mesh" and near):
                 if tgt["kind"] not in HUNT_AREA_KINDS:
                     return finish("arrived", position=res.get("position"))
+                if clear:
+                    ids = squad_members(inst, tgt["id"]) if tgt["kind"] == "squad" else None
+                    st, why = clear_loop(inst, out, tgt["position"], clear_radius, ids, end, sprint, engage_range)
+                    return finish(st, reason=why)
                 ho = world_call(inst, "world.objects", {"position": nav_vec(tgt["position"], "position"),
                                                         "radius": str(float(max(area_radius * 3, 50))),
                                                         "kinds": "stalker,monster", "hostile_only": 1, "los": 1,
@@ -2995,7 +3000,8 @@ def hunt_run(inst, id, task, story_id, timeout, sprint, engage_range, area_radiu
 @tool
 async def game_hunt(instance: str | None = None, id: int | None = None, task: str | None = None,
                     story_id: str | None = None, timeout: float = 600, sprint: bool = True,
-                    engage_range: float = 100, area_radius: float = 10) -> dict:
+                    engage_range: float = 100, area_radius: float = 10, clear: bool | None = None,
+                    clear_radius: float = 50) -> dict:
     """Hunt one creature `id`, or the target of quest `task` (task id from game_tasks; or a `story_id`), like a player
     on foot. A creature online: game_move_to toward it (replanned as it moves), every 200 ms shooting any visible
     hostile within engage_range (100 m, capped by the weapon's fire distance) and switching to the hunted creature
@@ -3003,8 +3009,10 @@ async def game_hunt(instance: str | None = None, id: int | None = None, task: st
     the online radius): walk to its server position until it comes online. On another level: the game-graph route's
     level changer on this level is entered with game_changelevel (no walking to the changer), then it goes on there,
     hop by hop. An area target (squad, smart terrain) is walked to (within area_radius m of its centre / squad
-    commander) and ends arrived_area with hostiles around it (los = visible from the actor now); any other object
-    (item, stash) ends arrived. Ladders are not AI-map links: a target reachable only by a ladder ends unreachable
+    commander) and ends arrived_area with hostiles around it (los = visible from the actor now), or with clear (default
+    True for task, else False) goes on as game_clear_area there (squad: its members; else hostiles within clear_radius
+    of the centre) and ends like it (cleared / unreachable / timeout ..., kills, remaining, hunts); any other object
+    (item, stash) ends arrived. Nothing in hands -> a firearm is drawn (steps[].drew). Ladders are not AI-map links: a target reachable only by a ladder ends unreachable
     (ladder {id, name, lower, upper, note} when one is near).
     Result: state target_dead / arrived_area / arrived / unreachable (reason: no_route, off_mesh,
     target_floor_off_mesh, ...) / target_offline / target_gone / timeout / engage_failed (no weapon / ammo / jam) /
@@ -3017,7 +3025,165 @@ async def game_hunt(instance: str | None = None, id: int | None = None, task: st
         raise ValueError("give exactly one of id, task or story_id")
     inst = get(instance)
     return await run(hunt_run, inst, None if id is None else int(id), task, story_id, float(timeout), sprint,
-                     float(engage_range), max(1.0, float(area_radius)))
+                     float(engage_range), max(1.0, float(area_radius)), task is not None if clear is None else clear,
+                     max(5.0, float(clear_radius)))
+
+
+# ---------------------------------------------------------------- game_clear_area
+# Kill the hostiles of an area (or listed creatures) one at a time: next = visible (los) first, then nearest; each one
+# is hunted with hunt_run (engine hunt mode fights any visible hostile meanwhile, the hunted one preferred).
+
+SQUAD_MEMBERS = r"""
+local se, t = alife():object(@ID@), {}
+if se and se.squad_members then for k in se:squad_members() do t[#t + 1] = k.id end end
+return table.concat(t, ",")
+"""
+
+ACTOR_POS = r"""
+local a = db.actor
+if not (level.present() and a) then return "" end
+local p = a:position()
+return string.format("%.2f,%.2f,%.2f", p.x, p.y, p.z)
+"""
+
+
+def squad_members(inst, id):
+    out = inst.call("lua.exec", {"code": SQUAD_MEMBERS.replace("@ID@", str(int(id)))}, timeout=10)["results"]
+    return [int(float(v)) for v in (out[0] if out else "").split(",") if v]
+
+
+def actor_pos(inst):
+    out = inst.call("lua.exec", {"code": ACTOR_POS}, timeout=10)["results"]
+    return [float(v) for v in out[0].split(",")] if out and out[0] else None
+
+
+def clear_targets(inst, center, radius, ids):
+    """Living targets left, next first (los, then nearest; other levels last); None outside a level."""
+    me, level = actor_pos(inst), hunt_level(inst)[0]
+    if me is None or not level:
+        return None
+    if ids is None:
+        r = world_call(inst, "world.objects", {"position": nav_vec(center, "position"), "radius": str(float(radius)),
+                                               "kinds": "stalker,monster", "hostile_only": 1, "los": 1, "limit": 100})
+        if r.get("available") is False:
+            return None
+        ts = [{k: o.get(k) for k in ("id", "name", "section", "position", "los")} for o in r.get("objects", [])]
+    else:
+        r = world_call(inst, "world.objects", {"radius": "150", "kinds": "stalker,monster", "alive": 1, "los": 1,
+                                               "limit": 100})
+        los = {o["id"]: o.get("los") for o in r.get("objects", [])}
+        ts = []
+        for i in ids:
+            t = hunt_obj(inst, i)
+            if t and t["kind"] in ("stalker", "monster") and t["alive"]:
+                ts.append({"id": i, "name": t["name"], "position": t["position"], "los": los.get(i),
+                           "level": t["level"], "online": t["online"]})
+    ts.sort(key=lambda t: (t.get("level", level) != level, not t.get("los"), math.dist(me, t["position"])))
+    return ts
+
+
+def clear_loop(inst, out, center, radius, ids, end, sprint, engage_range):
+    """Hunt targets until none is left; fills out kills / remaining / hunts (+ fights, levels); returns (state, reason)."""
+    out.setdefault("fights", [])
+    out.setdefault("levels", [])
+    hunts, bad, dead = [], {}, set()
+    out["clear"] = {"position": center, "radius": radius} if ids is None else {"ids": ids}
+
+    def done(state, reason=None, ts=()):
+        out["hunts"] = hunts
+        out["kills"] = len(dead | {f["id"] for f in out["fights"] if f.get("killed")})
+        out["remaining"] = [{**t, "reason": bad[t["id"]]} if t["id"] in bad else t for t in ts]
+        return state, reason
+
+    ts = []
+    for _ in range(100):
+        ts = clear_targets(inst, center, radius, ids)
+        if ts is None:
+            return done("aborted", "not in a level")
+        if not ts:
+            return done("cleared")
+        todo = [t for t in ts if t["id"] not in bad]
+        if not todo:
+            return done("unreachable", "no remaining target can be reached", ts)
+        if time.monotonic() >= end:
+            return done("timeout", None, ts)
+        t = todo[0]
+        res = hunt_run(inst, t["id"], None, None, max(1.0, end - time.monotonic()), sprint, engage_range, 10)
+        out["fights"] += res.get("fights", [])
+        out["levels"] += res.get("levels", [])
+        st, why = res.get("state"), res.get("reason")
+        hunts.append({k: v for k, v in (("id", t["id"]), ("name", t.get("name")), ("state", st), ("reason", why),
+                                        ("drew", next((s["drew"] for s in res.get("steps", []) if s.get("drew")), None)),
+                                        ("elapsed_s", res.get("elapsed_s"))) if v is not None})
+        if st == "target_dead":
+            dead.add(t["id"])
+        elif st in ("unreachable", "stuck", "blocked_door", "target_offline", "no_target"):
+            bad[t["id"]] = f"{st}: {why}" if why else st
+        elif st != "target_gone":  # timeout, engage_failed, aborted
+            return done(st, why, clear_targets(inst, center, radius, ids) or ts)
+    return done("timeout", "too many targets", ts)
+
+
+def clear_run(inst, position, radius, ref, ids, timeout, sprint, engage_range):
+    if ref is not None:
+        tgt = hunt_obj(inst, ref)
+        if tgt is None:
+            return {"instance": inst.id, "state": "no_target", "reason": "no such alife object"}
+        if tgt["kind"] not in ("stalker", "monster"):
+            # area object (smart terrain / squad / restrictor), maybe on another level: game_hunt travels there first
+            return hunt_run(inst, tgt["id"], None, None, timeout, sprint, engage_range, 10, True, radius)
+        ids = [tgt["id"]]
+    t0 = time.monotonic()
+    end = t0 + timeout
+    out = {"instance": inst.id, "fights": [], "levels": [], "steps": []}
+    me = actor_pos(inst)
+    if me is None:
+        return {"instance": inst.id, "state": "aborted", "reason": "not in a level"}
+    if position is not None and math.dist(me, position) + radius > 120:
+        # beyond the online radius the area's creatures have no client objects: walk up to it first
+        res = nav_move(inst, {"to": nav_vec(position, "position"), "stop_distance": str(float(radius)),
+                              "timeout_ms": int(timeout * 1000), "sprint": int(sprint), "engage": 1,
+                              "engage_range": str(float(engage_range))}, True, timeout + 30)
+        out["fights"] += res.get("fights", [])
+        out["steps"].append({k: res.get(k) for k in ("state", "reason", "travelled", "elapsed_ms", "drew")
+                             if res.get(k) is not None})
+        near = res.get("distance_left") is not None and res["distance_left"] <= radius
+        if res.get("state") != "reached" and not near:
+            out.update(state=res.get("state"), reason=res.get("reason"), elapsed_s=round(time.monotonic() - t0, 1))
+            return out
+    st, why = clear_loop(inst, out, position, radius, ids, end, sprint, engage_range)
+    out.update(state=st, elapsed_s=round(time.monotonic() - t0, 1))
+    if why is not None:
+        out["reason"] = why
+    for k in ("fights", "levels", "steps"):
+        if not out[k]:
+            del out[k]
+    return out
+
+
+@tool
+async def game_clear_area(instance: str | None = None, position: list[float] | None = None, radius: float = 50,
+                          id: int | None = None, story_id: str | None = None, ids: list[int] | None = None,
+                          engage_range: float = 100, timeout: float = 600, sprint: bool = True) -> dict:
+    """Kill every hostile in an area, or every creature in `ids`, one at a time like a player: the next target is a
+    visible one first (los from the camera), then the nearest; it is hunted as in game_hunt (walk toward it, shoot it
+    whenever visible within engage_range; any other visible hostile is shot meanwhile, the current target preferred).
+    Area = `position` [x,y,z] + radius (hostile = living stalker/monster whose relation to the actor is enemy; a far
+    area is walked to first), or `id` / `story_id` of a smart terrain / restrictor (hostiles within radius of it) or
+    squad (its members, hostile or not), reached like game_hunt (also on another level); a creature id = ids [id].
+    ids: those creatures (neutral too), on any level. Nothing in hands -> the best firearm with ammo (slot 2/3, loaded
+    first) is drawn like its slot key (hunts[].drew). Result: state cleared (none alive left) / unreachable (every
+    remaining target failed: unreachable, stuck, blocked_door, target_offline) / timeout / engage_failed (no weapon /
+    ammo) / aborted / no_target; kills (targets dead in our fights or hunts), remaining [{id, name, position, los,
+    reason}], hunts [{id, name, state, reason, drew, elapsed_s}], fights (game_hunt format), levels, elapsed_s.
+    timeout: wall seconds for all of it."""
+    if sum(x is not None for x in (position, id, story_id, ids)) != 1:
+        raise ValueError("give exactly one of position, id, story_id or ids")
+    if position is not None:
+        nav_vec(position, "position")
+    inst = get(instance)
+    return await run(clear_run, inst, position, max(5.0, float(radius)), story_id if id is None else int(id),
+                     [int(i) for i in ids] if ids is not None else None, float(timeout), sprint, float(engage_range))
 
 
 def game_use_run(inst, id, approach, stand, wait_timeout):

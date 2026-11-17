@@ -1667,6 +1667,8 @@ namespace
 		xr_string hunt_name;
 		u32 hunt_t = 0, plan_fails = 0;
 		xr_string ladder;             // a ladder near a target without a route (json)
+		xr_string drew;               // section of the weapon drawn because nothing was in hands
+		u32 draw_t = 0, draws = 0;
 	};
 	mover_t g_mv;
 
@@ -2620,6 +2622,8 @@ namespace
 		}
 		if (g_mv.ladder.size())
 			r.raw("ladder", g_mv.ladder);
+		if (g_mv.drew.size())
+			r.str("drew", g_mv.drew.c_str());
 		if (g_mv.doors.size())
 		{
 			xr_string a = "[";
@@ -2670,7 +2674,7 @@ namespace
 	}
 
 	void shoot_replace(); // a running nav.shoot ends "replaced": both turn the camera
-	bool engage_weapon(LPCSTR& why);
+	bool engage_ready(LPCSTR& why, bool& wait);
 
 	bool nav_move_to(LPCSTR params, xr_string& out)
 	{
@@ -2739,7 +2743,8 @@ namespace
 		g_mv.active = true;
 		g_mv.state = "running";
 		LPCSTR why = nullptr;
-		if (g_mv.hunt && !engage_weapon(why))
+		bool wait = false;
+		if (g_mv.hunt && !engage_ready(why, wait) && !wait)
 			mover_finish("engage_failed", why); // nothing to kill it with: fail before walking
 		else if (!mover_plan(why))
 			plan_failed(why);
@@ -3678,6 +3683,57 @@ namespace
 		return !why;
 	}
 
+	// nothing in hands: take out the best firearm with ammo from slot 2/3 like its slot key (loaded mag first, then cost)
+	bool engage_draw()
+	{
+		CInventory& inv = g_actor->inventory();
+		u16 best = NO_ACTIVE_SLOT;
+		bool best_loaded = false;
+		u32 best_cost = 0;
+		for (u16 s = 2; s <= 3; s++)
+		{
+			CWeapon* w = smart_cast<CWeapon*>(inv.ItemFromSlot(s));
+			if (!w || smart_cast<CWeaponKnife*>(w) || smart_cast<CWeaponBinoculars*>(w))
+				continue;
+			bool loaded = w->GetAmmoElapsed() > 0;
+			if (!loaded && w->GetSuitableAmmoTotal() <= 0)
+				continue;
+			if (best == NO_ACTIVE_SLOT || loaded > best_loaded || (loaded == best_loaded && w->Cost() > best_cost))
+			{
+				best = s;
+				best_loaded = loaded;
+				best_cost = w->Cost();
+			}
+		}
+		if (best == NO_ACTIVE_SLOT)
+			return false;
+		inv.Action(u16(kWPN_1 + best - 1), CMD_START);
+		g_mv.drew = inv.ItemFromSlot(best)->object().cNameSect().c_str();
+		g_mv.draw_t = g_mv.elapsed;
+		g_mv.draws++;
+		return true;
+	}
+
+	// engage_weapon for a move; nothing in hands -> draw a weapon (<= 3 times per move), wait = it is coming out (ask
+	// again later)
+	bool engage_ready(LPCSTR& why, bool& wait)
+	{
+		wait = false;
+		bool drawing = g_mv.draws && g_mv.elapsed - g_mv.draw_t < 3000;
+		if (engage_weapon(why))
+		{
+			wait = drawing && shoot_weapon(why)->IsShowing();
+			return !wait;
+		}
+		if (g_actor->inventory().ActiveItem())
+			return false;
+		if (drawing || (g_mv.draws < 3 && engage_draw()))
+			wait = true;
+		else if (g_mv.draws)
+			why = "nothing in hands (draw failed)";
+		return false;
+	}
+
 	void engage_start(CCustomMonster* m, int owner)
 	{
 		if (g_sh.owner == own_agent && g_sh.id)
@@ -3807,8 +3863,11 @@ namespace
 		if (!m)
 			return false;
 		LPCSTR why;
-		if (!engage_weapon(why))
+		bool wait;
+		if (!engage_ready(why, wait))
 		{
+			if (wait)
+				return false; // drawing a weapon: walk on, scan again
 			if (g_mv.engage == 2)
 			{
 				mover_finish("engage_failed", why);
@@ -3997,8 +4056,11 @@ namespace
 			return false;
 		g_mv.hunt_seen = true;
 		LPCSTR why;
-		if (!engage_weapon(why))
+		bool wait;
+		if (!engage_ready(why, wait))
 		{
+			if (wait)
+				return false;
 			mover_finish("engage_failed", why);
 			return true;
 		}
