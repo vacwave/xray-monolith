@@ -21,6 +21,7 @@
 #include "InventoryOwner.h"
 #include "Inventory.h"
 #include "Weapon.h"
+#include "mcp_events.h"
 
 #define BODY_REMOVE_TIME		600000
 
@@ -107,6 +108,7 @@ void CEntity::Hit(SHit* pHDS)
 	//	if (bDebug)				Log("Process HIT: ", *cName());
 	if (g_mcp_on_hit)
 		g_mcp_on_hit(this, pHDS);
+	float mcp_health_before = GetfHealth();
 
 	// *** process hit calculations
 	// Calc impulse
@@ -134,6 +136,7 @@ void CEntity::Hit(SHit* pHDS)
 	{
 		KillEntity(pHDS->whoID);
 	}
+	mcp_combat_hit(this, pHDS, mcp_health_before);
 	//must be last!!! @slipch
 	inherited::Hit(pHDS);
 }

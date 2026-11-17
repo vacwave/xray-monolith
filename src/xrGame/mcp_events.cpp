@@ -177,6 +177,7 @@ namespace
 		}
 
 		mcp_tasks_poll(!level_name.empty() && a);
+		mcp_combat_poll(!level_name.empty());
 
 		bool menu = MainMenu() && MainMenu()->IsActive();
 		if (menu != menu_active)
@@ -230,6 +231,7 @@ namespace
 void mcp_register_events()
 {
 	enabled = !!Core.ParamsData.test(ECoreParams::mcp_port);
+	mcp_combat_init();
 	if (!enabled)
 		return;
 	mcp::register_method("events.tail", events_tail);

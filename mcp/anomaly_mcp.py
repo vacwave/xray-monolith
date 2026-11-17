@@ -1468,7 +1468,11 @@ async def game_events(instance: str | None = None, since: int | None = None, typ
     (level, previous), level_unloaded, actor_spawned, actor_died (killer_id/name/section), game_saved, game_loaded,
     menu_opened, menu_closed, task_given, task_completed, task_failed, task_in_progress (id, title, title_id),
     task_stage (id, title, old_stage, stage, target: object brief or null; polled once per second), info_given /
-    info_removed (name).
+    info_removed (name), death (victim {id,name,section,char_name,community,story_id}, killer brief or null, weapon,
+    hit_type, bone, level, position), hit (attacker, victim, count, damage, health_before/after, hit_type, bone, weapon;
+    first hit per pair at once, then one summary per 1 s), combat (state enter/switch/leave, npc, enemy, previous),
+    relation (kind personal (actor only)/community_goodwill/community_relation/bulk, from/to or community/to_community,
+    old, new, count).
     since: only events with seq > since (page with the returned last_seq); without it the newest `limit` are returned.
     types: type names or fnmatch patterns (e.g. ['task_*']). limit: max 500. Script errors repeating within 5 s are
     coalesced: count = total so far, since_last = occurrences this event stands for. Fatal errors (kind callback/
@@ -4420,7 +4424,7 @@ async def game_emission(kind: str = "surge", action: str = "status", instance: s
 
 WT_EVENT_TYPES = ("script_error", "level_loaded", "level_unloaded", "actor_spawned", "actor_died", "game_saved",
                   "game_loaded", "menu_opened", "menu_closed", "task_given", "task_completed", "task_failed",
-                  "task_in_progress", "task_stage", "info_given", "info_removed")
+                  "task_in_progress", "task_stage", "info_given", "info_removed", "death", "hit", "combat", "relation")
 WT_OPS = ("eq", "ne", "lt", "le", "gt", "ge", "in", "match", "exists", "within")
 WT_LEAVES = {  # leaf key -> extra keys it accepts (besides the comparison ops where marked by "ops")
     "in_control": (), "loaded": (), "mode": (), "dialog": ("open",), "event": ("where",), "log": (),

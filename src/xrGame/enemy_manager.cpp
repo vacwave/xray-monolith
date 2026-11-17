@@ -26,6 +26,7 @@
 #include "movement_manager.h"
 #include "agent_manager.h"
 #include "agent_enemy_manager.h"
+#include "mcp_events.h"
 
 u32 ENEMY_INERTIA_TIME_TO_SOMEBODY = 3000;
 u32 ENEMY_INERTIA_TIME_TO_ACTOR = 0;
@@ -460,7 +461,10 @@ void CEnemyManager::try_change_enemy()
 	}
 
 	if (selected() != previous_selected)
+	{
+		mcp_combat_enemy(m_object, previous_selected, selected());
 		m_object->on_enemy_change(previous_selected);
+	}
 
 	if (selected() != previous_selected)
 	{
