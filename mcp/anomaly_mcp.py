@@ -2313,7 +2313,8 @@ async def game_objects(instance: str | None = None, radius: float = 100, kinds: 
     Per object: id, kind, section, name (unique object name), display (NPC character name / item name), position,
     distance, bearing (deg to turn right to face its centre: game_input {"look": {"yaw": bearing, "pitch":
     elevation}}, or {"look_at": position}), elevation (deg up). Creatures: alive, health, community, rank, relation
-    (friend/neutral/enemy/worst_enemy), wounded, in_combat, enemy_id, sees_actor, squad_id/squad/smart; corpses:
+    (friend/neutral/enemy/worst_enemy), wounded, in_combat, enemy_id, sees_actor, squad_id/squad/smart; any object:
+    story_id / squad_story_id (story_objects), active_section (xr_logic, db.storage); corpses:
     items, has_loot. Items: condition, cost, ammo/mag_size/ammo_type (weapons), rounds (ammo). Anomalies: type (engine
     class), radius, enabled (campfires: lit). Containers: empty, items, closed. Level changers: destination. Doors:
     door {state open/opening/closed/closing/locked (ph_door logic; scripted = other scheme, no_logic = free physics
@@ -2349,7 +2350,11 @@ async def game_object(id: int, instance: str | None = None) -> dict:
     """Full detail for one object by id (from game_objects / game_state.target): the game_objects fields plus los
     (always), inventory (grouped by section: count, rounds; capped at 50) / items / money / active_item for NPCs and
     corpses, inventory of containers, effective_radius / max_power for anomalies, parent_id when the object is inside
-    an inventory. Not online -> the alife server entity (offline: true). Unknown id -> object null."""
+    an inventory. Creatures add enemy {id, name, section, display} (engine best enemy), mental_state (stalkers:
+    free/danger/panic), danger (selected danger: attacked/enemy_sound/grenade/corpse/...); objects with xr_logic add
+    logic {scheme, logic (logic section), file (ini or <customdata>), settings (first 12 keys of the active section,
+    values cut at 120 chars)}. Script facts absent when unknown (offline objects get story_id only).
+    Not online -> the alife server entity (offline: true). Unknown id -> object null."""
     inst = get(instance)
     return await run(world_call, inst, "world.object", {"id": int(id)})
 
