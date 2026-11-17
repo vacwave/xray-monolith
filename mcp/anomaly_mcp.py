@@ -3072,6 +3072,26 @@ level.set_time_factor(x)
 return b, sticky
 '''
 
+# Clock jump like the game's own skips (fast travel, sleep): alife + environment time, surge/psi-storm managers told
+# (time_forwarded: no surge right after the jump), weather re-rolled for the new hour.
+TIME_ADVANCE_LUA = r'''
+if not level.present() then return -1 end
+local function clock() return string.format("%%04d-%%02d-%%02d %%02d:%%02d:%%02d", game.get_game_time():get(0, 0, 0, 0, 0,
+  0, 0)) end
+local mins = %d
+local t0, c0 = game.time(), clock()
+level.change_game_time(math.floor(mins / 1440), math.floor(mins %% 1440 / 60), mins %% 60)
+local notes = {}
+for _, m in ipairs({{"surge_manager", "get_surge_manager"}, {"psi_storm_manager", "get_psi_storm_manager"}}) do
+  local M = rawget(_G, m[1])
+  local ok, o = pcall(function() return M[m[2]]() end)
+  if ok and o then o.time_forwarded = true else notes[#notes + 1] = m[1] .. " not told (time_forwarded)" end
+end
+local ok, e = pcall(function() level_weathers.get_weather_manager():forced_weather_change() end)
+if not ok then notes[#notes + 1] = "weather not updated: " .. tostring(e) end
+return t0, c0, game.time(), clock(), table.concat(notes, "; ")
+'''
+
 
 def time_clock(inst):
     """Engine time state + game clock: time.get, then game time ms / game time factor via Lua (both main thread)."""
@@ -3098,10 +3118,38 @@ def time_pause(inst, on, timeout=10):
     return time_wait(inst, lambda s: s["applied"] == bool(on), timeout, "pause" if on else "resume")
 
 
-def time_run(inst, pause, sim_speed, clock_rate):
+def advance_minutes(v):
+    """Minutes from a number (minutes) or a string such as "90", "2h", "2h30m", "1d", "1.5h"."""
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        n = float(v)
+    else:
+        t = str(v).strip().lower().replace(" ", "")
+        if re.fullmatch(r"\d+(\.\d+)?", t):
+            n = float(t)
+        else:
+            parts = re.findall(r"(\d+(?:\.\d+)?)([dhm])", t)
+            if not parts or "".join(a + u for a, u in parts) != t:
+                raise ValueError(f"advance: cannot read {v!r} (minutes, or e.g. '2h30m', '1d', '45m')")
+            n = sum(float(a) * {"d": 1440, "h": 60, "m": 1}[u] for a, u in parts)
+    n = round(n)
+    if not 1 <= n <= 30 * 1440:
+        raise ValueError("advance must be 1 minute .. 30 days")
+    return n
+
+
+def time_run(inst, pause, sim_speed, clock_rate, advance=None):
     if inst.call("engine.heartbeat", timeout=5).get("loading"):
         raise RuntimeError("a level is loading; retry when it is done")
     out = {}
+    if advance is not None:
+        n = advance_minutes(advance)
+        res = inst.call("lua.exec", {"code": TIME_ADVANCE_LUA % n}, timeout=10)["results"]
+        if float(res[0]) < 0:
+            raise RuntimeError("advance needs a loaded level")
+        out["advance"] = {"minutes": n, "old_game_time": res[1], "new_game_time": res[3],
+                          "old_game_time_ms": int(float(res[0])), "new_game_time_ms": int(float(res[2]))}
+        if len(res) > 4 and res[4]:
+            out["advance"]["notes"] = res[4]
     if sim_speed is not None:
         if not 0.01 <= sim_speed <= 100:
             raise ValueError("sim_speed must be 0.01..100")
@@ -3122,7 +3170,7 @@ def time_run(inst, pause, sim_speed, clock_rate):
 
 @tool
 async def game_time(instance: str | None = None, pause: bool | None = None, sim_speed: float | None = None,
-                    clock_rate: float | None = None) -> dict:
+                    clock_rate: float | None = None, advance: str | float | None = None) -> dict:
     """Freeze / resume the game and set its speed. No arguments = report only.
 
     pause=True: MCP pause - world, AI, physics, scripts' updates and sounds stop; frames keep running, so
@@ -3134,11 +3182,15 @@ async def game_time(instance: str | None = None, pause: bool | None = None, sim_
     physics/AI get unreliable far from 1, sound pitch follows; restored on disconnect). clock_rate: game clock rate
     = in-game seconds per simulation second (level time factor; Anomaly default 6 from alife.ltx; surges/psi storms
     use their own and restore it; back to the default after a level change or load; not restored on disconnect;
-    clock_rate_before is returned). Result: mcp_paused, applied (in effect), paused (any
+    clock_rate_before is returned). advance: jump the game clock forward like fast travel / sleep (minutes as a
+    number, or "2h30m" / "1d" / "45m"; 1 min .. 30 days): alife + sky time, surge/psi-storm managers told
+    (time_forwarded, so no emission right after the jump; ones that were due show "recently occurred" PDA news),
+    weather re-rolled; NPCs/tasks just see the later time. Returns advance {minutes, old_game_time, new_game_time
+    (as in game_tasks received), old/new_game_time_ms}. Result: mcp_paused, applied (in effect), paused (any
     pause), main_menu, frame, time_global / time_async (simulation ms), time_factor (= sim_speed), game_time_ms,
     clock_rate, step_id / step_done / steps_left / step_dt_ms."""
     inst = get(instance)
-    return await run(time_run, inst, pause, sim_speed, clock_rate)
+    return await run(time_run, inst, pause, sim_speed, clock_rate, advance)
 
 
 def paused_around(inst, fn, *args):
