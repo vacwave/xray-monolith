@@ -387,9 +387,11 @@ CRenderTarget::CRenderTarget()
 	// DLSS picks the render size (overrides r4_render_scale); unavailable -> the r4_render_scale path
 	dlss_target = dlss_active = false;
 	dlss_mip_bias = 0.f;
+	// o.dx11_hdr10 is set at startup only, while vid_restart already builds the HDR10 swapchain from the cvar
+	const bool hdr10 = RImplementation.o.dx11_hdr10 || ps_r4_hdr10_on;
 	if (ps_r4_dlss != CDlss::MODE_OFF)
 	{
-		LPCSTR why = RImplementation.o.dx10_msaa ? "MSAA is on" : RImplementation.o.dx11_hdr10 ? "HDR10 is on" :
+		LPCSTR why = RImplementation.o.dx10_msaa ? "MSAA is on" : hdr10 ? "HDR10 is on" :
 			!RImplementation.o.ssfx_motionvectors ? "needs SSS motion vectors (shaders\\r3\\screenspace_mvectors.h)" : nullptr;
 		if (why)
 			Msg("! DLSS unavailable: %s", why);
@@ -401,7 +403,7 @@ CRenderTarget::CRenderTarget()
 
 	// Render resolution split: MSAA and HDR10 keep the output size
 	float render_scale = ps_r4_render_scale;
-	if (render_scale < 1.f && (RImplementation.o.dx10_msaa || RImplementation.o.dx11_hdr10))
+	if (render_scale < 1.f && (RImplementation.o.dx10_msaa || hdr10))
 	{
 		Msg("! r4_render_scale %.2f ignored: not supported with %s", render_scale, RImplementation.o.dx10_msaa ? "MSAA" : "HDR10");
 		render_scale = 1.f;

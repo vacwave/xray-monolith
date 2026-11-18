@@ -29,6 +29,18 @@ static NVSDK_NGX_PerfQuality_Value perf_quality(u32 mode)
 	}
 }
 
+// NGX log (any thread): only the DLSS snippet version and the preset NGX really uses (shows driver / NVIDIA app overrides)
+static void NVSDK_CONV ngx_log(const char* message, NVSDK_NGX_Logging_Level, NVSDK_NGX_Feature)
+{
+	if (!message || !(strstr(message, "snippet") || (strstr(message, "NgxDltss") && strstr(message, "Preset"))))
+		return;
+	string1024 line;
+	xr_strcpy(line, message);
+	for (size_t n = xr_strlen(line); n && (line[n - 1] == '\n' || line[n - 1] == '\r'); --n)
+		line[n - 1] = 0;
+	Msg("* NGX: %s", line);
+}
+
 bool CDlss::init()
 {
 	if (params)
@@ -61,7 +73,10 @@ bool CDlss::init()
 	wchar_t wlogs[_MAX_PATH];
 	MultiByteToWideChar(CP_ACP, 0, logs, -1, wlogs, _MAX_PATH);
 
-	NVSDK_NGX_Result res = NVSDK_NGX_D3D11_Init_with_ProjectID(dlss_project_id, NVSDK_NGX_ENGINE_TYPE_CUSTOM, "1.0", wlogs, HW.pDevice);
+	NVSDK_NGX_FeatureCommonInfo info = {};
+	info.LoggingInfo.LoggingCallback = ngx_log;
+	info.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_ON;
+	NVSDK_NGX_Result res = NVSDK_NGX_D3D11_Init_with_ProjectID(dlss_project_id, NVSDK_NGX_ENGINE_TYPE_CUSTOM, "1.0", wlogs, HW.pDevice, &info);
 	if (NVSDK_NGX_FAILED(res))
 	{
 		Msg("! DLSS unavailable: NGX init failed (0x%08x)%s", res, res == NVSDK_NGX_Result_FAIL_FeatureNotSupported ? ", GPU or driver not supported" : "");
@@ -124,7 +139,7 @@ void CDlss::release_feature()
 	eval_failures = 0;
 }
 
-// "default" = M on RTX 20/30 (device ids below Ada; K gives a broken frame there with LDR input, sdk.md), the driver's choice on newer GPUs
+// "default" = M on RTX 20/30 (device ids below Ada; K gives white / dark-blurred frames there, sdk.md), the driver's choice on newer GPUs
 u32 CDlss::preset_hint() const
 {
 	switch (ps_r4_dlss_preset)
