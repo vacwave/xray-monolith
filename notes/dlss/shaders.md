@@ -18,6 +18,12 @@ Source: reader report 2026-11-18 over enabled mods in `C:\GAMMA\profiles\G.A.M.M
 - TAA: ssfx_taa.ps (unjitter via `ssfx_jitter`, neighbourhood clamp), ssfx_taa_prepare.ps, ssfx_taa_sharp.ps.
 - Motion vectors: screenspace_mvectors.h (jitter applied there and in gbuffer_stage.h:141), included by ~60 .vs/.ps; ssfx_sky_mv; grass/tree prev bender arrays (deffer_grass.vs, deffer_tree_branch_bump-hq.vs).
 
+## SSS settings for tests (user 2026-11-18)
+- SSS is driven by MCM keys `ssfx_module/...` in axr_options.ltx `[options]` (its scripts push them into the `ssfx_*` cvars at runtime; user.ltx values are not the truth).
+- The user plays with everything at minimum: copy in `sss_mcm_user_min.ltx` (AO/IL/SSR/water/fog/bloom/motion blur intensities 0, SSS TAA `enabled_mcm = false`, jitter 0, volumetrics 0, interactive grass off). So in the user's setup `ssfx_jitter` is zero and SSS TAA never runs: the upscaler must bring its own jitter (D2).
+- Tests: two profiles. "user min" = that file (must look right and not regress). "SSS high" = same keys raised (intensities > 0, TAA on, SSR/AO/IL quality up) for D4 coverage. The user allows changing them freely for tests: edit the slot's private axr_options copy (engine redirect under `-mcp_port`, see `notes/gamestate.md`), never the mod's file in `C:\GAMMA\mods`.
+- User's real display: 3840x2160, `r__framelimit 120`, MSAA/SMAA/r2_aa off (C:\Anomaly\appdata\user.ltx). At 4K output DLSS costs ~3.5 ms (K) / 7.5 ms (M) on a 2080 Ti: do one perf check at 4K output, not only at the template's resolution.
+
 ## Scopes
 - 3DSS (410): lens shaders models_scope_reticle(.ps/_precise.ps), scope_3dss_common.h; sample s_image / s_position in screen space (`I.hpos.xy * screen_res.zw`), pixelate uses screen_res.
 - SDS (185) fakescope.ps: s_scope at `tc * (1, 0.5625)` (hard-coded 16:9), s_image at tc; no screen_res.

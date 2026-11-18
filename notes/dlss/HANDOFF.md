@@ -19,6 +19,7 @@ Written 2026-11-18 by the planning session. The user approved `PLAN.md` (D1-D9, 
 - DLSS preset default K on RTX 20/30; M/L opt-in. Direct NGX on D3D11, no Streamline.
 - Bridge may be borderless/windowed only if exclusive fullscreen is a problem: log it, note it.
 - Shader fixes go into our gamedata, never into `C:\GAMMA\mods` (read-only for us).
+- SSS test settings: the user's GAMMA has every SSS option at minimum (`sss_mcm_user_min.ltx`); test with that profile AND an "SSS high" one (see `shaders.md` "SSS settings for tests"). Changing them in the test slot is allowed.
 - Testing: all substeps of a goal first, one build, ONE live session per goal (its Test line). No test code in the repo; scripts in the scratchpad. Short checks only; the user tests in real use.
 
 ## SDK dependencies (CLAUDE.md: ask first)
