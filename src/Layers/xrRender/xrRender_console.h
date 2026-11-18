@@ -277,6 +277,7 @@ extern ECORE_API Fvector ps_r2_img_cg; // r2-only
 extern ECORE_API float ps_r4_atlas_resolution; // r4-only
 extern ECORE_API float ps_r4_render_scale; // r4-only
 extern ECORE_API int ps_r4_upscale_debug; // r4-only
+extern ECORE_API float ps_r4_upscale_sharpness; // r4-only
 extern ECORE_API u32 ps_r4_dlss; // r4-only
 extern ECORE_API u32 ps_r4_dlss_preset; // r4-only
 extern ECORE_API int ps_r4_atlas;

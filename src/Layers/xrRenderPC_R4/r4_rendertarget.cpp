@@ -1469,6 +1469,7 @@ CRenderTarget::~CRenderTarget()
 	xr_delete(b_combine);
 	xr_delete(b_upscale);
 	xr_delete(b_temporal);
+	xr_delete(b_sharpen);
 	xr_delete(b_luminance);
 	xr_delete(b_bloom);
 	xr_delete(b_accum_reflected);

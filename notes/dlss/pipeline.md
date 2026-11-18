@@ -64,3 +64,12 @@ Source: reader reports 2026-11-18 (not line-verified unless marked [checked]). P
 - MCP screenshots copy the back buffer before Present (see `notes/render.md`): must keep working with the bridge.
 - `r4_dx12_present 1`: `HW.m_pSwapChain` is a proxy over a D3D12 swapchain, back buffer = shared texture (see `bridge.md`). Note `CHW::CreateDevice` makes the D3D11 device on the default adapter (`D3D11CreateDevice(nullptr, ...)`), not on `m_pAdapter` [checked].
 - Gotcha: NGX's D3D11 evaluate restores the previous viewport, which is the render-size one from `phase_temporal_inputs`. After a DLSS evaluate, `phase_upscale` must set the output-size viewport again, otherwise every later pass draws into the top-left corner.
+
+## Sharpening (D10)
+- `r4_upscale_sharpness` (float 0-1, default 0 = no pass, runtime): `CRenderTarget::phase_sharpen` (r4_rendertarget_phase_sharpen.cpp, blender class inside the file) runs right after `phase_upscale` in phase_combine, at output size, before combine_2 / flares / `phase_pp` / 2D UI.
+- Runs on main-view frames whenever sharpness > 0: native without upscaler, `r4_render_scale` bilinear, DLSS/DLAA. Skipped on SVP (scope) frames (D5 decides) and under HDR10 (generic0 is FP16 above 1.0 there; RCAS limits assume LDR 0..1).
+- Source != destination: lazily created `rt_sharpen_src` (`$user$sharpen_src`, output size, generic0's format) = `CopyResource` of generic0; RCAS reads it and writes back into `rt_Generic_0`. Same code with and without the output twins (at native res generic0 is already output size).
+- Shader `r3\upscale_sharpen.ps` = AMD FidelityFX SDK 2.4.0 `FsrRcasF` (fsr1/ffx_fsr1.h, 32-bit, with the newer `lowerLimiterMultiplier`, passthrough alpha, no denoise), MIT header kept. Loads by pixel (SV_Position); off-screen taps read 0 = no sharpening on the border pixels.
+- Mapping as FSR2/3 (`sharpenessRemapped = 2 - 2s`): `rcas_con.x = 2^(2s - 2)`, so any value > 0 starts at ~0.25 of max (0 = pass off).
+- Frame generation: the HUD-less capture (`DX12Present_CaptureHudless`, r4_R_render.cpp right after `phase_combine`) already contains the sharpened image.
+- The 3D in-hand PDA screen is part of the scene (drawn before the slot), so it is sharpened with the world; 2D HUD / inventory are not (D10 test). Pass cost at 1080p native: not measurable (~0 ms, noisy).
