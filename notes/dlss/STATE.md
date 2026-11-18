@@ -1,17 +1,19 @@
 # DLSS branch STATE
 Scope: branch `dev-mt-mcp-dlss` (clone `dev-mt-mcp-dlss/`). All DLSS/FSR notes live in `notes/dlss/` only; do not touch `notes/STATE.md` / `MAP.md` (kept identical to `dev-mt-mcp`).
-Files: `STATE.md` (this, ≤20 lines, overwrite) · `HANDOFF.md` (run rules) · `PLAN.md` (decisions + goals D1-D9) · `pipeline.md` · `shaders.md` · `sdk.md`.
+Files: `STATE.md` (this, ≤20 lines, overwrite) · `BRIEFING.md` (morning summary for the user) · `HANDOFF.md` (run rules) · `PLAN.md` (goals D1-D9) · `pipeline.md` · `shaders.md` · `sdk.md` · `bridge.md`.
 
-Status 2026-11-18 evening: overnight unattended run STARTED. Worktrees `wt-dlss-a` (branch `dlss-a`) and `wt-dlss-b` (`dlss-b`) from c3c6aa64.
-Running: Dev A = D2 (temporal inputs) · Dev B = idle until D2 merges, then D8 phase 2 (inputs per `FrameGenInputs` in `dx12FrameGen.h`; Dev B adds the HUD-less hook `DX12Present_CaptureHudless()` after `Target->phase_combine()` in `r4_R_render.cpp` itself). Morning summary: `BRIEFING.md`.
-Queue: Dev A D1 → D2 → D3 → D4 → D5 → D6 · Dev B D7 → D8 (needs D1 + D2 merged) · then D9.
-Done: D7 `0f3f3b45` · D8 phase 1 `f0cc4f7a` (merged fd15e060) · D1 `28c655cb` (branch head after merges `1339888a`+; D1+D7 together first built by the D2 dev).
+Status: overnight unattended run in progress (started 2026-11-18). Worktrees `wt-dlss-a` (`dlss-a`), `wt-dlss-b` (`dlss-b`), both started their current goal from `ae2ddcdd`.
+Running: Dev A = D3 (DLSS upscaling) · Dev B = D8 phase 2 (FG inputs + interpolation; adds 2 call lines in `r4_R_render.cpp`).
+Queue: Dev A D3 → D4 → D5 → D6 · Dev B D8 phase 2 → (free) · then D9.
+Done (merged): D7 `0f3f3b45` · D1 `28c655cb` · D8 phase 1 `f0cc4f7a` · D2 `52c804e2`.
 Parked: -
-User orders at start (2026-11-18): machine is ours alone; usage limit → favour track A, continue B after; vanilla `C:\Anomaly` is the default test game (cheap, vanilla games may run in parallel), GAMMA only where the Test line needs it (one at a time, never next to another game); settings edits allowed (added `mcp__anomaly__*`, WebFetch/WebSearch, `C:\AnomalyMO2`, temp dir to `.claude/settings.json`).
-Decisions taken during the run:
-- Push: user now allows push/PR on this branch, but the SDK licence note ("no push until licences are added") still stands once D3/D8 add vendor files → coordinator does NOT push tonight; user decides in the morning.
-- Bridge on → exclusive fullscreen refused (forced borderless + log line), done in D8 phase 1.
-- Pre-existing `rs_screenmode windowed` crash in hidden MCP runs (`CHW::UpdateViews`): not fixed, reported in BRIEFING.
-For the user in the morning: see `BRIEFING.md`.
-SDK OK: YES for the DLSS SDK and the AMD FSR SDK (local/private use).
-Test GPU: RTX 2080 SUPER 8 GB (DLSS upscaling yes: preset K default, M/L heavy; DLSS frame generation no; FSR FG 3.1.x expected to run).
+User orders at start: machine is ours alone; usage limit → favour track A, continue B after; vanilla `C:\Anomaly` is the default test game (vanilla games may run in parallel), GAMMA only where needed (one at a time, never next to another game); settings edits allowed; chat output minimal, summary goes to `BRIEFING.md`.
+Decisions taken during the run (reasons in BRIEFING):
+- No push tonight (SDK licence note stands; user decides).
+- Bridge on → exclusive fullscreen refused (borderless + log line).
+- Forward/HUD pass stays before the upscale slot.
+- `set_xform_world` previous-matrix fix accepted (changes today's frame slightly for SSS users).
+- No SSS (vanilla) → upscaler / FG interpolation "unavailable"; DLSS + FG tests need GAMMA, serialized.
+- Gamedata db0 in `C:\Anomaly\db\mods` owned by Dev A; backup `.bak_pre_dlss` exists.
+For the user in the morning: `BRIEFING.md`.
+SDK OK: YES for DLSS SDK + AMD FSR SDK (local/private). Test GPU: RTX 2080 SUPER 8 GB.
