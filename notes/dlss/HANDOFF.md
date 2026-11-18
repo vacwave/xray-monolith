@@ -1,45 +1,46 @@
-# Handoff: overnight unattended run (final, 2026-11-18)
-The user approved `PLAN.md` (D1-D9, D9 soak ~10 min) and both SDKs, and wants an unattended overnight run. Nothing is coded yet. Read `STATE.md`, this file, then `PLAN.md`; `pipeline.md` / `shaders.md` / `sdk.md` are the facts for briefs (reader reports: verify a line ref before relying on it).
+# Handoff for a fresh session (written 2026-11-19 ~01:00, run paused for the usage limit)
+Read in this order: `STATE.md` → this file → `BRIEFING.md` (what the user is told) → `PLAN.md` (goals D1-D13). Facts for briefs: `pipeline.md`, `shaders.md`, `sdk.md`, `bridge.md` (dev reports: verify a line ref before relying on it).
+The user wants the run to continue unattended from 02:25 Helsinki time; chat output minimal, everything important goes into `BRIEFING.md`.
 
-## Roles (user's orders)
-- Coordinator (main session) = master coordinator only. It does NOT write or edit engine code, not even trivial fixes. It briefs, answers dev questions, merges, keeps `STATE.md`, and investigates hard problems (read code, logs, crash dumps, docs; use `reader`s / web research) to hand the dev a solution.
-- Devs = 2 × agent type `dev` (Opus 5.5, medium effort: already set in `.claude/agents/dev.md`; do not override). A dev that is confused or missing a decision stops and asks the coordinator (its report); the coordinator answers the SAME dev with SendMessage. Devs do not guess on design questions.
-- Coders = as in `dev.md` (dev's choice for mechanical steps).
-- Playtesters = spawned by the dev, one per goal test: agent type `general-purpose` with `model: sonnet` and `effort: low` (user's order: Sonnet 5.5 low; it has the `mcp__anomaly__*` game tools, devs do not). Brief: exe path, game root (vanilla / `C:\GAMMA`), settings profile, the goal's Test line as a checklist, cvars to toggle, what "broken" looks like. It returns pass/fail per check with screenshot file paths and log lines, changes no code, stops every game it launched. The dev reads the report, fixes, and re-tests only the failed checks (max 2 extra sessions per goal, then ask the coordinator).
+## Where things stand
+- Branch `dev-mt-mcp-dlss` (clone `dev-mt-mcp-dlss\`), local only, head = last "notes" commit after merge `4e933260`. Merged: D1 `28c655cb`, D2 `52c804e2`, D3 `02b2874f`, D7 `0f3f3b45`, D8 `f0cc4f7a` + `115cf528`, D10 `84c8950e`, D11 `e17b4262`, D4 partial `ceeeadff`.
+- Worktrees `D:\projects\xray-monolith-mcp\wt-dlss-a` (branch `dlss-a`) and `wt-dlss-b` (`dlss-b`). BOTH HOLD UNCOMMITTED WORK plus a `notes\plan.md` written by the paused dev (state, half-done edits, exact next step). Do not reset, clean or re-create them.
+- The old dev agents belong to the previous session and cannot be messaged from a new one: spawn a fresh `dev` per worktree and tell it to start from `notes\plan.md` + `git diff`.
+- No game was running at the pause. Deployed test builds: `C:\Anomaly\bin_dlss_a`, `C:\Anomaly\bin_dlss_b`. Gamedata: `C:\Anomaly\db\mods\00_modded_exes_gamedata.db0` (Dev A's, backup `.bak_pre_dlss`), `01_dlss_b_test.db0` (Dev B's extra files: sharpen shader, menu script, text).
 
-## Start
-1. Start the session in `D:\projects\xray-monolith-mcp` (the `.claude` agents and settings live there). Repo = `dev-mt-mcp-dlss\`, branch `dev-mt-mcp-dlss` (local only). Check it is clean.
-2. One worktree + branch per dev: `git -C dev-mt-mcp-dlss worktree add ..\wt-dlss-a -b dlss-a` (and `wt-dlss-b` / `dlss-b`). Copy the untracked `src\3rd party\optick-git` into each (see `notes/STATE.md` "Parallel devs").
-3. Brief both devs at once: goal, files/symbols from the notes, decisions, constraints, owned files, out of scope, the goal's Test line, and the overrides below.
+## Open work, in order
+### Dev A (worktree a): finish D4, then D13, then D5
+1. **Blocker: DLSS intermittently outputs a dark / white / magenta whole frame** (presets M and K). Known so far:
+   - Not K-specific; exposure, IsHDR, output format, alpha, reset flag, driver override, NaN vectors are ruled out (`sdk.md`).
+   - Uncommitted in the worktree: D3D `ClearState` + `RCache` invalidate before and after the NGX evaluate in `phase_dlss`, a guard that restores swapped output RTs at frame start, temporary debug views `r4_upscale_debug 3/4` (raw DLSS output; 4 adds a per-frame log). Remove 3/4 before the commit.
+   - Result: after the FIRST DLSS start ~180 frames were clean (preset M, performance). After a SECOND `vid_restart` bad frames are back at once (16 of 21) and after closing the inventory / Esc menu. So the trigger is the DLSS feature being released and created again.
+   - Next step: one short run, `vid_restart` twice, `r4_upscale_debug 4`: is the raw DLSS output already bad, and what does the per-frame log say. In parallel read the release / recreate order in `r4_dlss.cpp` against the render-target teardown on `vid_restart`.
+   - Coordinator's suspects to hand the dev: (a) `create_feature` makes a new `exposure` texture every time and the old one is never released; `params` is one long-lived NGX parameter object that keeps resource pointers and hint values from the previous feature / from probing (stale pointers after the RTs were rebuilt) → allocate fresh parameters (or reset every resource entry) per feature and release everything in `release_feature`; (b) the feature is released while the context still has its resources bound, or created before the new RTs exist; (c) two features alive (old one not released) fighting over history; (d) `rt_dlss_mv` / `rt_dlss_depth` are created once in `begin_temporal_frame` (`if (!rt_dlss_mv)`) - check they are destroyed and re-created at the new size on `vid_restart`, and that `history_reset` is set for the first frame of the new feature.
+   - Pass = zero bad frames over walk / turn / strafe, after launch, after 3 `vid_restart`, after inventory and Esc menu, with sharpening on and off. Then test K again: if clean, `default` → K on RTX 20/30 (original decision), M/L opt-in.
+   - If it cannot be fixed in 2 more test sessions: park D4 sign-off, keep DLSS behind its cvar as experimental, write the evidence into `sdk.md` and `BRIEFING.md`, go on with what does not depend on it.
+2. Effect walk (never done properly): AnomalyMO2 for water, SSR, AO/IL, sun, motion blur, DOF, anomalies, glass, night with flashlight, emission; short exclusive GAMMA part for night vision, grading, gasmask drops, thermal, Cordon burst. Record defects in `shaders.md`, fix only cheap engine-side causes. Decided: no DLSS bias mask (presets J/K/L/M ignore it); particle / water / glass vectors stay a known defect.
+3. D13 (overlays after the upscale) and D5 (scopes): specs in `PLAN.md`. D5 inputs: every scope frame falls back to bilinear, history resets every frame while a scope is active, sharpening skips scope frames, frame generation runs in reset mode while aiming.
 
-## Overrides of `dev.md` / CLAUDE.md for this branch (put them in every brief)
-- Notes: facts and gotchas go into `notes/dlss/*.md` only; do not touch `notes/MAP.md`, `notes/STATE.md` or other area files. `notes/plan.md` as scratch is fine (delete before the commit).
-- Verify: DX11-AVX build in the worktree, deploy exe + pdb (+ SDK DLLs) to `C:\Anomaly\bin_dlss_a` / `bin_dlss_b`, NOT `C:\Anomaly\bin` (that exe belongs to the MCP branch and its testers). Gamedata changed → back up `C:\Anomaly\db\mods\00_modded_exes_gamedata.db0` once as `.bak_pre_dlss` before overwriting, and report it.
-- Testing: all substeps of the goal first, one build, ONE playtester session for the goal's Test line. No test code in the repo; scripts in the scratchpad.
-- No push. One commit per goal on the dev's branch.
+### Dev B (worktree b): finish D6, then D12
+1. D6 options menu is implemented, uncommitted: status console commands `r4_dlss_status`, `r4_framegen_status`, `r4_reflex_status`; `gamedata\scripts\modxml_options_dlss.script`; `gamedata\configs\text\eng\ui_mm_dlss.xml`. Works: entries can be set, console values match, "AA ignored while DLSS is on" line shows. Still wrong: the "unavailable / reason" lines render as empty gaps; one launch reported Reflex as "not an NVIDIA GPU" on the RTX 2080 SUPER. Then: rebuild, repack `01_dlss_b_test.db0`, finish the test (plain `C:\Anomaly`, AnomalyMO2, one short GAMMA launch: menu opens, GAMMA's options intact, no script errors), one commit.
+2. D12 separate UI texture for frame generation: the UI is already its own pass drawn after the upscale, so this should be mostly redirecting that pass to its own target and compositing; park with findings if it grows.
 
-## Tracks (disjoint files)
-- Dev A (renderer): D1 → D2 → D3 → D4 → D5 → D6. Owns `src\Layers\xrRenderPC_R4\*`, `src\Layers\xrRender\rendertarget_phase_*`, `Blender_Recorder_StandartBinding.cpp`, `xrRender_console.*`, blenders, gamedata.
-- Dev B (presentation): D7 → D8. Owns `src\Layers\xrRenderDX10\dx10HW.*`, `src\Layers\xrRender\dxRenderDeviceRender.*`, new bridge / frame-generation files, project files for them. Its cvars: one registration line each in `xrRender_console.cpp` (the only shared file; a dev fixes that conflict when rebasing).
-- D8 needs D1 + D2 merged (jitter, `rt_dlss_mv`, depth, reset flag). If D7 finishes first: merge it; B rebases after D2 lands and meanwhile does only the D8 steps that do not need them (SDK add, swapchain swap, HUD-less image).
-- D9: after everything is merged, one dev + one playtester (~10 min GAMMA session).
-- Merge after every goal: coordinator merges the dev branch into `dev-mt-mcp-dlss` (git only; a conflict goes back to the dev), the next goal's dev starts from the new head. A fresh `dev` per goal, same worktree.
+### After both tracks: D9
+One ~10 min GAMMA soak with DLSS + frame generation + sharpening on (if the DLSS blocker is fixed; else frame generation at native res), fix what it finds. Then the wrap-up below.
 
-## Decisions already made (do not ask the user)
-- Cvar names in `PLAN.md` are final: `r4_render_scale`, `r4_upscale_debug`, `r4_dlss`, `r4_dlss_preset`, `r4_dx12_present`, `r4_framegen`. All default off; off = today's frame and present path.
-- DLSS on → SSS TAA and SMAA skipped, MSAA refused with a log line. HDR10 + DLSS or + bridge: if it needs extra design, disable the feature under HDR10 with a log line and note it.
-- DLSS preset default K on RTX 20/30; M/L opt-in. Direct NGX on D3D11, no Streamline.
-- Bridge may be borderless/windowed only if exclusive fullscreen is a problem: log it, note it.
-- Shader fixes go into our gamedata, never into `C:\GAMMA\mods` (read-only for us).
-- SSS test settings: the user's GAMMA has every SSS option at minimum (`sss_mcm_user_min.ltx`); test with that profile AND an "SSS high" one (`shaders.md` "SSS settings for tests"). Changing them in the test slot is allowed.
-- SDKs: both approved (STATE "SDK OK"). Official sources only (github.com/NVIDIA/DLSS, github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK), versions from `sdk.md`; headers/libs under `sdk\`, DLLs copied next to the exe; never modify or rename vendor DLLs. Local/private use: nothing is pushed or published.
+## Wrap-up ("done when")
+All goals merged or parked with reasons → final DX11-AVX build clean at the branch head → pack ALL gamedata into `00_modded_exes_gamedata.db0`, deploy, delete `C:\Anomaly\db\mods\01_dlss_b_test.db0` (ours) → copy exe + pdb + `nvngx_dlss.dll` + the two FSR DLLs to `C:\Anomaly\bin_dlss` → remove worktrees and dev branches (only after their work is merged) → `STATE.md` + `BRIEFING.md` final.
 
-## Unattended rules
-- No questions to the user. Unclear point → the coordinator takes the smaller, reversible option and writes the decision and why into `STATE.md`. Hard blocker on a goal → park it with the reason, continue with the next goal that does not depend on it; never work around a deliberate block (denied permission, protected file).
-- Never: push, open PRs/issues, delete files outside the worktrees, touch `C:\GAMMA\mods`, change `dev-mt-mcp\`, edit settings, agents or CLAUDE.md.
-- Games: 8 GB VRAM. Only one GAMMA game at a time across everything and never next to a vanilla one: a playtester checks `game_list` first and waits instead of launching a second. Do not build into an exe that is running. Frame-time numbers only count when nobody else is building or running a game (else mark them "noisy").
-- A dev that fails the same step 3 times, or has used its 2 extra test sessions, stops and reports. The coordinator investigates and re-briefs once with the solution or a narrower scope; if that fails too, park the goal.
-- After every merged goal update `notes/dlss/STATE.md` (≤20 lines): done goals + commit, parked goals + reason, decisions taken, what the user must test or answer in the morning.
+## Roles and rules (user's orders, still valid)
+- Coordinator (main session): briefs, merges (git only; code conflicts go back to the dev; conflicts in `notes/` it may resolve itself, keeping both sides), keeps `STATE.md` / `BRIEFING.md`, investigates hard problems by reading code / logs / docs and hands the dev a solution. It does NOT edit engine code.
+- Devs: agent type `dev`, one per goal, working only in its worktree with absolute paths. Playtesters are spawned by the dev: `general-purpose`, `model: sonnet`, `effort: low` (they have the `mcp__anomaly__*` tools, devs do not). One build, one playtest session per goal, max 2 extra sessions for failed checks, then stop and report; the coordinator re-briefs once, then parks.
+- Tests: plain `C:\Anomaly` (no SSS → upscaler / interpolation "unavailable", used for the fallback checks) and the vanilla MO2 profile `C:\AnomalyMO2` (SSS + MCM, the default `game_launch` root) for most work; these may run in parallel. GAMMA `C:\GAMMA` only for GAMMA-only checks, short, one at a time and never next to any other game (tester checks `game_list` first and waits). Do not build into a running exe. Uncap fps (`r__framelimit 0`) before frame-time numbers; mark numbers "noisy" if anything else ran.
+- Deploy: `C:\Anomaly\bin_dlss_a` / `bin_dlss_b`, never `C:\Anomaly\bin`. Dev A owns the `00_...db0`; Dev B packs only its own files into `01_dlss_b_test.db0`. Overwrite archives only when no game runs.
+- Notes: `notes/dlss/*.md` only; never touch `notes/MAP.md`, `notes/STATE.md` or other area files on this branch. No test code in the repo; scratch under `C:\Users\vacwave\AppData\Local\Temp\claude`.
+- Git: one commit per goal on the dev branch; coordinator merges into `dev-mt-mcp-dlss` after each goal and fast-forwards the worktree. `x64/` is gitignored (`git add -f` for SDK libs). Never commit `src\3rd party\optick-git\.git_from_copy`.
+- Push: the user allowed push / PR on this branch on 2026-11-18, but the branch now contains vendor SDK files (DLSS, FidelityFX, NvAPI) and the user's earlier rule was "no push until the licences are sorted". Coordinator's decision: do not push; the user decides.
+- Unattended: no questions to the user; unclear → smaller, reversible option + a line in `STATE.md`. Never: write to `C:\GAMMA\mods`, change `dev-mt-mcp\`, edit agents or CLAUDE.md, delete files we did not create. Usage limit close → favour track A, continue B after.
+- Cvars (final names): `r4_render_scale`, `r4_upscale_debug`, `r4_dlss`, `r4_dlss_preset`, `r4_upscale_sharpness`, `r4_dx12_present`, `r4_framegen`, `r4_reflex`. All default off; off = today's frame and present path.
 
-## Done when
-D1-D9 merged or parked with reasons, final DX11-AVX build clean at the branch head (`_build\_game\bin_dbg\AnomalyDX11AVX.exe`, also copied with the SDK DLLs to `C:\Anomaly\bin_dlss`), worktrees and dev branches removed, STATE has the morning summary.
+## For the user (kept in BRIEFING.md)
+Generated frames were never seen by a tool (screenshots show rendered frames only); Reflex shows no measurable gain; preset choice and the Reflex-vs-engine frame limiter are open choices; a pre-existing `rs_screenmode windowed` crash in hidden MCP runs is documented, not fixed.
