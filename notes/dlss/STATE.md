@@ -3,9 +3,9 @@ Scope: branch `dev-mt-mcp-dlss` (clone `dev-mt-mcp-dlss/`). All DLSS/FSR notes l
 Files: `STATE.md` (this, ≤20 lines, overwrite) · `BRIEFING.md` (morning summary for the user) · `HANDOFF.md` (run rules) · `PLAN.md` (goals D1-D9) · `pipeline.md` · `shaders.md` · `sdk.md` · `bridge.md`.
 
 Status: overnight unattended run in progress (started 2026-11-18). Worktrees `wt-dlss-a` (`dlss-a`), `wt-dlss-b` (`dlss-b`), both started their current goal from `ae2ddcdd`.
-Running: Dev A = D3 (DLSS upscaling) · Dev B = D8 phase 2 (FG inputs + interpolation; adds 2 call lines in `r4_R_render.cpp`).
-Queue: Dev A D3 → D4 → D5 → D6 · Dev B D8 phase 2 → (free) · then D9.
-Done (merged): D7 `0f3f3b45` · D1 `28c655cb` · D8 phase 1 `f0cc4f7a` · D2 `52c804e2`.
+Running: Dev A = D3 (DLSS upscaling; its branch started at `ae2ddcdd`, will conflict slightly with D8 phase 2 in `r4_rendertarget_phase_combine.cpp` `begin_temporal_frame` + `r4_R_render.cpp` → conflict goes back to the dev) · Dev B = idle.
+Queue: after D3 merges: Dev A D4 → D5 · Dev B D6 (menu) · then D9 (also: gate the 10 s FG stats log line behind `r4_upscale_debug`).
+Done (merged): D7 `0f3f3b45` · D1 `28c655cb` · D8 phase 1 `f0cc4f7a` · D2 `52c804e2` · D8 phase 2 `115cf528` (head `d07c9749`+).
 Parked: -
 User orders at start: machine is ours alone; usage limit → favour track A, continue B after; vanilla `C:\Anomaly` is the default test game (vanilla games may run in parallel), GAMMA only where needed (one at a time, never next to another game); settings edits allowed; chat output minimal, summary goes to `BRIEFING.md`.
 Decisions taken during the run (reasons in BRIEFING):
@@ -14,6 +14,7 @@ Decisions taken during the run (reasons in BRIEFING):
 - Forward/HUD pass stays before the upscale slot.
 - `set_xform_world` previous-matrix fix accepted (changes today's frame slightly for SSS users).
 - No SSS (vanilla) → upscaler / FG interpolation "unavailable"; DLSS + FG tests need GAMMA, serialized.
+- User (during the run): SSS + MCM now enabled in the vanilla MO2 profile `C:\AnomalyMO2` → DLSS / FG tests run there (parallel OK), GAMMA only for one short final check per goal.
 - Gamedata db0 in `C:\Anomaly\db\mods` owned by Dev A; backup `.bak_pre_dlss` exists.
 For the user in the morning: `BRIEFING.md`.
 SDK OK: YES for DLSS SDK + AMD FSR SDK (local/private). Test GPU: RTX 2080 SUPER 8 GB.
