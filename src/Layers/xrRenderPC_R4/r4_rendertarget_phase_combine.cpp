@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "../../xrEngine/igame_persistent.h"
 #include "../../xrEngine/environment.h"
+#include "../../xrEngine/igame_level.h"
 
 #include "../xrRender/dxEnvironmentRender.h"
 
@@ -41,6 +42,7 @@ float hclip(float v, float dim) { return 2.f * v / dim - 1.f; }
 // Render resolution split: scene passes run at render size with their own depth buffer
 void CRenderTarget::begin_scene_size()
 {
+	begin_temporal_frame();
 	scene_size_active = true;
 	if (!render_scaled())
 		return;
@@ -122,6 +124,106 @@ void CRenderTarget::end_output_size()
 		output_zb = nullptr;
 	}
 	scene_size_active = false;
+}
+
+static float halton(u32 i, u32 base)
+{
+	float f = 1.f, r = 0.f;
+	for (; i; i /= base)
+	{
+		f /= float(base);
+		r += f * float(i % base);
+	}
+	return r;
+}
+
+// Per main-view frame: decide whether the temporal inputs run, advance the jitter, set the history-reset flag
+void CRenderTarget::begin_temporal_frame()
+{
+	bool want = upscaler_enabled || ps_r4_upscale_debug != 0;
+	if (want && (!RImplementation.o.ssfx_motionvectors || RImplementation.o.dx10_msaa))
+	{
+		if (!temporal_unavailable_logged)
+			Msg("! temporal upscaler inputs unavailable: %s", RImplementation.o.dx10_msaa ? "MSAA is on" : "needs SSS motion vectors (shaders\\r3\\screenspace_mvectors.h)");
+		temporal_unavailable_logged = true;
+		want = false;
+	}
+
+	// Scope (SVP) frames keep their own camera: no jitter, no inputs, and the next main frame drops history
+	temporal_active = want && !Device.m_SecondViewport.IsSVPFrame();
+	if (!temporal_active)
+	{
+		history_reset_pending = true;
+		return;
+	}
+
+	if (!rt_dlss_mv)
+	{
+		rt_dlss_mv.create(r2_RT_dlss_mv, render_width, render_height, D3DFMT_G16R16F);
+		rt_dlss_depth.create(r2_RT_dlss_depth, render_width, render_height, D3DFMT_R32F);
+		s_temporal.create(b_temporal, "r2\\temporal");
+	}
+
+	// Skipped frames (load, menu, SVP frame), another level, or a camera jump (teleport / cut)
+	if (temporal_last_frame + 1 != Device.dwFrame || temporal_level != g_pGameLevel || Device.vCameraPosition.distance_to(temporal_cam_pos) > 5.f)
+		history_reset_pending = true;
+	history_reset = history_reset_pending;
+	history_reset_pending = false;
+	temporal_last_frame = Device.dwFrame;
+	temporal_level = g_pGameLevel;
+	temporal_cam_pos.set(Device.vCameraPosition);
+
+	// Halton(2,3) in [-0.5, 0.5) render pixels, phase count 8 x (output / render)^2 as DLSS recommends
+	const float ratio = float(Device.dwWidth) / float(render_width);
+	const u32 phases = clampr(u32(iFloor(8.f * ratio * ratio + .5f)), 8u, 64u);
+	const u32 idx = (temporal_frame++ % phases) + 1;
+	jitter_px_prev.set(jitter_px);
+	jitter_px.set(halton(idx, 2) - .5f, halton(idx, 3) - .5f);
+}
+
+static void draw_screen_quad(float w, float h, u32 vb_stride, ref_geom& geom)
+{
+	const u32 C = color_rgba(255, 255, 255, 255);
+	u32 Offset;
+	FVF::TL* pv = (FVF::TL*)RCache.Vertex.Lock(4, vb_stride, Offset);
+	pv->set(0, h, EPS_S, 1.f, C, 0.f, 1.f); pv++;
+	pv->set(0, 0, EPS_S, 1.f, C, 0.f, 0.f); pv++;
+	pv->set(w, h, EPS_S, 1.f, C, 1.f, 1.f); pv++;
+	pv->set(w, 0, EPS_S, 1.f, C, 1.f, 0.f); pv++;
+	RCache.Vertex.Unlock(4, vb_stride);
+	RCache.set_Geometry(geom);
+	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+}
+
+// Upscaler inputs at render size, before the upscale slot: rt_dlss_mv + rt_dlss_depth
+void CRenderTarget::phase_temporal_inputs()
+{
+	if (!temporal_active)
+		return;
+
+	PIX_EVENT(phase_temporal_inputs);
+	u_setrt(rt_dlss_mv, rt_dlss_depth, nullptr, nullptr);
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	RCache.set_Element(s_temporal->E[0]);
+	RCache.set_c("upscale_params", float(render_width), float(render_height), Device.mProject._33, Device.mProject._43);
+	draw_screen_quad(float(render_width), float(render_height), g_combine->vb_stride, g_combine);
+}
+
+// r4_upscale_debug: 1 motion vectors, 2 depth, drawn over the final image at output size
+void CRenderTarget::phase_upscale_debug()
+{
+	if (!temporal_active || !ps_r4_upscale_debug)
+		return;
+
+	PIX_EVENT(phase_upscale_debug);
+	u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT, NULL, NULL, NULL);
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	RCache.set_Element(s_temporal->E[1]);
+	RCache.set_c("upscale_params", float(render_width), float(render_height), Device.mProject._33, Device.mProject._43);
+	RCache.set_c("upscale_debug", float(ps_r4_upscale_debug), 0.f, 0.f, 0.f);
+	draw_screen_quad(float(Device.dwWidth), float(Device.dwHeight), g_combine->vb_stride, g_combine);
 }
 
 void CRenderTarget::phase_combine()
@@ -692,6 +794,7 @@ void CRenderTarget::phase_combine()
 		HW.pContext->CopyResource(rt_ssfx_prevPos->pTexture->surface_get(), rt_Position->pTexture->surface_get());
 
 	// Upscale slot: render size above, output size below
+	phase_temporal_inputs();
 	phase_upscale();
 
 	// PP enabled ?
@@ -848,6 +951,7 @@ void CRenderTarget::phase_combine()
 		PIX_EVENT_C(phase_pp, dx10_marker_post);
 		phase_pp();
 	}
+	phase_upscale_debug();
 
 	//	Re-adapt luminance
 	RCache.set_Stencil(FALSE);

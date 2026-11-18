@@ -1181,6 +1181,14 @@ static class ssfx_jitter : public R_constant_setup
 		float JitterY = 0;
 
 #if defined(USE_DX11)
+		const CRenderTarget* T = RImplementation.Target;
+		if (T && T->temporal_active && T->scene_size_active)
+		{
+			// Upscaler jitter: render pixels (+y down) to the clip-space offset the SSS shaders add (+y up)
+			RCache.set_c(C, 2.f * T->jitter_px.x / float(T->render_width), -2.f * T->jitter_px.y / float(T->render_height), ps_ssfx_taa.x, ps_ssfx_taa.w);
+			return;
+		}
+
 		if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa)
 		{
 			static Fvector2 TAA_Offset[4] = 
