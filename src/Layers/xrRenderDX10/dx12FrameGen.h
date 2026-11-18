@@ -22,6 +22,10 @@ struct FrameGenInputs
     float camera_far = 0.f;
     float camera_fov_y = 0.f;                 // radians
     float frame_time_ms = 0.f;
+    float camera_pos[3] = {};                 // world space
+    float camera_up[3] = {};
+    float camera_right[3] = {};
+    float camera_forward[3] = {};
 };
 
 class CFrameGen
@@ -39,16 +43,23 @@ public:
     void DestroySwapChain();
     void WaitForPresents();
 
-    // before the swapchain Present; list is still open (prepare goes into it)
-    void OnPresent(ID3D12GraphicsCommandList* list, ID3D12Resource* hudless, const FrameGenInputs& in);
+    // before the swapchain Present; list is still open (prepare goes into it). Returns true when interpolating.
+    bool OnPresent(ID3D12GraphicsCommandList* list, ID3D12Resource* hudless, const FrameGenInputs& in);
+    bool HasContext() const { return m_fg_ctx != nullptr; }
+    // generated frames handed to the swapchain since the last call
+    UINT TakeGeneratedCount();
 
 private:
     void Configure(bool enabled, ID3D12Resource* hudless);
+    bool Prepare(ID3D12GraphicsCommandList* list, const FrameGenInputs& in);
+    void LogMemory();
 
     void* m_sc_ctx = nullptr; // ffxContext of the swapchain
     void* m_fg_ctx = nullptr; // ffxContext of frame generation
     IDXGISwapChain4* m_sc = nullptr; // not owned
     bool m_enabled = false;
+    bool m_legacy_prepare = false; // provider without ffxDispatchDescFrameGenerationPrepareV2
+    bool m_prepare_failed_logged = false;
     UINT64 m_frame_id = 0;
 };
 #endif
