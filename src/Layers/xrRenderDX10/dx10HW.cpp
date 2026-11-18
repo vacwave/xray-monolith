@@ -19,6 +19,11 @@
 
 #include "StateManager\dx10SamplerStateCache.h"
 #include "StateManager\dx10StateCache.h"
+#include "dx12PresentBridge.h"
+
+#ifdef USE_DX11
+extern int ps_r4_dx12_present;
+#endif
 
 #ifndef _EDITOR
 void fill_vid_mode_list(CHW* _hw);
@@ -582,7 +587,16 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
     _RELEASE(context);
 
     // create swapchain
-    R_CHK(m_pFactory->CreateSwapChainForHwnd(pDevice, m_hWnd, &sd, &sd_fullscreen, NULL, &m_pSwapChain));
+    m_pSwapChain = nullptr;
+    if (ps_r4_dx12_present)
+    {
+        if (ps_r4_hdr10_on)
+            Msg("! r4_dx12_present: not supported with HDR10 output, using the DX11 swapchain");
+        else
+            m_pSwapChain = DX12Present_Create(pDevice, pContext, m_pFactory, m_hWnd, sd, sd_fullscreen);
+    }
+    if (!m_pSwapChain)
+        R_CHK(m_pFactory->CreateSwapChainForHwnd(pDevice, m_hWnd, &sd, &sd_fullscreen, NULL, &m_pSwapChain));
 
     // setup colorspace
     // HDR10 (U10 output) -> DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
