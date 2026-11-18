@@ -4,6 +4,8 @@
 #include "../../xrEngine/igame_level.h"
 
 #include "../xrRender/dxEnvironmentRender.h"
+#include "../xrRenderDX10/StateManager/dx10SamplerStateCache.h"
+#include "r4_dlss.h"
 
 #define STENCIL_CULL 0
 
@@ -42,7 +44,11 @@ float hclip(float v, float dim) { return 2.f * v / dim - 1.f; }
 // Render resolution split: scene passes run at render size with their own depth buffer
 void CRenderTarget::begin_scene_size()
 {
+	upscaler_enabled = dlss_target;
 	begin_temporal_frame();
+	dlss_active = dlss_target && temporal_active;
+	// DLSS: textures sampled for the output resolution (DLSS guide 3.5)
+	SSManager.SetMipLODBias(ps_r__tf_Mipbias + dlss_mip_bias);
 	scene_size_active = true;
 	if (!render_scaled())
 		return;
@@ -53,16 +59,27 @@ void CRenderTarget::begin_scene_size()
 	set_viewport_size(HW.pContext, float(render_width), float(render_height));
 }
 
-// Upscale slot: bilinear copy render -> output size, then the combine tail runs at output size
+// Upscale slot: DLSS or bilinear copy render -> output size, then the combine tail runs at output size
 void CRenderTarget::phase_upscale()
 {
 	scene_size_active = false;
-	if (!render_scaled())
+	if (!render_scaled() && !dlss_target)
 		return;
 
 	PIX_EVENT(phase_upscale);
-	HW.pBaseZB = output_zb;
-	output_zb = nullptr;
+	if (render_scaled())
+	{
+		HW.pBaseZB = output_zb;
+		output_zb = nullptr;
+	}
+
+	if (dlss_active && phase_dlss())
+	{
+		// NGX restores the render-size viewport of the last pass
+		set_viewport_size(HW.pContext, float(Device.dwWidth), float(Device.dwHeight));
+		swap_output_rts(false);
+		return;
+	}
 
 	u_setrt(rt_Generic_0_out, nullptr, nullptr, nullptr);
 	set_viewport_size(HW.pContext, float(Device.dwWidth), float(Device.dwHeight));
@@ -89,6 +106,20 @@ void CRenderTarget::phase_upscale()
 
 	// The scene image (generic0) and the combine target (albedo) continue at output size
 	swap_output_rts(false);
+}
+
+// DLSS evaluate: generic0 (render size) -> generic0_out (output size); false = use the bilinear copy
+bool CRenderTarget::phase_dlss()
+{
+	PIX_EVENT(phase_dlss);
+	// No target may stay bound while NGX reads the inputs and writes the output (NGX restores the rest of the context)
+	for (u32 i = 0; i < 4; ++i)
+		RCache.set_RT(nullptr, i);
+	RCache.set_ZB(nullptr);
+	HW.pContext->OMSetRenderTargets(0, nullptr, nullptr);
+
+	return Dlss.evaluate(rt_Generic_0->pSurface, rt_Generic_0_out->pSurface, rt_dlss_depth->pSurface, rt_dlss_mv->pSurface,
+		render_width, render_height, Device.dwWidth, Device.dwHeight, jitter_px, history_reset);
 }
 
 static void swap_rt_pair(ref_rt& a, ref_rt& b)
@@ -778,14 +809,15 @@ void CRenderTarget::phase_combine()
 	}
 
     //SMAA
-	if (ps_smaa_quality)
+	// DLSS replaces SMAA and SSS TAA
+	if (ps_smaa_quality && !dlss_active)
 	{
         //PIX_EVENT(SMAA);
         phase_smaa();
         RCache.set_Stencil(FALSE);
     }    
 	
-	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0)
+	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0 && !dlss_active)
 	{
 		phase_ssfx_taa();
 	}

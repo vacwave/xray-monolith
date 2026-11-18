@@ -51,9 +51,16 @@ Source: reader reports 2026-11-18 (not line-verified unless marked [checked]). P
 - Debug `r4_upscale_debug` 1/2 (`phase_upscale_debug`, after `phase_pp`, over `HW.pBaseRT` at output size, shader `upscale_debug.ps`): 1 = mv as rg = 0.5 + 0.5·mv/(|mv|+8) (grey = still), 2 = view distance z/(z+20) (black near, white sky).
 - `set_xform_world` now also sets the previous world matrix to the same value (R_Backend_Runtime.h): rigid non-skinned dynamic objects used to get prev world = identity (garbage vectors); skinned (SkeletonX) and sky set their own.
 
+## DLSS (D3)
+- `CDlss Dlss` (Layers/xrRenderPC_R4/r4_dlss.*): NGX init lazily on the first target that wants DLSS, `Dlss.shutdown()` in `CRender::destroy`; the feature is created on the first evaluate and released in `~CRenderTarget` (so vid_restart recreates it). Unavailable reasons are logged once as `! DLSS unavailable: ...` (not NVIDIA, DLL missing, NGX init, driver, MSAA, HDR10, no SSS motion vectors).
+- `r4_dlss` (off/dlaa/quality/balanced/performance/ultra_performance) and `r4_dlss_preset` (default/k/m/l; default = M below device id 0x2600 = RTX 20/30 (K broken there, sdk.md), NGX default above) are read in the `CRenderTarget` ctor = applied on vid_restart. DLSS on: render size = NGX optimal size (overrides `r4_render_scale`), `r3_msaa` forced off in `CRender::create` with a log line, HDR10 = DLSS off.
+- `dlss_target` (this target) / `dlss_active` (this frame = `dlss_target && temporal_active`); `begin_scene_size` sets `upscaler_enabled = dlss_target` and the sampler mip bias `r__tf_mipbias + log2(render/output) - 1` (every frame through `SSManager.SetMipLODBias`, no-op when unchanged).
+- DLSS on → output twins exist even at DLAA (render = output size); `rt_Generic_0_out` gets a UAV. `phase_upscale` → `phase_dlss` (unbinds all RTs through RCache, evaluates generic0 → generic0_out with `rt_dlss_depth`, `rt_dlss_mv`, `jitter_px`, `history_reset`, flag MVLowRes, exposure texture 1.0) → `swap_output_rts`; evaluate false (SVP frame, failure) → D1 bilinear copy. 30 failures in a row or a failed create = bilinear until vid_restart. SMAA and SSS TAA skipped while `dlss_active`.
+
 ## Swapchain / present / pacing
 - `CHW::CreateDevice` Layers/xrRenderDX10/dx10HW.cpp:303; `CreateSwapChainForHwnd` :585, FLIP_DISCARD, 2 buffers, R8G8B8A8_UNORM or R10G10B10A2 (HDR10, :588-607); ResizeBuffers :752/:872/:879/:1121/:1167.
 - Present: dxRenderDeviceRender.cpp:485 (interval from vsync, ALLOW_TEARING when windowed + VRR).
 - Limiter `r__framelimit`: busy-wait in xrEngine/device.cpp:501-524 (ECO_RENDER). No Reflex / NVAPI latency calls (nvapi.lib is linked only).
 - MCP screenshots copy the back buffer before Present (see `notes/render.md`): must keep working with the bridge.
 - `r4_dx12_present 1`: `HW.m_pSwapChain` is a proxy over a D3D12 swapchain, back buffer = shared texture (see `bridge.md`). Note `CHW::CreateDevice` makes the D3D11 device on the default adapter (`D3D11CreateDevice(nullptr, ...)`), not on `m_pAdapter` [checked].
+- Gotcha: NGX's D3D11 evaluate restores the previous viewport, which is the render-size one from `phase_temporal_inputs`. After a DLSS evaluate, `phase_upscale` must set the output-size viewport again, otherwise every later pass draws into the top-left corner.

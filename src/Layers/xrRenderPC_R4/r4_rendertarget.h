@@ -256,6 +256,10 @@ public:
 	u32 temporal_frame, temporal_last_frame;
 	Fvector temporal_cam_pos;
 	const void* temporal_level;
+	// DLSS (r4_dlss): set up with this target (render size from NGX), evaluated this frame
+	bool dlss_target, dlss_active;
+	float dlss_mip_bias;
+	bool phase_dlss();
 
 	ref_shader s_ssfx_dumb;
 
