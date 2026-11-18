@@ -384,3 +384,16 @@ void CBlender_combine_msaa::Compile(CBlender_Compile& C)
 	}
 	::Render->m_MSAASample = -1;
 }
+
+void CBlender_upscale::Compile(CBlender_Compile& C)
+{
+	IBlender::Compile(C);
+
+	C.r_Pass("stub_notransform_t", "copy_nomsaa", FALSE, FALSE, FALSE);
+	C.r_dx10Texture("s_generic", r2_RT_generic0);
+	// copy_nomsaa samples with smp_nofilter: switch that stage to bilinear
+	const u32 s = C.r_dx10Sampler("smp_nofilter");
+	if (s != u32(-1))
+		C.i_dx10Filter(s, D3DTEXF_LINEAR, D3DTEXF_NONE, D3DTEXF_LINEAR);
+	C.r_End();
+}

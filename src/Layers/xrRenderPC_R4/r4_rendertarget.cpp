@@ -185,8 +185,8 @@ void CRenderTarget::u_stencil_optimize(eStencilOptimizeMode eSOM)
 	VERIFY(RImplementation.o.nvstencil);
 	//RCache.set_ColorWriteEnable	(FALSE);
 	u32 Offset;
-	float _w = float(Device.dwWidth);
-	float _h = float(Device.dwHeight);
+	float _w = float(scr_width());
+	float _h = float(scr_height());
 	u32 C = color_rgba(255, 255, 255, 255);
 	float eps = 0;
 	float _dw = 0.5f;
@@ -252,8 +252,8 @@ void CRenderTarget::u_compute_texgen_jitter(Fmatrix& m_Texgen_J)
 	m_Texgen_J.mul(m_TexelAdjust, RCache.xforms.m_wvp);
 
 	// rescale - tile it
-	float scale_X = float(Device.dwWidth) / float(TEX_jitter);
-	float scale_Y = float(Device.dwHeight) / float(TEX_jitter);
+	float scale_X = float(scr_width()) / float(TEX_jitter);
+	float scale_Y = float(scr_height()) / float(TEX_jitter);
 	//float	offset			= (.5f / float(TEX_jitter));
 	m_TexelAdjust.scale(scale_X, scale_Y, 1.f);
 	//m_TexelAdjust.translate_over(offset,	offset,	0	);
@@ -383,6 +383,21 @@ CRenderTarget::CRenderTarget()
 	dwAccumulatorClearMark = 0;
 	dxRenderDeviceRender::Instance().Resources->Evict();
 
+	// Render resolution split: MSAA and HDR10 keep the output size
+	float render_scale = ps_r4_render_scale;
+	if (render_scale < 1.f && (RImplementation.o.dx10_msaa || RImplementation.o.dx11_hdr10))
+	{
+		Msg("! r4_render_scale %.2f ignored: not supported with %s", render_scale, RImplementation.o.dx10_msaa ? "MSAA" : "HDR10");
+		render_scale = 1.f;
+	}
+	render_width = render_scale < 1.f ? _max(u32(iFloor(float(Device.dwWidth) * render_scale + .5f)), 1u) : Device.dwWidth;
+	render_height = render_scale < 1.f ? _max(u32(iFloor(float(Device.dwHeight) * render_scale + .5f)), 1u) : Device.dwHeight;
+	scene_size_active = false;
+	output_zb = nullptr;
+	output_rts_swapped = output_generic1_swapped = false;
+	if (render_scaled())
+		Msg("* render size %ux%u, output size %ux%u", render_width, render_height, Device.dwWidth, Device.dwHeight);
+
 	// Blenders
 	b_occq = xr_new<CBlender_light_occq>();
 	b_accum_mask = xr_new<CBlender_accum_direct_mask>();
@@ -403,6 +418,7 @@ CRenderTarget::CRenderTarget()
 	}
 	b_luminance = xr_new<CBlender_luminance>();
 	b_combine = xr_new<CBlender_combine>();
+	b_upscale = xr_new<CBlender_upscale>();
 	b_ssao = xr_new<CBlender_SSAO_noMSAA>();
 	///////////////////////////////////lvutner
 	b_sunshafts = xr_new<CBlender_sunshafts>();
@@ -486,7 +502,7 @@ CRenderTarget::CRenderTarget()
 	}
 	//	NORMAL
 	{
-		u32 w = Device.dwWidth, h = Device.dwHeight;
+		u32 w = render_width, h = render_height;
 		rt_Position.create(r2_RT_P, w, h, D3DFMT_A16B16G16R16F, SampleCount);
 
 		if (RImplementation.o.dx10_msaa)
@@ -538,6 +554,14 @@ CRenderTarget::CRenderTarget()
 			rt_Generic.create(r2_RT_generic, w, h, D3DFMT_A8R8G8B8, 1);
 		}
 
+		if (render_scaled())
+		{
+			rt_scene_zb.create("$user$scene_zb", w, h, D3DFMT_D24S8);
+			rt_Color_out.create("$user$albedo_out", Device.dwWidth, Device.dwHeight, rt_Color->fmt, 1);
+			rt_Generic_0_out.create("$user$generic0_out", Device.dwWidth, Device.dwHeight, rt_Generic_0->fmt, 1);
+			rt_Generic_1_out.create("$user$generic1_out", Device.dwWidth, Device.dwHeight, rt_Generic_1->fmt, 1);
+		}
+
 		rt_fakescope.create(r2_RT_scopert, w, h, D3DFMT_A8R8G8B8, 1); //crookr fakescope
 
 		//--DSR-- HeatVision_start
@@ -553,11 +577,11 @@ CRenderTarget::CRenderTarget()
 		rt_dof.create(r2_RT_dof, w, h, RImplementation.o.dx11_hdr10 ? D3DFMT_A16B16G16R16F : D3DFMT_A8R8G8B8);
 
 		if (RImplementation.o.dx11_hdr10) {
-			rt_secondVP.create(r2_RT_secondVP, w, h, D3DFMT_A2R10G10B10, 1); //--#SM+#-- +SecondVP+ // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
-			rt_ui_pda.create(r2_RT_ui, w, h, D3DFMT_A2R10G10B10); // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
+			rt_secondVP.create(r2_RT_secondVP, Device.dwWidth, Device.dwHeight, D3DFMT_A2R10G10B10, 1); //--#SM+#-- +SecondVP+ // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
+			rt_ui_pda.create(r2_RT_ui, Device.dwWidth, Device.dwHeight, D3DFMT_A2R10G10B10); // NOTE: this is a hack to use DXGI R10G10B10A2_UNORM
 		} else {
-			rt_secondVP.create(r2_RT_secondVP, w, h, D3DFMT_A8R8G8B8, 1); //--#SM+#-- +SecondVP+
-			rt_ui_pda.create(r2_RT_ui, w, h, D3DFMT_A8R8G8B8);
+			rt_secondVP.create(r2_RT_secondVP, Device.dwWidth, Device.dwHeight, D3DFMT_A8R8G8B8, 1); //--#SM+#-- +SecondVP+
+			rt_ui_pda.create(r2_RT_ui, Device.dwWidth, Device.dwHeight, D3DFMT_A8R8G8B8);
 		}
 
 		if (ps_r4_atlas)
@@ -913,8 +937,8 @@ CRenderTarget::CRenderTarget()
 
 	//SMAA
 	{
-		u32 w = Device.dwWidth;
-		u32 h = Device.dwHeight;
+		u32 w = render_width;
+		u32 h = render_height;
 
 		rt_smaa_edgetex.create(r2_RT_smaa_edgetex, w, h, D3DFMT_A8R8G8B8);
 		rt_smaa_blendtex.create(r2_RT_smaa_blendtex, w, h, D3DFMT_A8R8G8B8);
@@ -951,13 +975,13 @@ CRenderTarget::CRenderTarget()
 		u32 h = 0;
 		if (RImplementation.o.ssao_half_data)
 		{
-			w = Device.dwWidth / 2;
-			h = Device.dwHeight / 2;
+			w = render_width / 2;
+			h = render_height / 2;
 		}
 		else
 		{
-			w = Device.dwWidth;
-			h = Device.dwHeight;
+			w = render_width;
+			h = render_height;
 		}
 
 		D3DFORMAT fmt = HW.Caps.id_vendor == 0x10DE ? D3DFMT_R32F : D3DFMT_R16F;
@@ -986,7 +1010,7 @@ CRenderTarget::CRenderTarget()
 	// HDAO
 	if (RImplementation.o.ssao_hdao && RImplementation.o.ssao_ultra)
 	{
-		u32 w = Device.dwWidth, h = Device.dwHeight;
+		u32 w = render_width, h = render_height;
 		rt_ssao_temp.create(r2_RT_ssao_temp, w, h, D3DFMT_R16F, 1, true);
 		s_hdao_cs.create(b_hdao_cs, "r2\\ssao");
 		if (RImplementation.o.dx10_msaa)
@@ -1003,6 +1027,8 @@ CRenderTarget::CRenderTarget()
 			D3DDECL_END()
 		};
 		s_combine.create(b_combine, "r2\\combine");
+		if (render_scaled())
+			s_upscale.create(b_upscale, "r2\\upscale");
 		s_combine_volumetric.create("combine_volumetric");
 		s_combine_dbg_0.create("effects\\screen_set", r2_RT_smap_surf);
 		s_combine_dbg_1.create("effects\\screen_set", r2_RT_luminance_t8);
@@ -1408,6 +1434,7 @@ CRenderTarget::~CRenderTarget()
 
 	// Blenders
 	xr_delete(b_combine);
+	xr_delete(b_upscale);
 	xr_delete(b_luminance);
 	xr_delete(b_bloom);
 	xr_delete(b_accum_reflected);
@@ -1494,8 +1521,8 @@ void CRenderTarget::reset_light_marker(bool bResetStencil)
 	if (bResetStencil)
 	{
 		u32 Offset;
-		float _w = float(Device.dwWidth);
-		float _h = float(Device.dwHeight);
+		float _w = float(scr_width());
+		float _h = float(scr_height());
 		u32 C = color_rgba(255, 255, 255, 255);
 		float eps = 0;
 		float _dw = 0.5f;

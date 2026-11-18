@@ -38,6 +38,92 @@ void CRenderTarget::DoAsyncScreenshot()
 
 float hclip(float v, float dim) { return 2.f * v / dim - 1.f; }
 
+// Render resolution split: scene passes run at render size with their own depth buffer
+void CRenderTarget::begin_scene_size()
+{
+	scene_size_active = true;
+	if (!render_scaled())
+		return;
+
+	// Every scene pass binds HW.pBaseZB; point it at the render-size depth until the upscale slot
+	output_zb = HW.pBaseZB;
+	HW.pBaseZB = rt_scene_zb->pZRT;
+	set_viewport_size(HW.pContext, float(render_width), float(render_height));
+}
+
+// Upscale slot: bilinear copy render -> output size, then the combine tail runs at output size
+void CRenderTarget::phase_upscale()
+{
+	scene_size_active = false;
+	if (!render_scaled())
+		return;
+
+	PIX_EVENT(phase_upscale);
+	HW.pBaseZB = output_zb;
+	output_zb = nullptr;
+
+	u_setrt(rt_Generic_0_out, nullptr, nullptr, nullptr);
+	set_viewport_size(HW.pContext, float(Device.dwWidth), float(Device.dwHeight));
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+
+	const float w = float(Device.dwWidth);
+	const float h = float(Device.dwHeight);
+	Fvector2 p0, p1;
+	p0.set(.5f / w, .5f / h);
+	p1.set((w + .5f) / w, (h + .5f) / h);
+	const u32 C = color_rgba(255, 255, 255, 255);
+	u32 Offset;
+	FVF::TL* pv = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, Offset);
+	pv->set(0, h, EPS_S, 1.f, C, p0.x, p1.y); pv++;
+	pv->set(0, 0, EPS_S, 1.f, C, p0.x, p0.y); pv++;
+	pv->set(w, h, EPS_S, 1.f, C, p1.x, p1.y); pv++;
+	pv->set(w, 0, EPS_S, 1.f, C, p1.x, p0.y); pv++;
+	RCache.Vertex.Unlock(4, g_combine->vb_stride);
+
+	RCache.set_Element(s_upscale->E[0]);
+	RCache.set_Geometry(g_combine);
+	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+
+	// The scene image (generic0) and the combine target (albedo) continue at output size
+	swap_output_rts(false);
+}
+
+static void swap_rt_pair(ref_rt& a, ref_rt& b)
+{
+	std::swap(a, b);
+	// Shaders bind the "$user$" texture by name: it follows the RT now in use
+	std::swap(a->pTexture, b->pTexture);
+	a->pTexture->surface_set(a->pSurface);
+	b->pTexture->surface_set(b->pSurface);
+}
+
+void CRenderTarget::swap_output_rts(bool generic1)
+{
+	swap_rt_pair(rt_Color, rt_Color_out);
+	swap_rt_pair(rt_Generic_0, rt_Generic_0_out);
+	if (generic1)
+		swap_rt_pair(rt_Generic_1, rt_Generic_1_out);
+	output_rts_swapped = !output_rts_swapped;
+	output_generic1_swapped = generic1;
+	// Cached texture slots still hold the old views: an empty list unbinds them all
+	STextureList no_textures;
+	RCache.set_Textures(&no_textures);
+}
+
+// Back to the scene targets and the output depth buffer (end of frame / menu)
+void CRenderTarget::end_output_size()
+{
+	if (output_rts_swapped)
+		swap_output_rts(output_generic1_swapped);
+	if (output_zb)
+	{
+		HW.pBaseZB = output_zb;
+		output_zb = nullptr;
+	}
+	scene_size_active = false;
+}
+
 void CRenderTarget::phase_combine()
 {
 	PIX_EVENT_C(phase_combine, dx10_marker_combine);
@@ -260,8 +346,8 @@ void CRenderTarget::phase_combine()
 		*/
 
 		// Fill VB
-		float scale_X = float(Device.dwWidth) / float(TEX_jitter);
-		float scale_Y = float(Device.dwHeight) / float(TEX_jitter);
+		float scale_X = float(scr_width()) / float(TEX_jitter);
+		float scale_Y = float(scr_height()) / float(TEX_jitter);
 
 		// Fill vertex buffer
 		FVF::TL* pv = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, Offset);
@@ -354,8 +440,8 @@ void CRenderTarget::phase_combine()
 		else
 			u_setrt(rt_ssfx_temp, 0, 0, 0);
 
-		float w = float(Device.dwWidth);
-		float h = float(Device.dwHeight);
+		float w = float(scr_width());
+		float h = float(scr_height());
 
 		// Render Scale
 		set_viewport_size(HW.pContext, w / ps_ssfx_water.x, h / ps_ssfx_water.x);
@@ -605,6 +691,9 @@ void CRenderTarget::phase_combine()
 	if (ssfx_PrevPos_Requiered)
 		HW.pContext->CopyResource(rt_ssfx_prevPos->pTexture->surface_get(), rt_Position->pTexture->surface_get());
 
+	// Upscale slot: render size above, output size below
+	phase_upscale();
+
 	// PP enabled ?
 	//	Render to RT texture to be able to copy RT even in windowed mode.
 	BOOL PP_Complex = u_need_PP() | (BOOL)RImplementation.m_bMakeAsyncSS;
@@ -617,12 +706,12 @@ void CRenderTarget::phase_combine()
 	if (RImplementation.o.dx10_msaa)
 	{
 		if (PP_Complex) u_setrt(rt_Generic, 0, 0, HW.pBaseZB); // LDR RT
-		else u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
+		else u_setrt(scr_width(), scr_height(), HW.pBaseRT,NULL,NULL, HW.pBaseZB);
 	}
 	else
 	{
 		if (PP_Complex) u_setrt(rt_Color, 0, 0, HW.pBaseZB); // LDR RT
-		else u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
+		else u_setrt(scr_width(), scr_height(), HW.pBaseRT,NULL,NULL, HW.pBaseZB);
 	}
 	//. u_setrt				( Device.dwWidth,Device.dwHeight,HW.pBaseRT,NULL,NULL,HW.pBaseZB);
 	RCache.set_CullMode(CULL_NONE);
@@ -645,8 +734,8 @@ void CRenderTarget::phase_combine()
 			Fvector4 uv6;
 		};
 
-		float _w = float(Device.dwWidth);
-		float _h = float(Device.dwHeight);
+		float _w = float(scr_width());
+		float _h = float(scr_height());
 		float ddw = 1.f / _w;
 		float ddh = 1.f / _h;
 		p0.set(.5f / _w, .5f / _h);
@@ -809,8 +898,8 @@ void CRenderTarget::phase_combine()
 	/*
 	if (0)		{
 		u32		C					= color_rgba	(255,255,255,255);
-		float	_w					= float(Device.dwWidth)/3;
-		float	_h					= float(Device.dwHeight)/3;
+		float	_w					= float(scr_width())/3;
+		float	_h					= float(scr_height())/3;
 
 		// draw light-spheres
 #ifdef DEBUG

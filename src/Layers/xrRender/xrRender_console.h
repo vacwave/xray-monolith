@@ -275,6 +275,7 @@ extern ECORE_API float ps_r2_img_gamma; // r2-only
 extern ECORE_API float ps_r2_img_saturation; // r2-only
 extern ECORE_API Fvector ps_r2_img_cg; // r2-only
 extern ECORE_API float ps_r4_atlas_resolution; // r4-only
+extern ECORE_API float ps_r4_render_scale; // r4-only
 extern ECORE_API int ps_r4_atlas;
 extern ECORE_API int ps_r4_atlas_width;
 extern ECORE_API int ps_r4_atlas_height;
