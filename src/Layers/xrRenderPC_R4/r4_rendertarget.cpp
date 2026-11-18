@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "r4_dlss.h"
 #include "../xrRender/resourcemanager.h"
 #include "blender_light_occq.h"
 #include "blender_light_mask.h"
@@ -383,6 +384,21 @@ CRenderTarget::CRenderTarget()
 	dwAccumulatorClearMark = 0;
 	dxRenderDeviceRender::Instance().Resources->Evict();
 
+	// DLSS picks the render size (overrides r4_render_scale); unavailable -> the r4_render_scale path
+	dlss_target = dlss_active = false;
+	dlss_mip_bias = 0.f;
+	if (ps_r4_dlss != CDlss::MODE_OFF)
+	{
+		LPCSTR why = RImplementation.o.dx10_msaa ? "MSAA is on" : RImplementation.o.dx11_hdr10 ? "HDR10 is on" :
+			!RImplementation.o.ssfx_motionvectors ? "needs SSS motion vectors (shaders\\r3\\screenspace_mvectors.h)" : nullptr;
+		if (why)
+			Msg("! DLSS unavailable: %s", why);
+		else
+			dlss_target = Dlss.render_size(Device.dwWidth, Device.dwHeight, render_width, render_height);
+		if (dlss_target)
+			dlss_mip_bias = log2f(float(render_width) / float(Device.dwWidth)) - 1.f;
+	}
+
 	// Render resolution split: MSAA and HDR10 keep the output size
 	float render_scale = ps_r4_render_scale;
 	if (render_scale < 1.f && (RImplementation.o.dx10_msaa || RImplementation.o.dx11_hdr10))
@@ -390,8 +406,11 @@ CRenderTarget::CRenderTarget()
 		Msg("! r4_render_scale %.2f ignored: not supported with %s", render_scale, RImplementation.o.dx10_msaa ? "MSAA" : "HDR10");
 		render_scale = 1.f;
 	}
-	render_width = render_scale < 1.f ? _max(u32(iFloor(float(Device.dwWidth) * render_scale + .5f)), 1u) : Device.dwWidth;
-	render_height = render_scale < 1.f ? _max(u32(iFloor(float(Device.dwHeight) * render_scale + .5f)), 1u) : Device.dwHeight;
+	if (!dlss_target)
+	{
+		render_width = render_scale < 1.f ? _max(u32(iFloor(float(Device.dwWidth) * render_scale + .5f)), 1u) : Device.dwWidth;
+		render_height = render_scale < 1.f ? _max(u32(iFloor(float(Device.dwHeight) * render_scale + .5f)), 1u) : Device.dwHeight;
+	}
 	scene_size_active = false;
 	output_zb = nullptr;
 	output_rts_swapped = output_generic1_swapped = false;
@@ -565,11 +584,13 @@ CRenderTarget::CRenderTarget()
 			rt_Generic.create(r2_RT_generic, w, h, D3DFMT_A8R8G8B8, 1);
 		}
 
-		if (render_scaled())
+		if (render_scaled() || dlss_target)
 		{
-			rt_scene_zb.create("$user$scene_zb", w, h, D3DFMT_D24S8);
+			if (render_scaled())
+				rt_scene_zb.create("$user$scene_zb", w, h, D3DFMT_D24S8);
 			rt_Color_out.create("$user$albedo_out", Device.dwWidth, Device.dwHeight, rt_Color->fmt, 1);
-			rt_Generic_0_out.create("$user$generic0_out", Device.dwWidth, Device.dwHeight, rt_Generic_0->fmt, 1);
+			// DLSS writes its output through a UAV
+			rt_Generic_0_out.create("$user$generic0_out", Device.dwWidth, Device.dwHeight, rt_Generic_0->fmt, 1, dlss_target);
 			rt_Generic_1_out.create("$user$generic1_out", Device.dwWidth, Device.dwHeight, rt_Generic_1->fmt, 1);
 		}
 
@@ -1038,7 +1059,7 @@ CRenderTarget::CRenderTarget()
 			D3DDECL_END()
 		};
 		s_combine.create(b_combine, "r2\\combine");
-		if (render_scaled())
+		if (render_scaled() || dlss_target)
 			s_upscale.create(b_upscale, "r2\\upscale");
 		s_combine_volumetric.create("combine_volumetric");
 		s_combine_dbg_0.create("effects\\screen_set", r2_RT_smap_surf);
@@ -1387,6 +1408,7 @@ void CRenderTarget::phase_ui_3d_icons_postprocess()
 
 CRenderTarget::~CRenderTarget()
 {
+	Dlss.release_feature();
 	_RELEASE(t_ss_async);
 
 	// Textures

@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "r4.h"
+#include "r4_dlss.h"
 #include "../xrRender/fbasicvisual.h"
 #include "../../xrEngine/xr_object.h"
 #include "../../xrEngine/CustomHUD.h"
@@ -402,7 +403,12 @@ void CRender::create()
 
 	//	MSAA option dependencies
 	o.dx10_msaa = ps_r3_msaa && !o.dx11_hdr10;
-	o.dx10_msaa_samples = o.dx11_hdr10 ? 1 : (1 << ps_r3_msaa);
+	if (o.dx10_msaa && ps_r4_dlss)
+	{
+		Msg("! r3_msaa ignored: DLSS (r4_dlss) is on");
+		o.dx10_msaa = false;
+	}
+	o.dx10_msaa_samples = o.dx10_msaa ? (1 << ps_r3_msaa) : 1;
 
 	o.dx10_msaa_opt = ps_r2_ls_flags.test(R3FLAG_MSAA_OPT);
 	o.dx10_msaa_opt = o.dx10_msaa_opt && o.dx10_msaa && (HW.FeatureLevel >= D3D_FEATURE_LEVEL_10_1)
@@ -554,6 +560,7 @@ void CRender::destroy()
 	HWOCC.occq_destroy();
 	xr_delete(Models);
 	xr_delete(Target);
+	Dlss.shutdown();
 	PSLibrary.OnDestroy();
 	Device.seqFrame.Remove(this);
 	Device.ModelDefferClear = nullptr;
