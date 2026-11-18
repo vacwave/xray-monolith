@@ -832,6 +832,7 @@ void CRenderTarget::phase_combine()
 	// Upscale slot: render size above, output size below
 	phase_temporal_inputs();
 	phase_upscale();
+	phase_sharpen();
 
 	// PP enabled ?
 	//	Render to RT texture to be able to copy RT even in windowed mode.

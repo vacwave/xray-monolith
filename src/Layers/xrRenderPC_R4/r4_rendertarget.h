@@ -260,6 +260,11 @@ public:
 	bool dlss_target, dlss_active;
 	float dlss_mip_bias;
 	bool phase_dlss();
+	// RCAS sharpening (r4_upscale_sharpness) after the upscale slot, created on first use
+	ref_rt rt_sharpen_src; // output-size copy of generic0 the pass reads
+	ref_shader s_sharpen;
+	IBlender* b_sharpen = nullptr;
+	void phase_sharpen();
 
 	ref_shader s_ssfx_dumb;
 
