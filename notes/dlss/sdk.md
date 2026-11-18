@@ -24,3 +24,8 @@ Source: web research agent 2026-11-18 (URLs = where it read them; "inference" = 
 - OptiScaler: D3D11on12 path costs "up to 10-15%"; its FG breaks Steam/RTSS overlays.
 - Not found: measured latency / fence cost of shared-handle interop.
 - Driver FG (NVIDIA Smooth Motion RTX 40/50, AMD AFMF Radeon only): not usable on the 2080 Super.
+
+## FSR SDK in the repo (D8)
+- FSR SDK v2.4.0 (tag v2.4.0, 2026-10-28) from github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK `archive/refs/tags/v2.4.0.zip` (the release has no separate assets; the zip holds the signed DLLs in `Kits/FidelityFX/signedbin`).
+- In repo: headers `sdk\include\FidelityFX\{api,framegeneration}\include\` (SDK layout kept, the headers include each other relatively), DLLs `sdk\binaries\FidelityFX\amd_fidelityfx_loader_dx12.dll` + `amd_fidelityfx_framegeneration_dx12.dll` (Authenticode valid, FG DLL file version 4.0.2.4555, unmodified), licence `docs/license.md` copied to both folders as `license.md`. Upscaler/denoiser/VK DLLs and the loader .lib not taken (runtime loading).
+- Header versions: FG swapchain DX12 4.0.0, FG 4.0.2; runtime picks the provider per GPU (non-RDNA4 -> FG swapchain 3.1.7, FG 3.1.6). Requires typed UAV load + R16G16B16A16_UNORM.

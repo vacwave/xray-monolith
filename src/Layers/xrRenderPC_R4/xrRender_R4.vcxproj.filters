@@ -1107,6 +1107,9 @@
     <ClCompile Include="..\xrRenderDX10\dx12PresentBridge.cpp">
       <Filter>Refactored\HW</Filter>
     </ClCompile>
+    <ClCompile Include="..\xrRenderDX10\dx12FrameGen.cpp">
+      <Filter>Refactored\HW</Filter>
+    </ClCompile>
     <ClCompile Include="..\xrRender\HWCaps.cpp">
       <Filter>Refactored\HW</Filter>
     </ClCompile>
