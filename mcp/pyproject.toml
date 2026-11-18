@@ -1,0 +1,16 @@
+[project]
+name = "anomaly-mcp"
+version = "0.1.0"
+description = "MCP supervisor that launches and drives X-Ray Monolith (Stalker Anomaly) game instances"
+requires-python = ">=3.11"
+dependencies = ["mcp>=2.3,<3"]
+
+[project.scripts]
+anomaly-mcp = "anomaly_mcp:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["anomaly_mcp"]

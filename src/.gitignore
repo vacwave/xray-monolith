@@ -1,0 +1,17 @@
+# exclude binaries and temporary files
+ipch/
+
+# User-specific files
+*.suo
+*.sdf
+*.opensdf
+*.user
+
+# Visual Studio profiler
+*.psess
+*.vsp
+*.vspx
+
+!.editorconfig
+!/.clang-format
+!/.clang-format-ignore

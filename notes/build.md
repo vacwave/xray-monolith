@@ -1,0 +1,12 @@
+# Build & packing
+- Output: `$(SolutionDir)..\_build\_game\bin_dbg\` (Common.props:13,20) → `_build\_game\bin_dbg\AnomalyDX11AVX.exe`.
+- `src\3rd party` is on the global IncludePath (Common.props:19): header-only libs need no vcxproj edits.
+- ws2_32.lib is linked only via `#pragma comment` (optick-git, xrEngine/mcp_server.cpp).
+- Pack: `compressor\! compress_gamedata.cmd` runs `xrCompress.exe gamedata -ltx build_patch.ltx -pack -strong -1024 -db`; output likely `gamedata.db0` (unverified) → rename `00_modded_exes_gamedata.db0` → `C:\Anomaly\db\mods\`.
+- gamedata/: configs, levels, materials, meshes, scripts, shaders.
+- Check build output via Get-Item/ls, not Read (Read on _build is denied). Get-Item on _build may also be blocked; Copy-Item to C:\Anomaly\bin works, then check there.
+- C:\Anomaly user.ltx is a low-settings baseline with r__framelimit 30; uncap it (r__framelimit 0) before any FPS test.
+- Smoke run: Start-Process C:\Anomaly\bin\AnomalyDX11AVX.exe -WorkingDirectory C:\Anomaly; CloseMainWindow() shuts down cleanly; log C:\Anomaly\appdata\logs\xray_<user>.log.
+- Engine is one static exe (xrCore etc. linked in): only AnomalyDX11AVX.exe + .pdb change in bin_dbg.
+- Blocked duplicate instance (presence mutex) exits within seconds with code 0; detect by quick exit, not code.
+- Parallel smoke runs: each dev copies C:\Anomaly\bin to its own C:\Anomaly\bin_<tag> with its exe+pdb and passes `game_launch(exe=...)`; never run/overwrite C:\Anomaly\bin\AnomalyDX11AVX.exe then.

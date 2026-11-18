@@ -1,0 +1,36 @@
+#pragma once
+
+// MCP input injection (input.run / input.status / input.release_all): timed scripts of key, mouse and look ops
+// run per frame at the end of CInput::OnFrame and delivered like real input (CurrentIR()->IR_On*).
+namespace mcp_input
+{
+	struct game_hooks
+	{
+		// action (bind name or alias) or key name -> dik (MOUSE_1.. for mouse buttons); false sets err (with the valid names)
+		bool (*resolve)(LPCSTR name, bool action, int& dik, xr_string& err);
+		// dik -> key name for status output
+		LPCSTR (*key_name)(int dik);
+		// rotate the actor camera (radians, + = right / up); false when there is no actor
+		bool (*look)(float yaw, float pitch);
+		// MCP UI cursor in UI space (1024x768): current position; move there like a real mouse move; give it back
+		bool (*cursor_get)(float& x, float& y);
+		bool (*cursor_move)(float x, float y);
+		void (*cursor_release)();
+	};
+
+	// Called by xrGame at app start; registers the methods (no-op without -mcp_port)
+	ENGINE_API void init(const game_hooks& hooks);
+	// Per-frame driver from xrGame (nav move_to): called in input frames only (frozen while MCP-paused outside steps)
+	// with the input clock delta, before held keys get their hold events
+	ENGINE_API void set_driver(void (*tick)(u32 dt_ms));
+	// Press / release a key through the held-key set (released by input.release_all and on client change)
+	ENGINE_API void hold_key(int dik, bool down);
+	ENGINE_API bool is_held(int dik);
+	// Number of input.release_all runs (incl. client changes with keys held): drivers holding no key watch it
+	ENGINE_API u32 release_count();
+	// Agent input activity: input.run sequences still running, keys in the held set (drivers' keys included)
+	ENGINE_API bool running();
+	ENGINE_API u32 held_count();
+	// CInput::OnFrame hook
+	void on_frame();
+}
