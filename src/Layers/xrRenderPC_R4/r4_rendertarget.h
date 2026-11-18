@@ -239,6 +239,24 @@ public:
 	ID3DDepthStencilView* output_zb;
 	bool output_rts_swapped, output_generic1_swapped;
 
+	// Temporal upscaler inputs (convention in notes/dlss/pipeline.md "Temporal inputs (D2)")
+	ref_rt rt_dlss_mv; // RG16F render size: previous minus current position in render pixels, jitter excluded
+	ref_rt rt_dlss_depth; // R32F render size: hardware depth from s_position, 0 near .. 1 far
+	ref_shader s_temporal; // E[0] resolve, E[1] debug view
+	IBlender* b_temporal;
+	bool upscaler_enabled; // set by the upscaler (D3): wants jitter and inputs
+	bool temporal_active; // this frame (main view only): jitter applied, inputs resolved
+	bool history_reset; // this frame: the upscaler must drop its history
+	Fvector2 jitter_px, jitter_px_prev; // screen offset of the geometry in render pixels (+x right, +y down)
+	void request_history_reset() { history_reset_pending = true; }
+	void begin_temporal_frame();
+	void phase_temporal_inputs();
+	void phase_upscale_debug();
+	bool history_reset_pending, temporal_unavailable_logged;
+	u32 temporal_frame, temporal_last_frame;
+	Fvector temporal_cam_pos;
+	const void* temporal_level;
+
 	ref_shader s_ssfx_dumb;
 
 	//	Igor: for async screenshots

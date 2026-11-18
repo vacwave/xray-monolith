@@ -398,6 +398,17 @@ CRenderTarget::CRenderTarget()
 	if (render_scaled())
 		Msg("* render size %ux%u, output size %ux%u", render_width, render_height, Device.dwWidth, Device.dwHeight);
 
+	// Temporal inputs are created on first use; a new target (vid_restart, resize) starts without history
+	b_temporal = xr_new<CBlender_temporal>();
+	upscaler_enabled = temporal_active = false;
+	history_reset = history_reset_pending = true;
+	temporal_unavailable_logged = false;
+	jitter_px.set(0.f, 0.f);
+	jitter_px_prev.set(0.f, 0.f);
+	temporal_frame = temporal_last_frame = 0;
+	temporal_cam_pos.set(0.f, 0.f, 0.f);
+	temporal_level = nullptr;
+
 	// Blenders
 	b_occq = xr_new<CBlender_light_occq>();
 	b_accum_mask = xr_new<CBlender_accum_direct_mask>();
@@ -1435,6 +1446,7 @@ CRenderTarget::~CRenderTarget()
 	// Blenders
 	xr_delete(b_combine);
 	xr_delete(b_upscale);
+	xr_delete(b_temporal);
 	xr_delete(b_luminance);
 	xr_delete(b_bloom);
 	xr_delete(b_accum_reflected);

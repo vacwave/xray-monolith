@@ -89,6 +89,8 @@ IC void R_xforms::set_c_wvp_prev(R_constant* C)
 IC void CBackend::set_xform_world(const Fmatrix& M)
 {
 	xforms.set_W(M);
+	// Previous world = current: rigid non-skinned objects get camera-only motion vectors (skinned and sky set their own)
+	xforms.set_W_prev(M);
 }
 
 IC void CBackend::set_xform_view(const Fmatrix& M)

@@ -397,3 +397,24 @@ void CBlender_upscale::Compile(CBlender_Compile& C)
 		C.i_dx10Filter(s, D3DTEXF_LINEAR, D3DTEXF_NONE, D3DTEXF_LINEAR);
 	C.r_End();
 }
+
+void CBlender_temporal::Compile(CBlender_Compile& C)
+{
+	IBlender::Compile(C);
+
+	switch (C.iElement)
+	{
+	case 0: // SSS motion vectors + G-buffer depth -> rt_dlss_mv + rt_dlss_depth
+		C.r_Pass("stub_notransform_t", "upscale_inputs", FALSE, FALSE, FALSE);
+		C.r_dx10Texture("s_upscale_mv_in", r2_RT_ssfx_motion_vectors);
+		C.r_dx10Texture("s_upscale_pos_in", r2_RT_P);
+		C.r_End();
+		break;
+	case 1: // r4_upscale_debug view at output size
+		C.r_Pass("stub_notransform_t", "upscale_debug", FALSE, FALSE, FALSE);
+		C.r_dx10Texture("s_upscale_mv", r2_RT_dlss_mv);
+		C.r_dx10Texture("s_upscale_depth", r2_RT_dlss_depth);
+		C.r_End();
+		break;
+	}
+}

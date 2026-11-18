@@ -364,6 +364,7 @@ Fvector ps_r2_img_cg = {.0f, .0f, .0f}; // r2-only
 
 float ps_r4_atlas_resolution = 0.6666667f; // r4-only
 float ps_r4_render_scale = 1.0f; // r4-only, scene render size = output size x scale, applied on vid_restart
+int ps_r4_upscale_debug = 0; // r4-only, test view of the upscaler inputs: 1 motion vectors, 2 depth
 // Atlas allocation settings take effect on vid_restart.
 int ps_r4_atlas = 0;
 int ps_r4_atlas_width = 2048;
@@ -1582,6 +1583,7 @@ void xrRender_initconsole()
 	CMD4(CCC_Integer, "r4_atlas", &ps_r4_atlas, 0, 1);
 	CMD4(CCC_Float, "r4_atlas_resolution", &ps_r4_atlas_resolution, 0.1f, 1.0f);
 	CMD4(CCC_Float, "r4_render_scale", &ps_r4_render_scale, 0.5f, 1.0f);
+	CMD4(CCC_Integer, "r4_upscale_debug", &ps_r4_upscale_debug, 0, 2);
 	CMD4(CCC_Integer, "r4_atlas_width", &ps_r4_atlas_width, 256, 8192);
 	CMD4(CCC_Integer, "r4_atlas_height", &ps_r4_atlas_height, 256, 8192);
 	CMD3(CCC_Token, "r4_atlas_msaa", &ps_r4_atlas_msaa, ui_3d_icons_msaa_token);

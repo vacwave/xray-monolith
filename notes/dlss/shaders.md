@@ -18,6 +18,17 @@ Source: reader report 2026-11-18 over enabled mods in `C:\GAMMA\profiles\G.A.M.M
 - TAA: ssfx_taa.ps (unjitter via `ssfx_jitter`, neighbourhood clamp), ssfx_taa_prepare.ps, ssfx_taa_sharp.ps.
 - Motion vectors: screenspace_mvectors.h (jitter applied there and in gbuffer_stage.h:141), included by ~60 .vs/.ps; ssfx_sky_mv; grass/tree prev bender arrays (deffer_grass.vs, deffer_tree_branch_bump-hq.vs).
 
+## Motion-vector audit (D2, SSS 23 shaders, read only) [checked]
+- Convention: SSS writes `ssfx_mv_calc` = (cur − prev) NDC × (0.5, −0.5) = uv delta, z = HUD flag, w = TAA mask; `vel_curr` is taken before `ssfx_taa_jitter`, so vectors are unjittered. Clear value 0 = "no motion".
+- Static level geometry (deffer_base_*, terrain, lod): `m_wvp_prev` / `m_vp_prev` with identity world → camera motion correct.
+- Skinned (NPCs, mutants, world weapons): deffer_model_* with `I.P_prev` from `sbones_array_prev` + `m_wvp_prev` from SkeletonX (prev object matrix) → correct, only when `o.ssfx_motionvectors`.
+- HUD weapon/hands: deffer_model_hud_* (skinned) with HUD prev view/projection (CHudInitializer) → correct, IsHUD = 1.
+- Rigid non-skinned dynamic visuals: `m_wvp_prev` used prev world = identity → wrong; fixed engine-side (prev world = current world, so correct while the object stands still, moving rigid objects show camera motion only).
+- Grass (deffer_grass) and trees (deffer_tree_*): prev wind/bender data (`ssfx_wind_anim_prev`, `benders_prevpos`, `prev_wave`) → sway included, correct.
+- Sky: `ssfx_sky_mv` with `mSky_prev` (drawn into the MV buffer before the G-buffer) → rotation only, correct.
+- No vectors written (keep 0 or the surface below): particles, wallmarks (inherit the surface), water/glass/forward transparents, `deffer_detail_s_flat` (jittered, no velocity output), effects except `effects_rain`. Upscaler sees them as static: possible ghosting (D4).
+- Other mods replacing `deffer_*` shaders (188, 410, 76) may drop the velocity output: load order not checked.
+
 ## SSS settings for tests (user 2026-11-18)
 - SSS is driven by MCM keys `ssfx_module/...` in axr_options.ltx `[options]` (its scripts push them into the `ssfx_*` cvars at runtime; user.ltx values are not the truth).
 - The user plays with everything at minimum: copy in `sss_mcm_user_min.ltx` (AO/IL/SSR/water/fog/bloom/motion blur intensities 0, SSS TAA `enabled_mcm = false`, jitter 0, volumetrics 0, interactive grass off). So in the user's setup `ssfx_jitter` is zero and SSS TAA never runs: the upscaler must bring its own jitter (D2).
