@@ -405,6 +405,7 @@
     <ClInclude Include="..\xrRenderDX10\dx10BufferUtils.h" />
     <ClInclude Include="..\xrRenderDX10\dx12PresentBridge.h" />
     <ClInclude Include="..\xrRenderDX10\dx12FrameGen.h" />
+    <ClInclude Include="..\xrRenderDX10\dxReflex.h" />
     <ClInclude Include="..\xrRenderDX10\dx10ConstantBuffer.h" />
     <ClInclude Include="..\xrRenderDX10\dx10ConstantBuffer_impl.h" />
     <ClInclude Include="..\xrRenderDX10\dx10DebugName.h" />
@@ -590,6 +591,7 @@
     <ClCompile Include="..\xrRenderDX10\dx10HW.cpp" />
     <ClCompile Include="..\xrRenderDX10\dx12PresentBridge.cpp" />
     <ClCompile Include="..\xrRenderDX10\dx12FrameGen.cpp" />
+    <ClCompile Include="..\xrRenderDX10\dxReflex.cpp" />
     <ClCompile Include="..\xrRenderDX10\dx10ResourceManager_Resources.cpp" />
     <ClCompile Include="..\xrRenderDX10\dx10ResourceManager_Scripting.cpp" />
     <ClCompile Include="..\xrRenderDX10\dx10r_constants.cpp" />

@@ -71,6 +71,10 @@ public:
 	virtual void SetCacheXform_prev(Fmatrix& mView, Fmatrix& mProject);
 	virtual void OnAssetsChanged();
 	virtual bool SwitchOutputMonitor(HMONITOR hTargetMon, HWND hWnd, u32 g_screenmode, u32& vidModeW, u32& vidModeH);
+#ifdef USE_DX11
+	virtual bool LatencyFrameStart(int frame_cap_fps);
+	virtual void LatencySimulationEnd();
+#endif
 
 public:
 	CResourceManager* Resources;

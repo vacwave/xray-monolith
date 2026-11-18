@@ -27,6 +27,7 @@ public:
               const DXGI_SWAP_CHAIN_DESC1& desc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC& desc_fullscreen, bool framegen);
     void CaptureHudless();
     bool FrameGenOn() const { return m_fg_on && m_fg.HasContext(); }
+    ID3D12Device* Device12() const { return m_dev12; }
     void SetInputs(ID3D11Texture2D* depth, ID3D11Texture2D* mv, const FrameGenInputs& in);
 
     // IUnknown
@@ -563,7 +564,7 @@ void CDX12PresentSwapChain::CountFrame(bool interpolated)
     if (elapsed < 10000)
         return;
     const UINT generated = m_fg.TakeGeneratedCount();
-    if (m_stats_interpolated || generated)
+    if ((m_stats_interpolated || generated) && ps_r4_upscale_debug)
     {
         const float s = elapsed / 1000.f;
         Msg("* r4_framegen: %.1f s: %u rendered (%.1f fps), %u with interpolation, %u generated -> %.1f fps presented", s,
@@ -624,6 +625,11 @@ void DX12Present_CaptureHudless()
     // SVP (scope) frames are not presented
     if (s_active && !Device.m_SecondViewport.IsSVPFrame())
         s_active->CaptureHudless();
+}
+
+IUnknown* DX12Present_Device()
+{
+    return s_active ? s_active->Device12() : nullptr;
 }
 
 bool DX12Present_FrameGenWantsInputs()
