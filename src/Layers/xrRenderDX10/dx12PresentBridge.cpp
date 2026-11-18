@@ -8,6 +8,7 @@
 #include <d3d12.h>
 #include "dx12PresentBridge.h"
 #include "dx12FrameGen.h"
+#include "../../xrEngine/igame_persistent.h"
 
 #pragma comment(lib, "d3d12.lib")
 
@@ -25,6 +26,8 @@ public:
     bool Init(ID3D11Device1* device, ID3D11DeviceContext1* context, IDXGIFactory2* factory, HWND hwnd,
               const DXGI_SWAP_CHAIN_DESC1& desc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC& desc_fullscreen, bool framegen);
     void CaptureHudless();
+    bool FrameGenOn() const { return m_fg_on && m_fg.HasContext(); }
+    void SetInputs(ID3D11Texture2D* depth, ID3D11Texture2D* mv, const FrameGenInputs& in);
 
     // IUnknown
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override;
@@ -80,6 +83,8 @@ private:
     HRESULT DeviceState();
     HRESULT WindowOutput(IDXGIOutput** output);
     void ReleaseToD3D11(UINT slot);
+    void ReleaseInputs();
+    void CountFrame(bool interpolated);
 
     LONG m_refs = 1;
 
@@ -110,7 +115,16 @@ private:
     ID3D12Resource* m_hudless12 = nullptr;  // scene without 2D UI, copied from the back buffer by CaptureHudless
     ID3D11Texture2D* m_hudless11 = nullptr;
     bool m_hudless_captured = false;
-    FrameGenInputs m_fg_inputs;
+    FrameGenInputs m_fg_inputs; // valid only for the frame SetInputs was called in
+    ID3D12Resource* m_depth12 = nullptr; // render-size copies of rt_dlss_depth / rt_dlss_mv
+    ID3D11Texture2D* m_depth11 = nullptr;
+    ID3D12Resource* m_mv12 = nullptr;
+    ID3D11Texture2D* m_mv11 = nullptr;
+    UINT m_inputs_w = 0, m_inputs_h = 0;
+    // stats line every few seconds: rendered presents, of them interpolated, generated frames
+    DWORD m_stats_start = 0;
+    UINT m_stats_rendered = 0, m_stats_interpolated = 0;
+    bool m_interpolating = false;
 };
 
 CDX12PresentSwapChain* s_active = nullptr; // the bridge in use (one window, one swapchain)
@@ -237,6 +251,7 @@ CDX12PresentSwapChain::~CDX12PresentSwapChain()
         WaitIdle();
     m_fg.DestroyContext();
     ReleaseBuffers();
+    ReleaseInputs();
     m_fg.DestroySwapChain();
     _RELEASE(m_sc);
     _RELEASE(m_list);
@@ -441,8 +456,12 @@ HRESULT STDMETHODCALLTYPE CDX12PresentSwapChain::Present(UINT sync_interval, UIN
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
     m_list->ResourceBarrier(1, &barrier);
     if (m_fg_on)
-        m_fg.OnPresent(m_list, m_hudless_captured ? m_hudless12 : nullptr, m_fg_inputs);
+    {
+        const bool interpolated = m_fg.OnPresent(m_list, m_hudless_captured ? m_hudless12 : nullptr, m_fg_inputs);
+        CountFrame(interpolated);
+    }
     m_hudless_captured = false;
+    m_fg_inputs.valid = false;
     m_list->Close();
 
     ID3D12CommandList* lists[] = {m_list};
@@ -473,6 +492,85 @@ void CDX12PresentSwapChain::CaptureHudless()
         return;
     m_ctx11->CopyResource(m_hudless11, m_shared11);
     m_hudless_captured = true;
+}
+
+void CDX12PresentSwapChain::ReleaseInputs()
+{
+    _RELEASE(m_depth11);
+    _RELEASE(m_depth12);
+    _RELEASE(m_mv11);
+    _RELEASE(m_mv12);
+    m_inputs_w = m_inputs_h = 0;
+}
+
+// copies the D3D11 depth + motion vectors into textures shared with D3D12 (same fence as the back buffer)
+void CDX12PresentSwapChain::SetInputs(ID3D11Texture2D* depth, ID3D11Texture2D* mv, const FrameGenInputs& in)
+{
+    if (in.render_width != m_inputs_w || in.render_height != m_inputs_h)
+    {
+        // render size changed (vid_restart, r4_render_scale): D3D12 must be done with the old copies
+        m_fg.WaitForPresents();
+        WaitIdle();
+        ReleaseInputs();
+        D3D12_RESOURCE_DESC tex = {};
+        tex.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        tex.Width = in.render_width;
+        tex.Height = in.render_height;
+        tex.DepthOrArraySize = 1;
+        tex.MipLevels = 1;
+        tex.SampleDesc.Count = 1;
+        tex.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        // R32F / RG16F open on D3D11 (OpenSharedResource1) only with simultaneous access, else E_INVALIDARG
+        tex.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+        tex.Format = DXGI_FORMAT_R32_FLOAT;
+        bool ok = CreateShared(tex, &m_depth12, &m_depth11);
+        tex.Format = DXGI_FORMAT_R16G16_FLOAT;
+        ok = ok && CreateShared(tex, &m_mv12, &m_mv11);
+        if (!ok)
+        {
+            Msg("! r4_framegen: no shared depth / motion vector textures (%ux%u), presenting rendered frames only", in.render_width, in.render_height);
+            ReleaseInputs();
+        }
+        else
+            Msg("* r4_framegen: frame generation inputs %ux%u (depth R32F + vectors RG16F, %.1f MB)", in.render_width, in.render_height,
+                in.render_width * in.render_height * 8 / 1048576.0);
+        m_inputs_w = in.render_width;
+        m_inputs_h = in.render_height;
+    }
+    if (!m_depth11)
+        return;
+    m_ctx11->CopyResource(m_depth11, depth);
+    m_ctx11->CopyResource(m_mv11, mv);
+    m_fg_inputs = in;
+    m_fg_inputs.depth = m_depth12;
+    m_fg_inputs.motion_vectors = m_mv12;
+    m_fg_inputs.valid = true;
+}
+
+void CDX12PresentSwapChain::CountFrame(bool interpolated)
+{
+    if (interpolated != m_interpolating)
+    {
+        Msg("* r4_framegen: interpolation %s", interpolated ? "on" : "held (no inputs this frame: menu, loading, scope frame gap or no vectors)");
+        m_interpolating = interpolated;
+    }
+    const DWORD now = GetTickCount();
+    if (!m_stats_start)
+        m_stats_start = now;
+    ++m_stats_rendered;
+    m_stats_interpolated += interpolated;
+    const DWORD elapsed = now - m_stats_start;
+    if (elapsed < 10000)
+        return;
+    const UINT generated = m_fg.TakeGeneratedCount();
+    if (m_stats_interpolated || generated)
+    {
+        const float s = elapsed / 1000.f;
+        Msg("* r4_framegen: %.1f s: %u rendered (%.1f fps), %u with interpolation, %u generated -> %.1f fps presented", s,
+            m_stats_rendered, m_stats_rendered / s, m_stats_interpolated, generated, (m_stats_rendered + generated) / s);
+    }
+    m_stats_start = now;
+    m_stats_rendered = m_stats_interpolated = 0;
 }
 
 HRESULT STDMETHODCALLTYPE CDX12PresentSwapChain::ResizeBuffers(UINT count, UINT width, UINT height, DXGI_FORMAT format, UINT flags)
@@ -526,5 +624,61 @@ void DX12Present_CaptureHudless()
     // SVP (scope) frames are not presented
     if (s_active && !Device.m_SecondViewport.IsSVPFrame())
         s_active->CaptureHudless();
+}
+
+bool DX12Present_FrameGenWantsInputs()
+{
+    return s_active && s_active->FrameGenOn();
+}
+
+void DX12Present_SetFrameGenInputs()
+{
+    if (!s_active || !s_active->FrameGenOn())
+        return;
+    static bool unavailable_logged = false;
+    if (!RImplementation.o.ssfx_motionvectors || RImplementation.o.dx10_msaa)
+    {
+        if (!unavailable_logged)
+            Msg("! r4_framegen: interpolation unavailable (%s), presenting rendered frames only",
+                RImplementation.o.dx10_msaa ? "MSAA is on" : "no SSS motion vectors");
+        unavailable_logged = true;
+        return;
+    }
+    const CRenderTarget* T = RImplementation.Target;
+    if (!T || !T->temporal_active || !T->rt_dlss_mv || !T->rt_dlss_depth || Device.m_SecondViewport.IsSVPFrame())
+        return;
+    if (g_pGamePersistent && g_pGamePersistent->m_pMainMenu && g_pGamePersistent->m_pMainMenu->IsActive())
+        return;
+
+    // real time between interpolated frames (fTimeDelta follows the game time factor)
+    static LARGE_INTEGER freq = {}, last = {};
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    if (!freq.QuadPart)
+        QueryPerformanceFrequency(&freq);
+    const float frame_ms = last.QuadPart ? float(double(now.QuadPart - last.QuadPart) * 1000.0 / double(freq.QuadPart)) : 16.7f;
+    last = now;
+
+    FrameGenInputs in;
+    in.reset = T->history_reset;
+    in.render_width = T->render_width;
+    in.render_height = T->render_height;
+    in.jitter_x = T->jitter_px.x;
+    in.jitter_y = T->jitter_px.y;
+    // rt_dlss_depth = _33 + _43 / z of Device.mProject (LH, not reversed): near = -_43/_33, far = _43/(1-_33)
+    const Fmatrix& P = Device.mProject;
+    in.camera_near = -P._43 / P._33;
+    in.camera_far = P._43 / (1.f - P._33);
+    in.camera_fov_y = 2.f * atanf(1.f / P._22);
+    in.frame_time_ms = frame_ms;
+    const Fvector* v[] = {&Device.vCameraPosition, &Device.vCameraTop, &Device.vCameraRight, &Device.vCameraDirection};
+    float* dst[] = {in.camera_pos, in.camera_up, in.camera_right, in.camera_forward};
+    for (int i = 0; i < 4; ++i)
+    {
+        dst[i][0] = v[i]->x;
+        dst[i][1] = v[i]->y;
+        dst[i][2] = v[i]->z;
+    }
+    s_active->SetInputs(T->rt_dlss_depth->pSurface, T->rt_dlss_mv->pSurface, in);
 }
 #endif

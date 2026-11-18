@@ -9,6 +9,7 @@
 #include "../xrRender/QueryHelper.h"
 
 #include	"../xrRender/dxRenderDeviceRender.h"
+#include "../xrRenderDX10/dx12PresentBridge.h"
 namespace
 {
 bool ui_3d_icon_atlas_active = false;
@@ -350,6 +351,8 @@ void CRender::Render()
 	{
 		PIX_EVENT_C(DEFER_LIGHT_COMBINE, dx10_marker_lights);
 		Target->phase_combine();
+		DX12Present_CaptureHudless();
+		DX12Present_SetFrameGenInputs();
 	}
 	Target->end_output_size();
 
