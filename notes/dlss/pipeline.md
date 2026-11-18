@@ -28,6 +28,14 @@ Source: reader reports 2026-11-18 (not line-verified unless marked [checked]). P
 - Skipped on SVP frames: motion matrix save, SSS, SSR/water/blur, point/spot accumulation. Shader flag `ssfx_issvp`.
 - 3D shader scopes also use `$user$scopeRT` and `$user$temp_zb`; reticle via `render_Reticle` r4_R_render.cpp:466-475.
 
+## Render resolution split (D1) [checked]
+- `r4_render_scale` (0.5-1, xrRender_console) is read in the `CRenderTarget` ctor (vid_restart); MSAA or HDR10 force 1.0 with a `! r4_render_scale ... ignored` line; scaled start logs `* render size WxH, output size WxH`.
+- `CRenderTarget::render_width/height` = render size; `scr_width()/scr_height()` = render size while `scene_size_active` (`begin_scene_size` before `phase_scene_prepare` until `phase_upscale`), output size otherwise. All phase code, `screen_res`, `pos_decompression_params(2)`, `ssfx_jitter`, lights_render volumetric viewport and fluid cbuffers use it; R2/R3 have Device-size stubs because the `xrRender\rendertarget_phase_*` files compile into R2/R3/R4.
+- Scene depth: `rt_scene_zb` (`$user$scene_zb`, D24S8) is put into `HW.pBaseZB` from `begin_scene_size` to `phase_upscale` (every scene pass binds `HW.pBaseZB`); `end_output_size` (end of `CRender::Render`, end of `render_menu`) restores. D3D11 drops `OMSetRenderTargets` when RTV and DSV sizes differ, so `phase_occq` binds no colour RT when scaled.
+- Upscale slot `phase_upscale` (phase_combine, after `phase_ssfx_taa` + prevPos copy): `CBlender_upscale` (base `stub_notransform_t` + `copy_nomsaa`, its `smp_nofilter` stage forced bilinear) copies generic0 -> `rt_Generic_0_out`; then `swap_output_rts` swaps `rt_Color`/`rt_Generic_0` with output twins (ref_rt + their CTexture surfaces, so `$user$albedo` / `$user$generic0` bound by name in combine_2 and `postprocess.s` see output size) and unbinds cached SRVs with an empty texture list. generic1 (distortion mask) stays render size there; `render_menu` swaps generic1 too.
+- Output size: `rt_secondVP`, `rt_ui_pda` (CopyResource from the swapchain), async screenshot staging, the `_out` twins, 3D icon atlas; every other RT at render size. `render_forward` (sorted, HUD UI, attached UI) and PP-UI run before the slot, so they are upscaled; 2D UI after `Render` is at output size.
+- Gotcha: `CBackend::Invalidate` is private; mid-frame SRV cache reset = `RCache.set_Textures(&emptyList)`. Base shader sources (copy*.ps, postprocess.s, stub_*.vs) are unpacked in `C:\Anomaly\tools\_unpacked\shaders\r3`.
+
 ## Swapchain / present / pacing
 - `CHW::CreateDevice` Layers/xrRenderDX10/dx10HW.cpp:303; `CreateSwapChainForHwnd` :585, FLIP_DISCARD, 2 buffers, R8G8B8A8_UNORM or R10G10B10A2 (HDR10, :588-607); ResizeBuffers :752/:872/:879/:1121/:1167.
 - Present: dxRenderDeviceRender.cpp:485 (interval from vsync, ALLOW_TEARING when windowed + VRR).

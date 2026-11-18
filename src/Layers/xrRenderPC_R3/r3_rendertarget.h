@@ -382,6 +382,9 @@ public:
 
 	virtual u32 get_width() { return dwWidth; }
 	virtual u32 get_height() { return dwHeight; }
+	// Screen size of the current pass; R4 splits render and output size, here both are the device size
+	u32 scr_width() const { return Device.dwWidth; }
+	u32 scr_height() const { return Device.dwHeight; }
 
 	virtual void set_cm_imfluence(float f) { param_color_map_influence = f; }
 	virtual void set_cm_interpolate(float f) { param_color_map_interpolate = f; }
