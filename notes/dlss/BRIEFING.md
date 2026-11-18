@@ -10,7 +10,8 @@ Coordinator keeps this current; newest facts replace old ones. Details per goal:
 
 ## Running
 - Dev A: D3 DLSS upscaling + DLAA (NGX SDK, `r4_dlss`, `r4_dlss_preset`).
-- Dev B: free until D3 merges, then D6 (menu options) while A does D4.
+- Dev B: D11 low latency (Reflex via the NvAPI already in the repo), then D10 sharpening, D6 menu, D12 separate UI texture.
+- Plan extended on your order (PLAN.md "Added by the user 2026-11-19"): particle / transparent vectors + DLSS bias mask in D4; sharpness slider, frame generation, bridge and low-latency entries in D6; new goals D10-D12. My reading of "FSR too": the one sharpness slider (RCAS pass) applies with DLSS, plain render scale and frame generation at native res; FSR upscaling itself is NOT added. Correct me if you meant FSR upscaling as a mode.
 
 ## YOU must check (tools cannot see it)
 - Generated frames were NOT seen by anyone: MCP screenshots read the DX11 back buffer = rendered frames only. HUD / crosshair warping, shake or artefacts on interpolated frames need your eyes on a visible window.
