@@ -33,3 +33,4 @@ Source: reader reports 2026-11-18 (not line-verified unless marked [checked]). P
 - Present: dxRenderDeviceRender.cpp:485 (interval from vsync, ALLOW_TEARING when windowed + VRR).
 - Limiter `r__framelimit`: busy-wait in xrEngine/device.cpp:501-524 (ECO_RENDER). No Reflex / NVAPI latency calls (nvapi.lib is linked only).
 - MCP screenshots copy the back buffer before Present (see `notes/render.md`): must keep working with the bridge.
+- `r4_dx12_present 1`: `HW.m_pSwapChain` is a proxy over a D3D12 swapchain, back buffer = shared texture (see `bridge.md`). Note `CHW::CreateDevice` makes the D3D11 device on the default adapter (`D3D11CreateDevice(nullptr, ...)`), not on `m_pAdapter` [checked].

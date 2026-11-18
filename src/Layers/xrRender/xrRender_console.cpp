@@ -316,6 +316,7 @@ float ps_r4_hdr10_pda_intensity   = 1.0f;   // r4-only, default = 1.0x
 int   ps_r4_hdr10_pda             = 0;	    // r4-only (NOTE: this is a hack to not double HDR tonemap the 3D PDA)
 int   ps_r4_hdr10_on              = 0;	    // r4-only, default = off
 int   ps_r4_hdr10_colorspace      = 2;      // r4-only, default = Rec.2020
+int   ps_r4_dx12_present          = 0;      // r4-only, D3D12 owns the swapchain (read at device creation)
 
 int   ps_r4_hdr10_tonemapper   		   = 0;    // r4-only, default = ACES (Narkowicz)
 int   ps_r4_hdr10_tonemap_mode 		   = 1;	   // r4-only, default = Color
@@ -1504,6 +1505,7 @@ void xrRender_initconsole()
     CMD4(CCC_Float,   "r4_hdr10_pda_intensity",   &ps_r4_hdr10_pda_intensity,      0.1, 2);
 	CMD4(CCC_Integer, "r4_hdr10_on", 			  &ps_r4_hdr10_on, 				     0, 1);
     CMD4(CCC_Integer, "r4_hdr10_colorspace",	  &ps_r4_hdr10_colorspace, 		     0, 2);
+    CMD4(CCC_Integer, "r4_dx12_present",		  &ps_r4_dx12_present, 			     0, 1);
 
     CMD4(CCC_Integer, "r4_hdr10_tonemapper", 	  		&ps_r4_hdr10_tonemapper,      	      0, 8);
 	CMD4(CCC_Integer, "r4_hdr10_tonemap_mode",    		&ps_r4_hdr10_tonemap_mode,    	      0, 1);
