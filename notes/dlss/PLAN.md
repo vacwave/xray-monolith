@@ -86,7 +86,6 @@ Test (1 session, GAMMA): `game_perf` presented vs rendered fps, burst screenshot
 Test: the soak itself; then hand over to the user for real play.
 
 ## Open questions
-- User OK for the dependencies: DLSS SDK (before D3), AMD FSR SDK (before D8); where the DLLs ship.
-- Licence: DLSS SDK must not fall under an open-source licence; check against this engine's licence before publishing.
+- Dependencies: DLSS SDK and AMD FSR SDK approved by the user 2026-11-18 (local/private; licences get sorted by the user before any public release).
 - MSAA with the upscaler: plan says refuse with a log line; confirm.
 - HDR10 with DLSS and with the bridge.

@@ -3,7 +3,7 @@ Scope: branch `dev-mt-mcp-dlss` (clone `dev-mt-mcp-dlss/`, local only, NOT pushe
 Files: `STATE.md` (this, ≤20 lines, overwrite) · `HANDOFF.md` (how to run the overnight session) · `PLAN.md` (decisions + goals D1-D9 with substeps and tests) · `pipeline.md` · `shaders.md` · `sdk.md`.
 
 Status 2026-11-18: plan APPROVED by the user (D9 soak cut to ~10 min). Nothing coded. Next session = unattended overnight run with 2 devs: follow `HANDOFF.md`.
-SDK OK: PENDING (asked 2026-11-18; replace this line with the user's answer. Not "yes" → no SDK is added, see HANDOFF "SDK dependencies").
+SDK OK: YES (user 2026-11-18) for both the DLSS SDK and the AMD FSR SDK. Local and private use only for now; if it ever goes public the user adds the proper licences first, so still no push.
 Queue: Dev A D1 → D2 → D3 → D4 → D5 → D6 · Dev B D7 → D8 · then D9.
 Done: -
 Parked: -
