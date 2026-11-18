@@ -85,6 +85,28 @@ Test (1 session, GAMMA): `game_perf` presented vs rendered fps, burst screenshot
 2. Fix what it finds; final DX11-AVX build; update `notes/dlss/`.
 Test: the soak itself; then hand over to the user for real play.
 
+## Added by the user 2026-11-19 ("add all to the plan")
+D4 gets two extra steps: (a) motion vectors for particles / water / glass / other transparents where the engine can supply them; (b) a DLSS bias (reactive) mask for the pixels that still have none, so history is trusted less there.
+D6 also covers: sharpness slider next to the DLSS mode, frame generation on/off, the DX12 bridge (restart needed), low-latency mode.
+
+### D10 Sharpening
+1. Cvar `r4_upscale_sharpness` (0-1, default 0 = off): one RCAS pass right after the upscale slot at output size (AMD's RCAS shader from the already approved FidelityFX SDK, in our gamedata). Works with DLSS, DLAA and plain `r4_render_scale`; also offered with frame generation on at native res ("FSR too": coordinator's reading = same slider applies whenever our upscale / FG path is active).
+2. Off = no pass. Not applied on SVP frames unless the scope view is upscaled too (D5 decides).
+Test: screenshots at 0 / 0.5 / 1 with DLSS quality and at native; no halos on the HUD/UI (UI is drawn after it).
+
+### D11 Low latency (NVIDIA Reflex via NvAPI)
+1. NvAPI is already in the repo (`sdk\include\nvapi`, `sdk\libraries\x64\nvapi.lib`, used by `HWCaps.cpp`): cvar `r4_reflex` (off / on / on+boost, default off) → `NvAPI_D3D_SetSleepMode` on the DX11 device, `NvAPI_D3D_Sleep` once per frame before input sampling / simulation. If the bundled NvAPI is too old for these calls, update it from the official NVIDIA NvAPI repo (covered by the user's "add all").
+2. Unsupported (non-NVIDIA, old driver) → log line, off. With `r__framelimit` set, pass the cap as the sleep-mode minimum interval instead of fighting it.
+3. Optional if cheap: latency markers (simulation / render submit / present).
+Test: `game_perf` frame time unchanged or better with it on, no hitching, toggle at runtime, works with the bridge + frame generation on; real latency is for the user to feel.
+
+### D12 Separate UI texture for frame generation
+1. Render the 2D UI / HUD UI into its own RGBA target (premultiplied alpha) instead of straight onto the final image when frame generation is on, composite it for the presented frame, and pass it to FSR as the UI texture (instead of the HUD-less colour pair).
+2. Only if D8's HUD-less mode shows warping or the change stays small; otherwise park with the findings. Off (framegen off) = today's UI path.
+Test: strafe + text on screen with frame generation on; the user judges generated frames.
+
+Order: Dev A D3 → D4 → D5 · Dev B D11 → D10 → D6 → D12 · then D9.
+
 ## Open questions
 - Dependencies: DLSS SDK and AMD FSR SDK approved by the user 2026-11-18 (local/private; licences get sorted by the user before any public release).
 - MSAA with the upscaler: plan says refuse with a log line; confirm.

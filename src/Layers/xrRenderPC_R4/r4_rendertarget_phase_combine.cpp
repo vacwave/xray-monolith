@@ -6,6 +6,7 @@
 #include "../xrRender/dxEnvironmentRender.h"
 #include "../xrRenderDX10/StateManager/dx10SamplerStateCache.h"
 #include "r4_dlss.h"
+#include "../xrRenderDX10/dx12PresentBridge.h"
 
 #define STENCIL_CULL 0
 
@@ -171,7 +172,7 @@ static float halton(u32 i, u32 base)
 // Per main-view frame: decide whether the temporal inputs run, advance the jitter, set the history-reset flag
 void CRenderTarget::begin_temporal_frame()
 {
-	bool want = upscaler_enabled || ps_r4_upscale_debug != 0;
+	bool want = upscaler_enabled || ps_r4_upscale_debug != 0 || DX12Present_FrameGenWantsInputs();
 	if (want && (!RImplementation.o.ssfx_motionvectors || RImplementation.o.dx10_msaa))
 	{
 		if (!temporal_unavailable_logged)
@@ -210,6 +211,9 @@ void CRenderTarget::begin_temporal_frame()
 	const u32 idx = (temporal_frame++ % phases) + 1;
 	jitter_px_prev.set(jitter_px);
 	jitter_px.set(halton(idx, 2) - .5f, halton(idx, 3) - .5f);
+	// frame generation alone: nothing resolves the jitter unless SSS TAA runs
+	if (!upscaler_enabled && !ps_r4_upscale_debug && !(ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa))
+		jitter_px.set(0.f, 0.f);
 }
 
 static void draw_screen_quad(float w, float h, u32 vb_stride, ref_geom& geom)

@@ -12,4 +12,10 @@ IDXGISwapChain1* DX12Present_Create(ID3D11Device1* device, ID3D11DeviceContext1*
 // r4_framegen: copies the back buffer as the HUD-less colour; call once per frame when the 3D scene (incl. HUD
 // weapon and post-process) is final, before the 2D UI is drawn. No-op without the FG swapchain.
 void DX12Present_CaptureHudless();
+
+// r4_framegen: true while the FG swapchain wants depth + motion vectors (turns the R4 temporal inputs on)
+bool DX12Present_FrameGenWantsInputs();
+// r4_framegen: hands this frame's rt_dlss_depth / rt_dlss_mv, jitter and camera to frame generation; call after
+// phase_combine. Frames without the call (menu, loading screen, SVP) present without interpolation.
+void DX12Present_SetFrameGenInputs();
 #endif
