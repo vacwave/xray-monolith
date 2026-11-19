@@ -20,8 +20,8 @@ public:
 // After the upscale slot (output size), before the combine tail and UI: generic0 -> copy -> RCAS -> generic0
 void CRenderTarget::phase_sharpen()
 {
-	// HDR10 keeps generic0 above 1.0, RCAS assumes LDR 0..1; scope frames are left to D5
-	if (ps_r4_upscale_sharpness <= 0.f || RImplementation.o.dx11_hdr10 || Device.m_SecondViewport.IsSVPFrame())
+	// HDR10 keeps generic0 above 1.0, RCAS assumes LDR 0..1; scope frames only when upscaled (bilinear, they never get DLSS)
+	if (ps_r4_upscale_sharpness <= 0.f || RImplementation.o.dx11_hdr10 || (Device.m_SecondViewport.IsSVPFrame() && !render_scaled()))
 		return;
 
 	PIX_EVENT(phase_sharpen);

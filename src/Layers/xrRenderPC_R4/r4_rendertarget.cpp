@@ -429,6 +429,9 @@ CRenderTarget::CRenderTarget()
 	temporal_frame = temporal_last_frame = 0;
 	temporal_cam_pos.set(0.f, 0.f, 0.f);
 	temporal_level = nullptr;
+	temporal_svp_frame = temporal_svp_on = false;
+	temporal_svp_last = temporal_svp_frames = temporal_svp_resets = 0;
+	temporal_view = temporal_proj = temporal_view_hud = temporal_proj_hud = temporal_view_cam = temporal_proj_cam = Fidentity;
 
 	// Blenders
 	b_occq = xr_new<CBlender_light_occq>();
