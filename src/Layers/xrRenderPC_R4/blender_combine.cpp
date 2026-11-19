@@ -408,6 +408,7 @@ void CBlender_temporal::Compile(CBlender_Compile& C)
 		C.r_Pass("stub_notransform_t", "upscale_inputs", FALSE, FALSE, FALSE);
 		C.r_dx10Texture("s_upscale_mv_in", r2_RT_ssfx_motion_vectors);
 		C.r_dx10Texture("s_upscale_pos_in", r2_RT_P);
+		C.r_dx10Texture("s_upscale_lens", r2_RT_dlss_lens);
 		C.r_End();
 		break;
 	case 1: // r4_upscale_debug view at output size

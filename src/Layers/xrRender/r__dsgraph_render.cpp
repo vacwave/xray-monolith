@@ -259,7 +259,8 @@ void CDSGraphManager::r_dsgraph_render_hud()
 #if defined(USE_DX11) //  Redotix99: for 3D Shader Based Scopes 		
 	if (scope_3D_fake_enabled)
 	{
-		RCache.set_RT(RImplementation.Target->rt_ssfx_temp->pRT, 3); // Render scope_3D to any buffer
+		// Render scope_3D to any buffer; under the temporal upscaler keep its lens mask for the motion vectors
+		RCache.set_RT((RImplementation.Target->temporal_active ? RImplementation.Target->rt_dlss_lens : RImplementation.Target->rt_ssfx_temp)->pRT, 3);
 
 		initializer.SetHudMode();
 		r_dsgraph_render_graph_sorted(RGraph.mapScopeHUD);

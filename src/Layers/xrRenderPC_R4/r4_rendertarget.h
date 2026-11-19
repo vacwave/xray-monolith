@@ -242,6 +242,7 @@ public:
 	// Temporal upscaler inputs (convention in notes/dlss/pipeline.md "Temporal inputs (D2)")
 	ref_rt rt_dlss_mv; // RG16F render size: previous minus current position in render pixels, jitter excluded
 	ref_rt rt_dlss_depth; // R32F render size: hardware depth from s_position, 0 near .. 1 far
+	ref_rt rt_dlss_lens; // render size: 3DSS lens mask (MRT3 of the scope z-write pass), cleared every active frame
 	ref_shader s_temporal; // E[0] resolve, E[1] debug view
 	IBlender* b_temporal;
 	bool upscaler_enabled; // set by the upscaler (D3): wants jitter and inputs

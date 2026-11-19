@@ -5,6 +5,7 @@ uniform float4 upscale_params; // xy: render size, z: projection _33, w: project
 
 Texture2D s_upscale_mv_in; // SSS motion vectors: xy = current - previous in uv units (jitter excluded)
 Texture2D s_upscale_pos_in; // G-buffer position: z = view-space depth, 0 where nothing was drawn (sky)
+Texture2D s_upscale_lens; // 3DSS lens mask: r = 1 where the scope z-write pass drew
 
 struct v2p_upscale
 {
@@ -27,6 +28,9 @@ upscale_out main(v2p_upscale I)
 	// NaN / inf / huge vectors (sky, first frame, garbage) would spread over the whole DLSS frame
 	// (exponent bits test: isnan/isinf may be optimised away without IEEE strictness)
 	o.mv = any((asuint(o.mv) & 0x7f800000) == 0x7f800000) ? 0.0f : clamp(o.mv, -upscale_params.xy, upscale_params.xy);
+	// 3DSS lens: it carries the world's vectors below it, but sits fixed in the aimed sight (edge smear otherwise)
+	if (s_upscale_lens.Load(px).r > 0.5f)
+		o.mv = 0.0f;
 	float z = s_upscale_pos_in.Load(px).z;
 	o.depth = (z > 0.0001f && (asuint(z) & 0x7f800000) != 0x7f800000) ? saturate(upscale_params.z + upscale_params.w / z) : 1.0f;
 	return o;

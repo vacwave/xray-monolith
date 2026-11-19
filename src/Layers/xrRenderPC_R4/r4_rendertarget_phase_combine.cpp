@@ -14,7 +14,8 @@ void CRenderTarget::DoAsyncScreenshot()
 {
 	//	Igor: screenshot will not have postprocess applied.
 	//	TODO: fox that later
-	if (RImplementation.m_bMakeAsyncSS)
+	// Scope (SVP) frames are never presented: keep the request for the next main frame
+	if (RImplementation.m_bMakeAsyncSS && !Device.m_SecondViewport.IsSVPFrame())
 	{
 		//	HACK: unbind RT. CopyResourcess needs src and targetr to be unbound.
 		//u_setrt				( Device.dwWidth,Device.dwHeight,HW.pBaseRT,NULL,NULL,HW.pBaseZB);
@@ -207,8 +208,11 @@ void CRenderTarget::begin_temporal_frame()
 	{
 		rt_dlss_mv.create(r2_RT_dlss_mv, render_width, render_height, D3DFMT_G16R16F);
 		rt_dlss_depth.create(r2_RT_dlss_depth, render_width, render_height, D3DFMT_R32F);
+		rt_dlss_lens.create(r2_RT_dlss_lens, render_width, render_height, D3DFMT_A8R8G8B8);
 		s_temporal.create(b_temporal, "r2\\temporal");
 	}
+	const FLOAT lens_clear[4] = { 0.f, 0.f, 0.f, 0.f };
+	HW.pContext->ClearRenderTargetView(rt_dlss_lens->pRT, lens_clear);
 
 	// Main frame right after a scope frame: Device's previous matrices are the scope camera's, use the last main frame's
 	const bool after_svp = temporal_svp_last + 1 == Device.dwFrame && temporal_last_frame + 2 == Device.dwFrame;
