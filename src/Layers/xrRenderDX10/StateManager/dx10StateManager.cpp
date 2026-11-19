@@ -190,6 +190,11 @@ void dx10StateManager::Apply()
 	}
 
 	//	Apply blend state
+#ifdef USE_DX11
+	const bool ui_remap = m_pUiRT && RCache.get_RT(0) == m_pUiRT;
+	if (ui_remap != m_bUiRemapApplied)
+		m_bBSNeedApply = true;
+#endif
 	if (m_bBSNeedApply || m_bBSChanged)
 	{
 		if (m_bBSChanged)
@@ -200,10 +205,60 @@ void dx10StateManager::Apply()
 
 		static const FLOAT BlendFactor[4] = {0.000f, 0.000f, 0.000f, 0.000f};
 
-		HW.pContext->OMSetBlendState(m_pBlendState, BlendFactor, m_uiSampleMask);
+		ID3DBlendState* pBlendState = m_pBlendState;
+#ifdef USE_DX11
+		if (ui_remap)
+			pBlendState = UiBlendState(pBlendState);
+		m_bUiRemapApplied = ui_remap;
+#endif
+		HW.pContext->OMSetBlendState(pBlendState, BlendFactor, m_uiSampleMask);
 		m_bBSNeedApply = false;
 	}
 }
+
+#ifdef USE_DX11
+void dx10StateManager::SetUiTarget(ID3D11RenderTargetView* pRT)
+{
+	m_pUiRT = pRT;
+}
+
+//	UI target = (colour, transmittance): the frame under it is colour + transmittance * frame. Colour blends as
+//	the shader says; alpha gets the factors that scale transmittance like the colour blend scales the frame.
+ID3D11BlendState* dx10StateManager::UiBlendState(ID3D11BlendState* pState)
+{
+	D3D11_BLEND_DESC desc;
+	if (pState)
+		pState->GetDesc(&desc);
+	else
+		dx10StateUtils::ResetDescription(desc);
+	for (int i = 0; i < 8; ++i)
+	{
+		D3D11_RENDER_TARGET_BLEND_DESC& rt = desc.RenderTarget[i];
+		if (!rt.BlendEnable)
+		{
+			rt.BlendEnable = TRUE;
+			rt.SrcBlend = D3D11_BLEND_ONE;
+			rt.DestBlend = D3D11_BLEND_ZERO;
+			rt.BlendOp = D3D11_BLEND_OP_ADD;
+		}
+		// the source term covers the frame, unless it multiplies it (MUL / MUL_2X: approximated by the source alpha)
+		rt.SrcBlendAlpha = rt.SrcBlend == D3D11_BLEND_DEST_COLOR ? D3D11_BLEND_DEST_ALPHA : D3D11_BLEND_ZERO;
+		switch (rt.DestBlend)
+		{
+		case D3D11_BLEND_ZERO: rt.DestBlendAlpha = D3D11_BLEND_ZERO; break;
+		case D3D11_BLEND_SRC_ALPHA:
+		case D3D11_BLEND_SRC_COLOR: rt.DestBlendAlpha = D3D11_BLEND_SRC_ALPHA; break;
+		case D3D11_BLEND_INV_SRC_ALPHA:
+		case D3D11_BLEND_INV_SRC_COLOR: rt.DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA; break;
+		default: rt.DestBlendAlpha = D3D11_BLEND_ONE; break;
+		}
+		rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+		if (rt.RenderTargetWriteMask & (D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE))
+			rt.RenderTargetWriteMask |= D3D11_COLOR_WRITE_ENABLE_ALPHA;
+	}
+	return BSManager.GetState(desc);
+}
+#endif
 
 void dx10StateManager::SetStencil(u32 Enable, u32 Func, u32 Ref, u32 Mask, u32 WriteMask, u32 Fail, u32 Pass, u32 ZFail)
 {

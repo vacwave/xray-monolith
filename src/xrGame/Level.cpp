@@ -1354,6 +1354,7 @@ void CLevel::OnRender()
 	if (use_reshade)
 		render_reshade_effects();
 
+	Render->BeginUI();
 	HUD().RenderUI();
 
 	ScriptDebugRender();

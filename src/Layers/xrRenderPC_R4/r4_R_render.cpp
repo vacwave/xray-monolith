@@ -505,3 +505,8 @@ void CRender::RenderToTarget(RRT target)
 	HW.pContext->CopyResource((*RT)->pSurface, pBuffer);
 	pBuffer->Release();
 }
+
+void CRender::BeginUI()
+{
+	DX12Present_BeginUI();
+}

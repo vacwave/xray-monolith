@@ -43,8 +43,11 @@ public:
     void DestroySwapChain();
     void WaitForPresents();
 
-    // before the swapchain Present; list is still open (prepare goes into it). Returns true when interpolating.
-    bool OnPresent(ID3D12GraphicsCommandList* list, ID3D12Resource* hudless, const FrameGenInputs& in);
+    // before the swapchain Present; list is still open (prepare goes into it). UI source: hudless colour, or
+    // ui = the registered UI texture holds this frame's UI. Returns true when interpolating.
+    bool OnPresent(ID3D12GraphicsCommandList* list, ID3D12Resource* hudless, bool ui, const FrameGenInputs& in);
+    // UI texture (premultiplied alpha) for the next presents, nullptr = none; false (logged) if the provider refuses
+    bool RegisterUi(ID3D12Resource* ui);
     bool HasContext() const { return m_fg_ctx != nullptr; }
     // generated frames handed to the swapchain since the last call
     UINT TakeGeneratedCount();

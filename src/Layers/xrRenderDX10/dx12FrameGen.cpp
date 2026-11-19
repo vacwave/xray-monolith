@@ -207,13 +207,34 @@ void CFrameGen::Configure(bool enabled, ID3D12Resource* hudless)
     m_enabled = enabled;
 }
 
-bool CFrameGen::OnPresent(ID3D12GraphicsCommandList* list, ID3D12Resource* hudless, const FrameGenInputs& in)
+bool CFrameGen::RegisterUi(ID3D12Resource* ui)
+{
+    const FfxApi* api = LoadFfx();
+    if (!api || !m_sc_ctx)
+        return false;
+    // the swapchain composites the premultiplied UI onto rendered and generated frames; it copies the UI at
+    // Present (double buffering) because D3D11 redraws the shared texture before the generated frame is shown
+    ffxConfigureDescFrameGenerationSwapChainRegisterUiResourceDX12 reg = {};
+    reg.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_REGISTERUIRESOURCE_DX12;
+    if (ui)
+    {
+        reg.uiResource = ffxApiGetResourceDX12(ui, FFX_API_RESOURCE_STATE_COMMON);
+        reg.flags = FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_USE_PREMUL_ALPHA |
+            FFX_FRAMEGENERATION_UI_COMPOSITION_FLAG_ENABLE_INTERNAL_UI_DOUBLE_BUFFERING;
+    }
+    const ffxReturnCode_t rc = api->Configure(&m_sc_ctx, &reg.header);
+    if (rc != FFX_API_RETURN_OK)
+        Msg("! r4_framegen: UI resource %s failed (ffx %u)", ui ? "registration" : "release", rc);
+    return rc == FFX_API_RETURN_OK;
+}
+
+bool CFrameGen::OnPresent(ID3D12GraphicsCommandList* list, ID3D12Resource* hudless, bool ui, const FrameGenInputs& in)
 {
     ++m_frame_id;
     if (!m_fg_ctx)
         return false;
     // no inputs this frame (menu, loading screen, no motion vectors) -> hold: present rendered frames only
-    if (!in.valid || !hudless)
+    if (!in.valid || (!hudless && !ui))
     {
         if (m_enabled)
             Configure(false, nullptr);
