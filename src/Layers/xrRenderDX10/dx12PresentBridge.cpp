@@ -6,6 +6,7 @@
 #include <d3d11_4.h>
 #include <dxgi1_4.h>
 #include <d3d12.h>
+#include <d3dcompiler.h>
 #include "dx12PresentBridge.h"
 #include "dx12FrameGen.h"
 #include "../../xrEngine/igame_persistent.h"
@@ -26,6 +27,8 @@ public:
     bool Init(ID3D11Device1* device, ID3D11DeviceContext1* context, IDXGIFactory2* factory, HWND hwnd,
               const DXGI_SWAP_CHAIN_DESC1& desc, const DXGI_SWAP_CHAIN_FULLSCREEN_DESC& desc_fullscreen, bool framegen);
     void CaptureHudless();
+    void BeginUI();
+    void EndUI();
     bool FrameGenOn() const { return m_fg_on && m_fg.HasContext(); }
     ID3D12Device* Device12() const { return m_dev12; }
     void SetInputs(ID3D11Texture2D* depth, ID3D11Texture2D* mv, const FrameGenInputs& in);
@@ -86,6 +89,10 @@ private:
     void ReleaseToD3D11(UINT slot);
     void ReleaseInputs();
     void CountFrame(bool interpolated);
+    bool UiActive() const { return m_ui12 && !m_ui_failed; }
+    void CreateUi();
+    void ReleaseUi();
+    void CompositeUi();
 
     LONG m_refs = 1;
 
@@ -126,6 +133,25 @@ private:
     DWORD m_stats_start = 0;
     UINT m_stats_rendered = 0, m_stats_interpolated = 0;
     bool m_interpolating = false;
+    // r4_framegen UI texture: the 2D UI goes into m_uirt (colour, transmittance), EndUI composites it onto the
+    // back buffer and writes the premultiplied copy m_ui11/12 that the FG swapchain composites itself
+    bool m_ui_failed = false; // fallback to the HUD-less colour for the session
+    ID3D11Texture2D* m_uirt = nullptr; // RGBA16F, D3D11 only
+    ID3D11RenderTargetView* m_uirt_rtv = nullptr;
+    ID3D11ShaderResourceView* m_uirt_srv = nullptr;
+    ID3D12Resource* m_ui12 = nullptr;
+    ID3D11Texture2D* m_ui11 = nullptr;
+    ID3D11RenderTargetView* m_ui11_rtv = nullptr;
+    ID3D11RenderTargetView* m_shared_rtv = nullptr;
+    ID3D11VertexShader* m_ui_vs = nullptr;
+    ID3D11PixelShader* m_ui_ps = nullptr;
+    ID3D11BlendState* m_ui_blend = nullptr;
+    ID3D11RenderTargetView* m_base_rt = nullptr; // HW.pBaseRT while the UI pass runs
+    bool m_ui_drawn = false;      // BeginUI ran this frame
+    bool m_ui_composited = false; // EndUI ran: m_hudless12 = frame without UI, m_ui12 = its UI
+    bool m_ui_clear = false;      // m_ui11 holds no UI
+    bool m_ui_registered = false;
+    bool m_ui_logged = false;
 };
 
 CDX12PresentSwapChain* s_active = nullptr; // the bridge in use (one window, one swapchain)
@@ -256,6 +282,9 @@ CDX12PresentSwapChain::~CDX12PresentSwapChain()
     ReleaseInputs();
     m_fg.DestroySwapChain();
     _RELEASE(m_sc);
+    _RELEASE(m_ui_vs);
+    _RELEASE(m_ui_ps);
+    _RELEASE(m_ui_blend);
     _RELEASE(m_list);
     for (UINT i = 0; i < FRAME_SLOTS; ++i)
         _RELEASE(m_alloc[i]);
@@ -308,11 +337,14 @@ bool CDX12PresentSwapChain::CreateBuffers()
 
     for (UINT i = 0; i < desc.BufferCount && i < DXGI_MAX_SWAP_CHAIN_BUFFERS; ++i)
         BRIDGE_CHK(m_sc->GetBuffer(i, IID_PPV_ARGS(&m_backbuf[i])), "swapchain GetBuffer");
+    if (m_fg_on && !m_ui_failed)
+        CreateUi();
     return true;
 }
 
 void CDX12PresentSwapChain::ReleaseBuffers()
 {
+    ReleaseUi();
     for (UINT i = 0; i < DXGI_MAX_SWAP_CHAIN_BUFFERS; ++i)
         _RELEASE(m_backbuf[i]);
     _RELEASE(m_shared11);
@@ -441,6 +473,26 @@ HRESULT STDMETHODCALLTYPE CDX12PresentSwapChain::Present(UINT sync_interval, UIN
     m_ctx11->Flush();
     m_queue->Wait(m_fence12, m_value);
 
+    // UI texture mode on interpolated frames: present the frame without UI, the FG swapchain composites the UI
+    // onto rendered and generated frames; otherwise the back buffer with the UI as drawn
+    bool ui = m_ui_composited && m_fg_inputs.valid && m_fg.HasContext();
+    if (UiActive() && (ui || m_ui_registered))
+    {
+        if (m_fg.RegisterUi(ui ? m_ui12 : nullptr))
+        {
+            if (ui && !m_ui_logged)
+                Msg("* r4_framegen: UI texture registered with the frame generation swapchain");
+            m_ui_logged |= ui;
+            m_ui_registered = ui;
+        }
+        else if (ui)
+        {
+            Msg("! r4_framegen: UI texture refused by the provider, using the HUD-less colour");
+            m_ui_failed = true;
+            ui = false;
+        }
+    }
+
     ID3D12Resource* backbuf = m_backbuf[m_sc->GetCurrentBackBufferIndex()];
     m_alloc[slot]->Reset();
     m_list->Reset(m_alloc[slot], nullptr);
@@ -453,16 +505,17 @@ HRESULT STDMETHODCALLTYPE CDX12PresentSwapChain::Present(UINT sync_interval, UIN
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
     m_list->ResourceBarrier(1, &barrier);
     // the shared texture is promoted COMMON -> COPY_SOURCE and decays back after the list
-    m_list->CopyResource(backbuf, m_shared12);
+    m_list->CopyResource(backbuf, ui ? m_hudless12 : m_shared12);
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
     m_list->ResourceBarrier(1, &barrier);
     if (m_fg_on)
     {
-        const bool interpolated = m_fg.OnPresent(m_list, m_hudless_captured ? m_hudless12 : nullptr, m_fg_inputs);
+        const bool interpolated = m_fg.OnPresent(m_list, m_hudless_captured ? m_hudless12 : nullptr, ui, m_fg_inputs);
         CountFrame(interpolated);
     }
     m_hudless_captured = false;
+    m_ui_composited = false;
     m_fg_inputs.valid = false;
     m_list->Close();
 
@@ -490,10 +543,152 @@ void CDX12PresentSwapChain::ReleaseToD3D11(UINT slot)
 
 void CDX12PresentSwapChain::CaptureHudless()
 {
-    if (!m_hudless11 || !m_shared11)
+    if (!m_hudless11 || !m_shared11 || UiActive())
         return;
     m_ctx11->CopyResource(m_hudless11, m_shared11);
     m_hudless_captured = true;
+}
+
+// fullscreen triangle: frame = ui.rgb + transmittance * frame (blend), premultiplied UI = (ui.rgb, 1 - transmittance)
+const char s_ui_hlsl[] =
+    "Texture2D<float4> ui : register(t0);\n"
+    "float4 vs(uint id : SV_VertexID) : SV_Position { float2 p = float2((id << 1) & 2, id & 2); return float4(p * float2(2, -2) + float2(-1, 1), 0, 1); }\n"
+    "struct Out { float4 frame : SV_Target0; float4 ui : SV_Target1; };\n"
+    "Out ps(float4 pos : SV_Position) { float4 c = ui.Load(int3(pos.xy, 0)); Out o; o.frame = c; o.ui = float4(c.rgb, 1 - c.a); return o; }\n";
+
+// UI texture resources for the current back buffer size; on failure the HUD-less colour stays in use (logged once)
+void CDX12PresentSwapChain::CreateUi()
+{
+    const char* failed = nullptr;
+    if (!m_ui_vs)
+    {
+        ID3DBlob *vs = nullptr, *ps = nullptr;
+        if (FAILED(D3DCompile(s_ui_hlsl, sizeof(s_ui_hlsl) - 1, "dx12_ui", nullptr, nullptr, "vs", "vs_5_0", 0, 0, &vs, nullptr)) ||
+            FAILED(D3DCompile(s_ui_hlsl, sizeof(s_ui_hlsl) - 1, "dx12_ui", nullptr, nullptr, "ps", "ps_5_0", 0, 0, &ps, nullptr)) ||
+            FAILED(m_dev11->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &m_ui_vs)) ||
+            FAILED(m_dev11->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &m_ui_ps)))
+            failed = "composite shader";
+        _RELEASE(vs);
+        _RELEASE(ps);
+        D3D11_BLEND_DESC bd = {};
+        bd.IndependentBlendEnable = TRUE;
+        D3D11_RENDER_TARGET_BLEND_DESC& rt = bd.RenderTarget[0];
+        rt.BlendEnable = TRUE;
+        rt.SrcBlend = D3D11_BLEND_ONE;
+        rt.DestBlend = D3D11_BLEND_SRC_ALPHA;
+        rt.BlendOp = D3D11_BLEND_OP_ADD;
+        rt.SrcBlendAlpha = D3D11_BLEND_ZERO;
+        rt.DestBlendAlpha = D3D11_BLEND_ONE;
+        rt.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        rt.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        bd.RenderTarget[1].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+        if (!failed && FAILED(m_dev11->CreateBlendState(&bd, &m_ui_blend)))
+            failed = "composite blend state";
+    }
+    D3D11_TEXTURE2D_DESC desc;
+    m_shared11->GetDesc(&desc);
+    if (!failed)
+    {
+        D3D11_TEXTURE2D_DESC td = desc;
+        td.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        td.MiscFlags = 0;
+        td.Usage = D3D11_USAGE_DEFAULT;
+        td.CPUAccessFlags = 0;
+        if (FAILED(m_dev11->CreateTexture2D(&td, nullptr, &m_uirt)) ||
+            FAILED(m_dev11->CreateRenderTargetView(m_uirt, nullptr, &m_uirt_rtv)) ||
+            FAILED(m_dev11->CreateShaderResourceView(m_uirt, nullptr, &m_uirt_srv)))
+            failed = "UI render target";
+    }
+    if (!failed)
+    {
+        D3D12_RESOURCE_DESC tex = m_shared12->GetDesc();
+        if (!CreateShared(tex, &m_ui12, &m_ui11) || FAILED(m_dev11->CreateRenderTargetView(m_ui11, nullptr, &m_ui11_rtv)) ||
+            FAILED(m_dev11->CreateRenderTargetView(m_shared11, nullptr, &m_shared_rtv)))
+            failed = "shared UI texture";
+    }
+    if (failed)
+    {
+        Msg("! r4_framegen: no UI texture (%s failed), using the HUD-less colour", failed);
+        ReleaseUi();
+        m_ui_failed = true;
+        return;
+    }
+    const float clear[4] = {};
+    m_ctx11->ClearRenderTargetView(m_ui11_rtv, clear);
+    m_ui_clear = true;
+    Msg("* r4_framegen: UI texture %ux%u (RGBA16F target, premultiplied copy shared with D3D12)", desc.Width, desc.Height);
+}
+
+void CDX12PresentSwapChain::ReleaseUi()
+{
+    if (m_ui_registered)
+        m_fg.RegisterUi(nullptr);
+    m_ui_registered = false;
+    m_ui_drawn = m_ui_composited = false;
+    _RELEASE(m_shared_rtv);
+    _RELEASE(m_ui11_rtv);
+    _RELEASE(m_ui11);
+    _RELEASE(m_ui12);
+    _RELEASE(m_uirt_srv);
+    _RELEASE(m_uirt_rtv);
+    _RELEASE(m_uirt);
+}
+
+// the 2D UI starts: the engine's base render target becomes the UI target until EndUI
+void CDX12PresentSwapChain::BeginUI()
+{
+    if (!UiActive() || m_ui_drawn)
+        return;
+    const float clear[4] = {0.f, 0.f, 0.f, 1.f}; // no colour, full transmittance
+    m_ctx11->ClearRenderTargetView(m_uirt_rtv, clear);
+    m_base_rt = HW.pBaseRT;
+    HW.pBaseRT = m_uirt_rtv;
+    RCache.set_RT(m_uirt_rtv);
+    StateManager.SetUiTarget(m_uirt_rtv);
+    m_ui_drawn = true;
+}
+
+// frame end, before screenshots and Present: back buffer = frame + UI as before, m_hudless = frame without UI
+void CDX12PresentSwapChain::EndUI()
+{
+    if (!m_ui_drawn)
+    {
+        // frames without the UI pass (menu, loading screen) leave nothing to composite
+        if (UiActive() && !m_ui_clear)
+        {
+            const float clear[4] = {};
+            m_ctx11->ClearRenderTargetView(m_ui11_rtv, clear);
+            m_ui_clear = true;
+        }
+        return;
+    }
+    HW.pBaseRT = m_base_rt;
+    StateManager.SetUiTarget(nullptr);
+    m_ui_drawn = false;
+    m_ctx11->CopyResource(m_hudless11, m_shared11);
+    CompositeUi();
+    // RCache.OnFrameEnd already cleared the context and invalidated its cache before this; keep it that way
+    m_ctx11->ClearState();
+    m_ui_composited = true;
+    m_ui_clear = false;
+}
+
+void CDX12PresentSwapChain::CompositeUi()
+{
+    D3D11_TEXTURE2D_DESC desc;
+    m_shared11->GetDesc(&desc);
+    ID3D11RenderTargetView* rtv[2] = {m_shared_rtv, m_ui11_rtv};
+    m_ctx11->OMSetRenderTargets(2, rtv, nullptr);
+    // the context is in its cleared state here (RCache.OnFrameEnd): set only what the draw needs
+    m_ctx11->OMSetBlendState(m_ui_blend, nullptr, 0xffffffff);
+    const D3D11_VIEWPORT vp = {0.f, 0.f, float(desc.Width), float(desc.Height), 0.f, 1.f};
+    m_ctx11->RSSetViewports(1, &vp);
+    m_ctx11->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_ctx11->VSSetShader(m_ui_vs, nullptr, 0);
+    m_ctx11->PSSetShader(m_ui_ps, nullptr, 0);
+    m_ctx11->PSSetShaderResources(0, 1, &m_uirt_srv);
+    m_ctx11->Draw(3, 0);
 }
 
 void CDX12PresentSwapChain::ReleaseInputs()
@@ -627,6 +822,18 @@ void DX12Present_CaptureHudless()
     // SVP (scope) frames are not presented
     if (s_active && !Device.m_SecondViewport.IsSVPFrame())
         s_active->CaptureHudless();
+}
+
+void DX12Present_BeginUI()
+{
+    if (s_active && !Device.m_SecondViewport.IsSVPFrame())
+        s_active->BeginUI();
+}
+
+void DX12Present_EndUI()
+{
+    if (s_active && !Device.m_SecondViewport.IsSVPFrame())
+        s_active->EndUI();
 }
 
 IUnknown* DX12Present_Device()

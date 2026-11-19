@@ -12,6 +12,10 @@ IDXGISwapChain1* DX12Present_Create(ID3D11Device1* device, ID3D11DeviceContext1*
 // r4_framegen: copies the back buffer as the HUD-less colour; call once per frame when the 3D scene (incl. HUD
 // weapon and post-process) is final, before the 2D UI is drawn. No-op without the FG swapchain.
 void DX12Present_CaptureHudless();
+// r4_framegen UI texture: BeginUI before the 2D UI (it then draws into its own target), EndUI at the frame end before
+// screenshots / Present (composites it back). No-ops without the FG swapchain or in HUD-less mode (fallback).
+void DX12Present_BeginUI();
+void DX12Present_EndUI();
 
 // the D3D12 device that presents (r4_reflex targets it), nullptr without the bridge
 IUnknown* DX12Present_Device();
