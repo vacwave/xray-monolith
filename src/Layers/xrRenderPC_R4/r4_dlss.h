@@ -40,6 +40,7 @@ private:
 	bool init();
 	bool create_feature(u32 render_w, u32 render_h, u32 out_w, u32 out_h);
 	u32 preset_hint() const;
+	bool output_empty(ID3D11Resource* output, u32 out_w, u32 out_h);
 
 	NVSDK_NGX_Parameter* params = nullptr;
 	NVSDK_NGX_Handle* feature = nullptr;
@@ -50,6 +51,9 @@ private:
 	u32 eval_failures = 0;
 	u32 feature_mode = 0;
 	u32 feature_w = 0, feature_h = 0, feature_out_w = 0, feature_out_h = 0;
+	// Output check: centre pixel read back 2 evaluates later; a feature that writes only zeros is re-created
+	ID3D11Texture2D* probe[3] = {};
+	u32 probe_evals = 0, probe_empty = 0, feature_rebuilds = 0;
 };
 
 extern CDlss Dlss;

@@ -127,6 +127,7 @@ void CDlss::shutdown()
 		NVSDK_NGX_D3D11_Shutdown1(HW.pDevice);
 	ngx_initialized = false;
 	init_tried = false;
+	feature_rebuilds = 0;
 }
 
 void CDlss::release_feature()
@@ -135,6 +136,9 @@ void CDlss::release_feature()
 		NVSDK_NGX_D3D11_ReleaseFeature(feature);
 	feature = nullptr;
 	_RELEASE(exposure);
+	for (ID3D11Texture2D*& t : probe)
+		_RELEASE(t);
+	probe_evals = probe_empty = 0;
 	create_failed = false;
 	eval_failures = 0;
 }
@@ -261,5 +265,51 @@ bool CDlss::evaluate(ID3D11Resource* color, ID3D11Resource* output, ID3D11Resour
 		return false;
 	}
 	eval_failures = 0;
+
+	// Seen ~1 in 10 feature creations (M, RTX 2080 SUPER): every evaluate succeeds but the output stays all zero
+	// (alpha too) until the feature is re-created; a history reset does not help (sdk.md)
+	if (output_empty(output, out_w, out_h) && feature_rebuilds < 3)
+	{
+		Msg("! DLSS output is empty: feature re-created");
+		++feature_rebuilds;
+		release_feature();
+	}
 	return true;
+}
+
+// True after 3 evaluates in a row whose output centre pixel is 0 in every channel (a healthy output keeps alpha)
+bool CDlss::output_empty(ID3D11Resource* output, u32 out_w, u32 out_h)
+{
+	const u32 slot = probe_evals % 3;
+	if (!probe[slot])
+	{
+		ID3D11Texture2D* tex = nullptr;
+		if (FAILED(output->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&tex)))
+			return false;
+		D3D11_TEXTURE2D_DESC desc;
+		tex->GetDesc(&desc);
+		tex->Release();
+		desc.Width = desc.Height = desc.MipLevels = desc.ArraySize = 1;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Usage = D3D11_USAGE_STAGING;
+		desc.BindFlags = desc.MiscFlags = 0;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		if (FAILED(HW.pDevice->CreateTexture2D(&desc, nullptr, &probe[slot])))
+			return false;
+	}
+	const D3D11_BOX box = {out_w / 2, out_h / 2, 0, out_w / 2 + 1, out_h / 2 + 1, 1};
+	HW.pContext->CopySubresourceRegion(probe[slot], 0, 0, 0, 0, output, 0, &box);
+	if (++probe_evals < 3)
+		return false;
+
+	// The copy from 2 evaluates ago; skipped (no stall) if the GPU is not done with it
+	ID3D11Texture2D* ready = probe[probe_evals % 3];
+	D3D11_MAPPED_SUBRESOURCE map;
+	if (!ready || FAILED(HW.pContext->Map(ready, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &map)))
+		return false;
+	const bool empty = *(const u32*)map.pData == 0;
+	HW.pContext->Unmap(ready, 0);
+	probe_empty = empty ? probe_empty + 1 : 0;
+	return probe_empty >= 3;
 }
