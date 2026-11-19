@@ -124,6 +124,10 @@
 
 #define		r2_RT_ssfx_prevPos		"$user$ssfx_prev_p" // Prev Position
 
+#define		r2_RT_dlss_mv			"$user$dlss_mv" // Upscaler motion vectors (RG16F, render size)
+#define		r2_RT_dlss_depth		"$user$dlss_depth" // Upscaler depth (R32F, render size)
+#define		r2_RT_dlss_lens			"$user$dlss_lens" // 3DSS lens mask for the upscaler (render size)
+
 #define		JITTER(a) r2_jitter #a
 
 const float SMAP_near_plane = .1f;

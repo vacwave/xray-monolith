@@ -65,7 +65,8 @@ void CSkeletonX::_Render(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 #ifdef USE_DX11 //
 	if (RImplementation.o.ssfx_motionvectors)
 	{
-		if (Device.dwFrame > Parent->CurrentFrame)
+		// With temporal inputs wanted, scope frames keep the bones of the last main frame for the next one
+		if (Device.dwFrame > Parent->CurrentFrame && !RImplementation.Target->temporal_svp_frame)
 		{
 			// Save current frame
 			Parent->CurrentFrame = Device.dwFrame;
@@ -116,6 +117,11 @@ void CSkeletonX::_Render(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 			Fmatrix W;
 			W.mul_43(RCache.xforms.m_w, Parent->LL_GetTransform_R(u16(RMS_boneid)));
 			RCache.set_xform_world(W);
+#ifdef USE_DX11
+			// set_xform_world also resets the previous world: restore this bone's previous WVP
+			if (RImplementation.o.ssfx_motionvectors)
+				RCache.set_c("m_wvp_prev", p_WVP);
+#endif
 			//
 			RCache.set_Geometry(hGeom);
 			RCache.Render(D3DPT_TRIANGLELIST, 0, 0, vCount, iOffset, pCount);

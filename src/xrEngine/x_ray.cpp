@@ -1203,6 +1203,12 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 			Console->Execute("renderer renderer_r2");
 		else
 		{
+			// Apply the first listed renderer's state first, so a config without a `renderer` line matches it
+			extern xr_token* vid_quality_token;
+			string64 r_cmd;
+			xr_sprintf(r_cmd, "renderer %s", vid_quality_token[0].name);
+			Console->Execute(r_cmd);
+
 			CCC_LoadCFG_custom* pTmp = xr_new<CCC_LoadCFG_custom>("renderer ");
 			pTmp->Execute(Console->ConfigFile);
 			xr_delete(pTmp);

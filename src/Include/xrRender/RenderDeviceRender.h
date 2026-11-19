@@ -62,6 +62,10 @@ public:
 	virtual void OnAssetsChanged() = 0;
 
 	virtual bool SwitchOutputMonitor(HMONITOR hTargetMon, HWND hWnd, u32 g_screenmode, u32& vidModeW, u32& vidModeH) { return false; }
+
+	// r4_reflex: low-latency sleep at frame start (before input and simulation); true = it enforces the frame cap
+	virtual bool LatencyFrameStart(int frame_cap_fps) { return false; }
+	virtual void LatencySimulationEnd() {}
 };
 
 #endif	//	RenderDeviceRender_included

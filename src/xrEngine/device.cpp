@@ -363,6 +363,9 @@ void CRenderDevice::on_idle()
 		return;
 	}
 
+	// r4_reflex: frame start = before input (seqFrame) and simulation; with a cap, Reflex replaces the limiter below
+	const bool reflex_caps_fps = m_pRender->LatencyFrameStart(ps_framelimiter);
+
 	if (!Device.dwPrecacheFrame && !g_SASH.IsBenchmarkRunning() && g_bLoaded)
 	{
 		PROF_EVENT("Start xrSASH Benchmark");
@@ -396,6 +399,7 @@ void CRenderDevice::on_idle()
 	}
 
 	FrameMove();
+	m_pRender->LatencySimulationEnd();
 
     if (g_pGamePersistent != nullptr)
     {
@@ -492,7 +496,7 @@ void CRenderDevice::on_idle()
 	secondary_tasks.run(&XRay::Engine::GameThread);
 	
 #ifdef ECO_RENDER // ECO_RENDER START
-	if (Device.Paused() || IsMainMenuActive() || ps_framelimiter)
+	if (!reflex_caps_fps && (Device.Paused() || IsMainMenuActive() || ps_framelimiter))
 	{
 		PROF_EVENT("Eco Render");
 

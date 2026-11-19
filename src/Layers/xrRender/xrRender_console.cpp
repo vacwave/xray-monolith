@@ -316,6 +316,9 @@ float ps_r4_hdr10_pda_intensity   = 1.0f;   // r4-only, default = 1.0x
 int   ps_r4_hdr10_pda             = 0;	    // r4-only (NOTE: this is a hack to not double HDR tonemap the 3D PDA)
 int   ps_r4_hdr10_on              = 0;	    // r4-only, default = off
 int   ps_r4_hdr10_colorspace      = 2;      // r4-only, default = Rec.2020
+int   ps_r4_dx12_present          = 0;      // r4-only, D3D12 owns the swapchain (read at device creation)
+int   ps_r4_framegen              = 0;      // r4-only, FSR frame generation swapchain, needs r4_dx12_present (read at device creation)
+int   ps_r4_reflex                = 0;      // r4-only, NVIDIA Reflex: 1 low latency, 2 + boost (runtime)
 
 int   ps_r4_hdr10_tonemapper   		   = 0;    // r4-only, default = ACES (Narkowicz)
 int   ps_r4_hdr10_tonemap_mode 		   = 1;	   // r4-only, default = Color
@@ -362,6 +365,27 @@ float ps_r2_img_saturation = 1.0f; // r2-only
 Fvector ps_r2_img_cg = {.0f, .0f, .0f}; // r2-only
 
 float ps_r4_atlas_resolution = 0.6666667f; // r4-only
+float ps_r4_render_scale = 1.0f; // r4-only, scene render size = output size x scale, applied on vid_restart
+int ps_r4_upscale_debug = 0; // r4-only, test view of the upscaler inputs: 1 motion vectors, 2 depth
+float ps_r4_upscale_sharpness = 0.f; // r4-only, RCAS after the upscale slot: 0 off .. 1 max, applied at once
+u32 ps_r4_dlss = 0; // r4-only, DLSS mode (overrides r4_render_scale), applied on vid_restart
+xr_token dlss_mode_token[] = {
+	{"off", 0},
+	{"dlaa", 1},
+	{"quality", 2},
+	{"balanced", 3},
+	{"performance", 4},
+	{"ultra_performance", 5},
+	{0, 0}
+};
+u32 ps_r4_dlss_preset = 0; // r4-only, DLSS model preset, applied on vid_restart
+xr_token dlss_preset_token[] = {
+	{"default", 0},
+	{"k", 1},
+	{"m", 2},
+	{"l", 3},
+	{0, 0}
+};
 // Atlas allocation settings take effect on vid_restart.
 int ps_r4_atlas = 0;
 int ps_r4_atlas_width = 2048;
@@ -1316,6 +1340,93 @@ public:
 	}
 };
 
+#ifdef USE_DX11
+#include "../xrRenderPC_R4/r4_dlss.h"
+#include "../xrRenderDX10/dx12PresentBridge.h"
+#include "../xrRenderDX10/dxReflex.h"
+
+// Options menu status of the upscaler / frame generation / Reflex: "on", "off", "unavailable: <reason>" or "<state>: <note>"
+static bool exe_dir_has(LPCSTR dll)
+{
+	string_path path;
+	GetModuleFileNameA(nullptr, path, sizeof(path));
+	if (LPSTR slash = strrchr(path, '\\'))
+		slash[1] = 0;
+	xr_strcat(path, dll);
+	return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+}
+
+static LPCSTR dlss_status()
+{
+	if (HW.Caps.id_vendor != 0x10DE)
+		return "unavailable: not an NVIDIA GPU";
+	if (!exe_dir_has("nvngx_dlss.dll"))
+		return "unavailable: nvngx_dlss.dll is missing";
+	if (!RImplementation.o.ssfx_motionvectors)
+		return "unavailable: needs Screen Space Shaders motion vectors";
+	if (RImplementation.o.dx11_hdr10)
+		return "unavailable: HDR10 is on";
+	if (Dlss.init_failed())
+		return "unavailable: GPU or driver not supported (see the log)";
+	if (ps_r4_dlss == CDlss::MODE_OFF)
+		return "off";
+	if (RImplementation.o.dx10_msaa)
+		return "unavailable: MSAA is on, restart the game";
+	if (RImplementation.Target && RImplementation.Target->dlss_target)
+		return "on";
+	return "not active: needs vid_restart, else see the log";
+}
+
+static LPCSTR framegen_status()
+{
+	const bool vectors = RImplementation.o.ssfx_motionvectors && !RImplementation.o.dx10_msaa;
+	if (DX12Present_FrameGenWantsInputs())
+	{
+		if (!vectors)
+			return RImplementation.o.dx10_msaa ? "unavailable: MSAA is on" : "unavailable: needs Screen Space Shaders motion vectors";
+		return ps_r4_framegen && ps_r4_dx12_present ? "on" : "on: off after a game restart";
+	}
+	if (ps_r4_hdr10_on || RImplementation.o.dx11_hdr10)
+		return "unavailable: HDR10 is on";
+	if (!RImplementation.o.ssfx_motionvectors)
+		return "unavailable: needs Screen Space Shaders motion vectors";
+	if (RImplementation.o.dx10_msaa)
+		return "unavailable: MSAA is on";
+	if (!exe_dir_has("amd_fidelityfx_loader_dx12.dll") || !exe_dir_has("amd_fidelityfx_framegeneration_dx12.dll"))
+		return "unavailable: FSR frame generation DLLs are missing";
+	if (!ps_r4_framegen)
+		return "off";
+	if (!ps_r4_dx12_present)
+		return "unavailable: needs the DX12 presentation bridge";
+	if (DX12Present_FrameGenTried())
+		return "unavailable: failed to start (see the log)";
+	return "off: restart the game to apply";
+}
+
+static LPCSTR reflex_status()
+{
+	if (HW.Caps.id_vendor != 0x10DE)
+		return "unavailable: not an NVIDIA GPU";
+	if (Reflex::Failed())
+		return "unavailable: NVIDIA driver call failed (see the log)";
+	return ps_r4_reflex == 2 ? "on + boost" : ps_r4_reflex ? "on" : "off";
+}
+
+// Read-only status for Lua (get_console_cmd(0, name)); never written to user.ltx
+class CCC_RenderStatus : public IConsole_Command
+{
+	LPCSTR (*m_get)();
+public:
+	CCC_RenderStatus(LPCSTR N, LPCSTR (*get)()) : IConsole_Command(N), m_get(get) { bEmptyArgsHandled = TRUE; }
+	// the startup console dump runs before the device exists (HW.Caps still zero)
+	LPCSTR get() { return HW.pDevice ? m_get() : "unknown: render device not created yet"; }
+	virtual void Execute(LPCSTR args) { Msg("%s: %s", cName, get()); }
+	virtual void Status(TStatus& S) { xr_strcpy(S, get()); }
+	virtual void Info(TInfo& I) { xr_strcpy(I, "read-only status"); }
+	virtual void Save(IWriter* F) {}
+};
+#endif
+
 //-----------------------------------------------------------------------
 void xrRender_initconsole()
 {
@@ -1504,6 +1615,9 @@ void xrRender_initconsole()
     CMD4(CCC_Float,   "r4_hdr10_pda_intensity",   &ps_r4_hdr10_pda_intensity,      0.1, 2);
 	CMD4(CCC_Integer, "r4_hdr10_on", 			  &ps_r4_hdr10_on, 				     0, 1);
     CMD4(CCC_Integer, "r4_hdr10_colorspace",	  &ps_r4_hdr10_colorspace, 		     0, 2);
+    CMD4(CCC_Integer, "r4_dx12_present",		  &ps_r4_dx12_present, 			     0, 1);
+    CMD4(CCC_Integer, "r4_framegen",			  &ps_r4_framegen, 				     0, 1);
+    CMD4(CCC_Integer, "r4_reflex",				  &ps_r4_reflex, 				     0, 2);
 
     CMD4(CCC_Integer, "r4_hdr10_tonemapper", 	  		&ps_r4_hdr10_tonemapper,      	      0, 8);
 	CMD4(CCC_Integer, "r4_hdr10_tonemap_mode",    		&ps_r4_hdr10_tonemap_mode,    	      0, 1);
@@ -1578,6 +1692,16 @@ void xrRender_initconsole()
 
 	CMD4(CCC_Integer, "r4_atlas", &ps_r4_atlas, 0, 1);
 	CMD4(CCC_Float, "r4_atlas_resolution", &ps_r4_atlas_resolution, 0.1f, 1.0f);
+	CMD4(CCC_Float, "r4_render_scale", &ps_r4_render_scale, 0.5f, 1.0f);
+	CMD4(CCC_Integer, "r4_upscale_debug", &ps_r4_upscale_debug, 0, 2);
+	CMD4(CCC_Float, "r4_upscale_sharpness", &ps_r4_upscale_sharpness, 0.f, 1.f);
+	CMD3(CCC_Token, "r4_dlss", &ps_r4_dlss, dlss_mode_token);
+	CMD3(CCC_Token, "r4_dlss_preset", &ps_r4_dlss_preset, dlss_preset_token);
+#ifdef USE_DX11
+	CMD2(CCC_RenderStatus, "r4_dlss_status", dlss_status);
+	CMD2(CCC_RenderStatus, "r4_framegen_status", framegen_status);
+	CMD2(CCC_RenderStatus, "r4_reflex_status", reflex_status);
+#endif
 	CMD4(CCC_Integer, "r4_atlas_width", &ps_r4_atlas_width, 256, 8192);
 	CMD4(CCC_Integer, "r4_atlas_height", &ps_r4_atlas_height, 256, 8192);
 	CMD3(CCC_Token, "r4_atlas_msaa", &ps_r4_atlas_msaa, ui_3d_icons_msaa_token);

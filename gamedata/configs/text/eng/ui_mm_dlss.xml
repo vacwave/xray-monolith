@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="windows-1251"?>
+
+<string_table>
+	<string id="ui_mm_header_upscaling">
+		<text>Upscaling and Frame Generation</text>
+	</string>
+
+	<string id="ui_mm_video_advanced_dlss">
+		<text>NVIDIA DLSS</text>
+	</string>
+	<string id="ui_mm_video_advanced_dlss_desc">
+		<text>DLSS upscaling; DLAA = anti-aliasing at native resolution. Needs an NVIDIA RTX GPU and Screen Space Shaders motion vectors. Replaces MSAA, SMAA and SSS TAA while on. Applied with a video restart.</text>
+	</string>
+	<string id="ui_mm_lst_dlss_off">
+		<text>Off</text>
+	</string>
+	<string id="ui_mm_lst_dlss_dlaa">
+		<text>DLAA</text>
+	</string>
+	<string id="ui_mm_lst_dlss_quality">
+		<text>Quality</text>
+	</string>
+	<string id="ui_mm_lst_dlss_balanced">
+		<text>Balanced</text>
+	</string>
+	<string id="ui_mm_lst_dlss_performance">
+		<text>Performance</text>
+	</string>
+	<string id="ui_mm_lst_dlss_ultra_performance">
+		<text>Ultra Performance</text>
+	</string>
+
+	<string id="ui_mm_video_advanced_upscale_sharpness">
+		<text>Upscale Sharpness</text>
+	</string>
+	<string id="ui_mm_video_advanced_upscale_sharpness_desc">
+		<text>Sharpening (FidelityFX RCAS) after the upscale: with DLSS, with Render Scale and at native resolution. 0 = off.</text>
+	</string>
+
+	<string id="ui_mm_video_advanced_dlss_preset">
+		<text>DLSS Preset</text>
+	</string>
+	<string id="ui_mm_video_advanced_dlss_preset_desc">
+		<text>DLSS model. Default = M on RTX 20/30 cards, the driver's choice on newer ones. K can break the image on RTX 20/30 cards. Applied with a video restart.</text>
+	</string>
+	<string id="ui_mm_lst_dlss_preset_default">
+		<text>Default</text>
+	</string>
+	<string id="ui_mm_lst_dlss_preset_k">
+		<text>K</text>
+	</string>
+	<string id="ui_mm_lst_dlss_preset_m">
+		<text>M</text>
+	</string>
+	<string id="ui_mm_lst_dlss_preset_l">
+		<text>L</text>
+	</string>
+
+	<string id="ui_mm_video_advanced_render_scale">
+		<text>Render Scale</text>
+	</string>
+	<string id="ui_mm_video_advanced_render_scale_desc">
+		<text>Renders the 3D scene at a lower resolution and stretches it to the screen. Ignored while DLSS is on (DLSS picks its own resolution). Applied with a video restart.</text>
+	</string>
+
+	<string id="ui_mm_video_advanced_dx12_present">
+		<text>DX12 Presentation</text>
+	</string>
+	<string id="ui_mm_video_advanced_dx12_present_desc">
+		<text>Shows the frames through a DX12 swapchain; frame generation needs it. Not with HDR10; exclusive fullscreen becomes borderless. Needs a game restart.</text>
+	</string>
+
+	<string id="ui_mm_video_advanced_framegen">
+		<text>Frame Generation (FSR)</text>
+	</string>
+	<string id="ui_mm_video_advanced_framegen_desc">
+		<text>AMD FSR frame generation: one generated frame after every rendered frame. Needs DX12 Presentation and Screen Space Shaders motion vectors; best at 60+ fps. Needs a game restart.</text>
+	</string>
+	<string id="ui_mm_lst_upscale_off">
+		<text>Off</text>
+	</string>
+	<string id="ui_mm_lst_upscale_on">
+		<text>On</text>
+	</string>
+
+	<string id="ui_mm_video_advanced_reflex">
+		<text>NVIDIA Reflex</text>
+	</string>
+	<string id="ui_mm_video_advanced_reflex_desc">
+		<text>Low latency mode: the CPU waits so that frames do not queue up. Boost also keeps the GPU clocks high. NVIDIA GPUs only.</text>
+	</string>
+	<string id="ui_mm_lst_reflex_on">
+		<text>On</text>
+	</string>
+	<string id="ui_mm_lst_reflex_boost">
+		<text>On + Boost</text>
+	</string>
+
+	<string id="ui_mm_upscale_status_dlss">
+		<text>DLSS:</text>
+	</string>
+	<string id="ui_mm_upscale_status_framegen">
+		<text>Frame generation:</text>
+	</string>
+	<string id="ui_mm_upscale_status_reflex">
+		<text>Reflex:</text>
+	</string>
+	<string id="ui_mm_upscale_aa_ignored">
+		<text>MSAA and SMAA are ignored while DLSS is on.</text>
+	</string>
+</string_table>

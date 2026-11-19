@@ -463,6 +463,8 @@ public:
 	virtual u32 memory_usage() { return 0; }
 	virtual u32 active_phase() = 0; //Swartz: actor shadow
 	virtual void RenderToTarget(RRT target) = 0;
+	// the 2D UI starts: from here to the frame end it may go to its own target (r4_framegen UI texture)
+	virtual void BeginUI() {}
 	// Constructor/destructor
 	virtual ~IRender_interface();
 protected:

@@ -3,6 +3,10 @@
 
 #include "ResourceManager.h"
 #include "../../xrEngine/shader_bus.h"
+#ifdef USE_DX11
+#include "../xrRenderDX10/dxReflex.h"
+#include "../xrRenderDX10/dx12PresentBridge.h"
+#endif
 
 // a shader bus texture lane's $user$bus_ alias and the texture it shows
 struct bus_texture_slot
@@ -423,6 +427,9 @@ void dxRenderDeviceRender::Begin()
 #if !defined(USE_DX10) && !defined(USE_DX11)
 	CHK_DX(HW.pDevice->BeginScene());
 #endif	//	USE_DX10
+#ifdef USE_DX11
+	Reflex::RenderSubmitStart();
+#endif
 
 	RCache.OnFrameBegin();
 	RCache.set_CullMode(CULL_CW);
@@ -463,6 +470,9 @@ void dxRenderDeviceRender::End()
 	RCache.OnFrameEnd();
 	Memory.dbg_check();
 
+#ifdef USE_DX11
+	DX12Present_EndUI();
+#endif
 	{
 		PROF_EVENT("Async Screenshot");
 		DoAsyncScreenshot();
@@ -482,7 +492,13 @@ void dxRenderDeviceRender::End()
 # endif
 
 	if (!Device.m_SecondViewport.IsSVPFrame() && !Device.m_SecondViewport.isCamReady) {
+# if defined(USE_DX11)
+		Reflex::PresentStart();
+# endif
 		HW.m_pSwapChain->Present(present_interval, present_flags);
+# if defined(USE_DX11)
+		Reflex::PresentEnd();
+# endif
 	}
 #else //!USE_DX10 || USE_DX11
 	CHK_DX(HW.pDevice->EndScene());
@@ -493,6 +509,18 @@ void dxRenderDeviceRender::End()
 	//HRESULT _hr		= HW.pDevice->Present( NULL, NULL, NULL, NULL );
 	//if				(D3DERR_DEVICELOST==_hr)	return;			// we will handle this later
 }
+
+#ifdef USE_DX11
+bool dxRenderDeviceRender::LatencyFrameStart(int frame_cap_fps)
+{
+	return Reflex::FrameStart(frame_cap_fps);
+}
+
+void dxRenderDeviceRender::LatencySimulationEnd()
+{
+	Reflex::SimulationEnd();
+}
+#endif
 
 void dxRenderDeviceRender::ResourcesDestroyNecessaryTextures()
 {

@@ -623,8 +623,15 @@ static class cl_screen_res : public R_constant_setup
 {
 	virtual void setup(R_constant* C)
 	{
+#if defined(USE_DX11)
+		// Render size before the upscale slot, output size after it
+		const float w = RImplementation.Target ? (float)RImplementation.Target->scr_width() : (float)RDEVICE.dwWidth;
+		const float h = RImplementation.Target ? (float)RImplementation.Target->scr_height() : (float)RDEVICE.dwHeight;
+		RCache.set_c(C, w, h, 1.0f / w, 1.0f / h);
+#else
 		RCache.set_c(C, (float)RDEVICE.dwWidth, (float)RDEVICE.dwHeight, 1.0f / (float)RDEVICE.dwWidth,
 		             1.0f / (float)RDEVICE.dwHeight);
+#endif
 	}
 } binder_screen_res;
 
@@ -1174,6 +1181,14 @@ static class ssfx_jitter : public R_constant_setup
 		float JitterY = 0;
 
 #if defined(USE_DX11)
+		const CRenderTarget* T = RImplementation.Target;
+		if (T && T->temporal_active && T->scene_size_active)
+		{
+			// Upscaler jitter: render pixels (+y down) to the clip-space offset the SSS shaders add (+y up)
+			RCache.set_c(C, 2.f * T->jitter_px.x / float(T->render_width), -2.f * T->jitter_px.y / float(T->render_height), ps_ssfx_taa.x, ps_ssfx_taa.w);
+			return;
+		}
+
 		if (ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa)
 		{
 			static Fvector2 TAA_Offset[4] = 
@@ -1184,8 +1199,8 @@ static class ssfx_jitter : public R_constant_setup
 				{  0.0f,  1.0f }
 			};
 
-			JitterX = TAA_Offset[ Device.dwFrame % 4 ].x / Device.dwWidth;
-			JitterY = TAA_Offset[ Device.dwFrame % 4 ].y / Device.dwHeight;
+			JitterX = TAA_Offset[ Device.dwFrame % 4 ].x / RImplementation.Target->scr_width();
+			JitterY = TAA_Offset[ Device.dwFrame % 4 ].y / RImplementation.Target->scr_height();
 		}
 #endif
 

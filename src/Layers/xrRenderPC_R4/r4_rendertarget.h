@@ -79,6 +79,7 @@ public:
 	IBlender* b_ssfx_fog_scattering;
 	IBlender* b_ssfx_motion_blur;
 	IBlender* b_ssfx_taa;
+	IBlender* b_upscale;
 	IBlender* b_ssfx_rain;
 	IBlender* b_ssfx_water_blur;
 	IBlender* b_ssfx_bloom_downsample;
@@ -230,6 +231,46 @@ public:
 	//bool RVelocity;
 
 	ref_rt rt_tempzb; // Redotix99: for 3D Shader Based Scopes
+
+	// Render resolution split (r4_render_scale): only created when render size != output size
+	ref_rt rt_scene_zb; // scene depth at render size, bound as HW.pBaseZB until the upscale slot
+	ref_rt rt_Color_out, rt_Generic_0_out, rt_Generic_1_out; // output-size twins used after the upscale slot
+	ref_shader s_upscale;
+	ID3DDepthStencilView* output_zb;
+	bool output_rts_swapped, output_generic1_swapped, swap_desync_logged;
+
+	// Temporal upscaler inputs (convention in notes/dlss/pipeline.md "Temporal inputs (D2)")
+	ref_rt rt_dlss_mv; // RG16F render size: previous minus current position in render pixels, jitter excluded
+	ref_rt rt_dlss_depth; // R32F render size: hardware depth from s_position, 0 near .. 1 far
+	ref_rt rt_dlss_lens; // render size: 3DSS lens mask (MRT3 of the scope z-write pass), cleared every active frame
+	ref_shader s_temporal; // E[0] resolve, E[1] debug view
+	IBlender* b_temporal;
+	bool upscaler_enabled; // set by the upscaler (D3): wants jitter and inputs
+	bool temporal_active; // this frame (main view only): jitter applied, inputs resolved
+	bool history_reset; // this frame: the upscaler must drop its history
+	Fvector2 jitter_px, jitter_px_prev; // screen offset of the geometry in render pixels (+x right, +y down)
+	void request_history_reset() { history_reset_pending = true; }
+	void begin_temporal_frame();
+	void phase_temporal_inputs();
+	void phase_upscale_debug();
+	bool history_reset_pending, temporal_unavailable_logged;
+	u32 temporal_frame, temporal_last_frame;
+	Fvector temporal_cam_pos;
+	const void* temporal_level;
+	// Scope (SVP) frames between main frames: the main view keeps its history and previous matrices
+	bool temporal_svp_frame; // this frame is a scope frame while the inputs are wanted (SkeletonX keeps its previous bones)
+	bool temporal_svp_on;
+	u32 temporal_svp_last, temporal_svp_frames, temporal_svp_resets;
+	Fmatrix temporal_view, temporal_proj, temporal_view_hud, temporal_proj_hud, temporal_view_cam, temporal_proj_cam;
+	// DLSS (r4_dlss): set up with this target (render size from NGX), evaluated this frame
+	bool dlss_target, dlss_active;
+	float dlss_mip_bias;
+	bool phase_dlss();
+	// RCAS sharpening (r4_upscale_sharpness) after the upscale slot, created on first use
+	ref_rt rt_sharpen_src; // output-size copy of generic0 the pass reads
+	ref_shader s_sharpen;
+	IBlender* b_sharpen = nullptr;
+	void phase_sharpen();
 
 	ref_shader s_ssfx_dumb;
 
@@ -522,6 +563,18 @@ public:
 
 	virtual u32 get_width() { return dwWidth; }
 	virtual u32 get_height() { return dwHeight; }
+
+	// Scene render size (output size x r4_render_scale), fixed until the next device reset
+	u32 render_width, render_height;
+	bool scene_size_active; // set from scene start until the upscale slot
+	// Screen size the current pass works at: render size before the upscale slot, output size after it
+	u32 scr_width() const { return scene_size_active ? render_width : Device.dwWidth; }
+	u32 scr_height() const { return scene_size_active ? render_height : Device.dwHeight; }
+	bool render_scaled() const { return render_width != Device.dwWidth || render_height != Device.dwHeight; }
+	void begin_scene_size();
+	void phase_upscale();
+	void swap_output_rts(bool generic1);
+	void end_output_size();
 
 	virtual void set_cm_imfluence(float f) { param_color_map_influence = f; }
 	virtual void set_cm_interpolate(float f) { param_color_map_interpolate = f; }

@@ -1,8 +1,12 @@
 #include "stdafx.h"
 #include "../../xrEngine/igame_persistent.h"
 #include "../../xrEngine/environment.h"
+#include "../../xrEngine/igame_level.h"
 
 #include "../xrRender/dxEnvironmentRender.h"
+#include "../xrRenderDX10/StateManager/dx10SamplerStateCache.h"
+#include "r4_dlss.h"
+#include "../xrRenderDX10/dx12PresentBridge.h"
 
 #define STENCIL_CULL 0
 
@@ -10,7 +14,8 @@ void CRenderTarget::DoAsyncScreenshot()
 {
 	//	Igor: screenshot will not have postprocess applied.
 	//	TODO: fox that later
-	if (RImplementation.m_bMakeAsyncSS)
+	// Scope (SVP) frames are never presented: keep the request for the next main frame
+	if (RImplementation.m_bMakeAsyncSS && !Device.m_SecondViewport.IsSVPFrame())
 	{
 		HRESULT hr;
 
@@ -36,6 +41,278 @@ void CRenderTarget::DoAsyncScreenshot()
 }
 
 float hclip(float v, float dim) { return 2.f * v / dim - 1.f; }
+
+// Render resolution split: scene passes run at render size with their own depth buffer
+void CRenderTarget::begin_scene_size()
+{
+	// A frame that skipped end_output_size would feed the output twins to the scene passes and the upscaler
+	if (output_rts_swapped)
+	{
+		if (!swap_desync_logged)
+			Msg("! upscale: output render targets still swapped at the frame start, restored");
+		swap_desync_logged = true;
+		swap_output_rts(output_generic1_swapped);
+	}
+	upscaler_enabled = dlss_target;
+	begin_temporal_frame();
+	dlss_active = dlss_target && temporal_active;
+	// DLSS: textures sampled for the output resolution (DLSS guide 3.5)
+	SSManager.SetMipLODBias(ps_r__tf_Mipbias + dlss_mip_bias);
+	scene_size_active = true;
+	if (!render_scaled())
+		return;
+
+	// Every scene pass binds HW.pBaseZB; point it at the render-size depth until the upscale slot
+	output_zb = HW.pBaseZB;
+	HW.pBaseZB = rt_scene_zb->pZRT;
+	set_viewport_size(HW.pContext, float(render_width), float(render_height));
+}
+
+// Upscale slot: DLSS or bilinear copy render -> output size, then the combine tail runs at output size
+void CRenderTarget::phase_upscale()
+{
+	scene_size_active = false;
+	if (!render_scaled() && !dlss_target)
+		return;
+
+	PIX_EVENT(phase_upscale);
+	if (render_scaled())
+	{
+		HW.pBaseZB = output_zb;
+		output_zb = nullptr;
+	}
+
+	if (dlss_active && phase_dlss())
+	{
+		// NGX restores the render-size viewport of the last pass
+		set_viewport_size(HW.pContext, float(Device.dwWidth), float(Device.dwHeight));
+		swap_output_rts(false);
+		return;
+	}
+
+	u_setrt(rt_Generic_0_out, nullptr, nullptr, nullptr);
+	set_viewport_size(HW.pContext, float(Device.dwWidth), float(Device.dwHeight));
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+
+	const float w = float(Device.dwWidth);
+	const float h = float(Device.dwHeight);
+	Fvector2 p0, p1;
+	p0.set(.5f / w, .5f / h);
+	p1.set((w + .5f) / w, (h + .5f) / h);
+	const u32 C = color_rgba(255, 255, 255, 255);
+	u32 Offset;
+	FVF::TL* pv = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, Offset);
+	pv->set(0, h, EPS_S, 1.f, C, p0.x, p1.y); pv++;
+	pv->set(0, 0, EPS_S, 1.f, C, p0.x, p0.y); pv++;
+	pv->set(w, h, EPS_S, 1.f, C, p1.x, p1.y); pv++;
+	pv->set(w, 0, EPS_S, 1.f, C, p1.x, p0.y); pv++;
+	RCache.Vertex.Unlock(4, g_combine->vb_stride);
+
+	RCache.set_Element(s_upscale->E[0]);
+	RCache.set_Geometry(g_combine);
+	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+
+	// The scene image (generic0) and the combine target (albedo) continue at output size
+	swap_output_rts(false);
+}
+
+// DLSS evaluate: generic0 (render size) -> generic0_out (output size); false = use the bilinear copy
+bool CRenderTarget::phase_dlss()
+{
+	PIX_EVENT(phase_dlss);
+	// Nothing bound while NGX reads the inputs and writes the output (no RT, no SRV of the output twin);
+	// afterwards the context may hold NGX's own state behind RCache's caches: clear both, as between frames
+	RCache.OnFrameEnd();
+	const bool ok = Dlss.evaluate(rt_Generic_0->pSurface, rt_Generic_0_out->pSurface, rt_dlss_depth->pSurface, rt_dlss_mv->pSurface,
+		render_width, render_height, Device.dwWidth, Device.dwHeight, jitter_px, history_reset);
+	RCache.OnFrameEnd();
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	return ok;
+}
+
+static void swap_rt_pair(ref_rt& a, ref_rt& b)
+{
+	std::swap(a, b);
+	// Shaders bind the "$user$" texture by name: it follows the RT now in use
+	std::swap(a->pTexture, b->pTexture);
+	a->pTexture->surface_set(a->pSurface);
+	b->pTexture->surface_set(b->pSurface);
+}
+
+void CRenderTarget::swap_output_rts(bool generic1)
+{
+	swap_rt_pair(rt_Color, rt_Color_out);
+	swap_rt_pair(rt_Generic_0, rt_Generic_0_out);
+	if (generic1)
+		swap_rt_pair(rt_Generic_1, rt_Generic_1_out);
+	output_rts_swapped = !output_rts_swapped;
+	output_generic1_swapped = generic1;
+	// Cached texture slots still hold the old views: an empty list unbinds them all
+	STextureList no_textures;
+	RCache.set_Textures(&no_textures);
+}
+
+// Back to the scene targets and the output depth buffer (end of frame / menu)
+void CRenderTarget::end_output_size()
+{
+	if (output_rts_swapped)
+		swap_output_rts(output_generic1_swapped);
+	if (output_zb)
+	{
+		HW.pBaseZB = output_zb;
+		output_zb = nullptr;
+	}
+	scene_size_active = false;
+}
+
+static float halton(u32 i, u32 base)
+{
+	float f = 1.f, r = 0.f;
+	for (; i; i /= base)
+	{
+		f /= float(base);
+		r += f * float(i % base);
+	}
+	return r;
+}
+
+// Per main-view frame: decide whether the temporal inputs run, advance the jitter, set the history-reset flag
+void CRenderTarget::begin_temporal_frame()
+{
+	bool want = upscaler_enabled || ps_r4_upscale_debug != 0 || DX12Present_FrameGenWantsInputs();
+	if (want && (!RImplementation.o.ssfx_motionvectors || RImplementation.o.dx10_msaa))
+	{
+		if (!temporal_unavailable_logged)
+			Msg("! temporal upscaler inputs unavailable: %s", RImplementation.o.dx10_msaa ? "MSAA is on" : "needs SSS motion vectors (shaders\\r3\\screenspace_mvectors.h)");
+		temporal_unavailable_logged = true;
+		want = false;
+	}
+
+	// Scope (SVP) frames keep their own camera: no jitter, no inputs; the main view's history skips over them
+	const bool svp = Device.m_SecondViewport.IsSVPFrame();
+	temporal_active = want && !svp;
+	temporal_svp_frame = want && svp;
+	if (!temporal_active)
+	{
+		if (temporal_svp_frame)
+			temporal_svp_last = Device.dwFrame;
+		else
+			history_reset_pending = true;
+		return;
+	}
+
+	if (!rt_dlss_mv)
+	{
+		rt_dlss_mv.create(r2_RT_dlss_mv, render_width, render_height, D3DFMT_G16R16F);
+		rt_dlss_depth.create(r2_RT_dlss_depth, render_width, render_height, D3DFMT_R32F);
+		rt_dlss_lens.create(r2_RT_dlss_lens, render_width, render_height, D3DFMT_A8R8G8B8);
+		s_temporal.create(b_temporal, "r2\\temporal");
+	}
+	const FLOAT lens_clear[4] = { 0.f, 0.f, 0.f, 0.f };
+	HW.pContext->ClearRenderTargetView(rt_dlss_lens->pRT, lens_clear);
+
+	// Main frame right after a scope frame: Device's previous matrices are the scope camera's, use the last main frame's
+	const bool after_svp = temporal_svp_last + 1 == Device.dwFrame && temporal_last_frame + 2 == Device.dwFrame;
+	if (after_svp)
+	{
+		Device.mView_prev.set(temporal_view);
+		Device.mProject_prev.set(temporal_proj);
+		Device.mFullTransform_prev.mul(temporal_proj, temporal_view);
+		Device.mViewHud_prev.set(temporal_view_hud);
+		Device.mProjectHud_prev.set(temporal_proj_hud);
+		Device.mFullTransformHud_prev.mul(temporal_proj_hud, temporal_view_hud);
+		Device.mViewCam_prev.set(temporal_view_cam);
+		Device.mProjectCam_prev.set(temporal_proj_cam);
+		Device.mFullTransformCam_prev.mul(temporal_proj_cam, temporal_view_cam);
+		Device.m_pRender->SetCacheXform_prev(Device.mView_prev, Device.mProject_prev);
+	}
+
+	// Skipped frames (load, menu), another level, or a camera jump (teleport / cut)
+	if ((temporal_last_frame + 1 != Device.dwFrame && !after_svp) || temporal_level != g_pGameLevel
+		|| Device.vCameraPosition.distance_to(temporal_cam_pos) > 5.f)
+		history_reset_pending = true;
+	history_reset = history_reset_pending;
+	history_reset_pending = false;
+	temporal_last_frame = Device.dwFrame;
+	temporal_level = g_pGameLevel;
+	temporal_cam_pos.set(Device.vCameraPosition);
+	temporal_view.set(Device.mView);
+	temporal_proj.set(Device.mProject);
+	temporal_view_hud.set(Device.mViewHud);
+	temporal_proj_hud.set(Device.mProjectHud);
+	temporal_view_cam.set(Device.mViewCam);
+	temporal_proj_cam.set(Device.mProjectCam);
+
+	const bool svp_on = Device.m_SecondViewport.IsSVPActive();
+	if (svp_on != temporal_svp_on)
+	{
+		if (svp_on)
+			Msg("* temporal: scope view on");
+		else
+			Msg("* temporal: scope view off, %u history resets in %u main frames", temporal_svp_resets, temporal_svp_frames);
+		temporal_svp_on = svp_on;
+		temporal_svp_frames = temporal_svp_resets = 0;
+	}
+	temporal_svp_frames += svp_on;
+	temporal_svp_resets += svp_on && history_reset;
+
+	// Halton(2,3) in [-0.5, 0.5) render pixels, phase count 8 x (output / render)^2 as DLSS recommends
+	const float ratio = float(Device.dwWidth) / float(render_width);
+	const u32 phases = clampr(u32(iFloor(8.f * ratio * ratio + .5f)), 8u, 64u);
+	const u32 idx = (temporal_frame++ % phases) + 1;
+	jitter_px_prev.set(jitter_px);
+	jitter_px.set(halton(idx, 2) - .5f, halton(idx, 3) - .5f);
+	// frame generation alone: nothing resolves the jitter unless SSS TAA runs
+	if (!upscaler_enabled && !ps_r4_upscale_debug && !(ps_ssfx_taa.x > 0 && RImplementation.o.ssfx_taa))
+		jitter_px.set(0.f, 0.f);
+}
+
+static void draw_screen_quad(float w, float h, u32 vb_stride, ref_geom& geom)
+{
+	const u32 C = color_rgba(255, 255, 255, 255);
+	u32 Offset;
+	FVF::TL* pv = (FVF::TL*)RCache.Vertex.Lock(4, vb_stride, Offset);
+	pv->set(0, h, EPS_S, 1.f, C, 0.f, 1.f); pv++;
+	pv->set(0, 0, EPS_S, 1.f, C, 0.f, 0.f); pv++;
+	pv->set(w, h, EPS_S, 1.f, C, 1.f, 1.f); pv++;
+	pv->set(w, 0, EPS_S, 1.f, C, 1.f, 0.f); pv++;
+	RCache.Vertex.Unlock(4, vb_stride);
+	RCache.set_Geometry(geom);
+	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+}
+
+// Upscaler inputs at render size, before the upscale slot: rt_dlss_mv + rt_dlss_depth
+void CRenderTarget::phase_temporal_inputs()
+{
+	if (!temporal_active)
+		return;
+
+	PIX_EVENT(phase_temporal_inputs);
+	u_setrt(rt_dlss_mv, rt_dlss_depth, nullptr, nullptr);
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	RCache.set_Element(s_temporal->E[0]);
+	RCache.set_c("upscale_params", float(render_width), float(render_height), Device.mProject._33, Device.mProject._43);
+	draw_screen_quad(float(render_width), float(render_height), g_combine->vb_stride, g_combine);
+}
+
+// r4_upscale_debug: 1 motion vectors, 2 depth, drawn over the final image at output size
+void CRenderTarget::phase_upscale_debug()
+{
+	if (!temporal_active || !ps_r4_upscale_debug)
+		return;
+
+	PIX_EVENT(phase_upscale_debug);
+	u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT, NULL, NULL, NULL);
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	RCache.set_Element(s_temporal->E[1]);
+	RCache.set_c("upscale_params", float(render_width), float(render_height), Device.mProject._33, Device.mProject._43);
+	RCache.set_c("upscale_debug", float(ps_r4_upscale_debug), 0.f, 0.f, 0.f);
+	draw_screen_quad(float(Device.dwWidth), float(Device.dwHeight), g_combine->vb_stride, g_combine);
+}
 
 void CRenderTarget::phase_combine()
 {
@@ -259,8 +536,8 @@ void CRenderTarget::phase_combine()
 		*/
 
 		// Fill VB
-		float scale_X = float(Device.dwWidth) / float(TEX_jitter);
-		float scale_Y = float(Device.dwHeight) / float(TEX_jitter);
+		float scale_X = float(scr_width()) / float(TEX_jitter);
+		float scale_Y = float(scr_height()) / float(TEX_jitter);
 
 		// Fill vertex buffer
 		FVF::TL* pv = (FVF::TL*)RCache.Vertex.Lock(4, g_combine->vb_stride, Offset);
@@ -353,8 +630,8 @@ void CRenderTarget::phase_combine()
 		else
 			u_setrt(rt_ssfx_temp, 0, 0, 0);
 
-		float w = float(Device.dwWidth);
-		float h = float(Device.dwHeight);
+		float w = float(scr_width());
+		float h = float(scr_height());
 
 		// Render Scale
 		set_viewport_size(HW.pContext, w / ps_ssfx_water.x, h / ps_ssfx_water.x);
@@ -566,43 +843,63 @@ void CRenderTarget::phase_combine()
 		phase_lut();
 	}
 
-	if(ps_r2_mask_control.x > 0)
+	// Screen-fixed overlays: with an upscaler they run after it (at output size), so DLSS does not reproject them
+	auto phase_screen_overlays = [&]()
 	{
-		phase_gasmask_dudv();
-		if (ps_r2_drops_control.x > 0)
+		if(ps_r2_mask_control.x > 0)
 		{
-			phase_gasmask_drops();
+			phase_gasmask_dudv();
+			if (ps_r2_drops_control.x > 0)
+			{
+				phase_gasmask_drops();
+			}
 		}
-	}
-	
-	if(ps_r2_nightvision > 0)
-		phase_nightvision();
 
-	//--DSR-- HeatVision_start
-	if (ps_r2_heatvision > 0)
-		phase_heatvision();
-	//--DSR-- HeatVision_end
+		if(ps_r2_nightvision > 0)
+			phase_nightvision();
 
-	if (scope_fake_enabled)
-	{
-		phase_fakescope(); //crookr
-	}
+		//--DSR-- HeatVision_start
+		if (ps_r2_heatvision > 0)
+			phase_heatvision();
+		//--DSR-- HeatVision_end
+
+		if (scope_fake_enabled)
+		{
+			phase_fakescope(); //crookr
+		}
+	};
+	const bool overlays_after_upscale = render_scaled() || dlss_target;
+	if (!overlays_after_upscale)
+		phase_screen_overlays();
 
     //SMAA
-	if (ps_smaa_quality)
+	// DLSS replaces SMAA and SSS TAA
+	if (ps_smaa_quality && !dlss_active)
 	{
         //PIX_EVENT(SMAA);
         phase_smaa();
         RCache.set_Stencil(FALSE);
     }    
 	
-	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0)
+	if (RImplementation.o.ssfx_taa && ps_ssfx_taa.x > 0 && !dlss_active)
 	{
 		phase_ssfx_taa();
 	}
 
 	if (ssfx_PrevPos_Requiered)
 		HW.pContext->CopyResource(rt_ssfx_prevPos->pTexture->surface_get(), rt_Position->pTexture->surface_get());
+
+	// Upscale slot: render size above, output size below
+	phase_temporal_inputs();
+	phase_upscale();
+	phase_sharpen();
+	if (overlays_after_upscale)
+	{
+		// Output-size targets, but screen_res / quads stay at render size: the overlay shaders Load() render-size s_position by screen_res
+		scene_size_active = true;
+		phase_screen_overlays();
+		scene_size_active = false;
+	}
 
 	// PP enabled ?
 	//	Render to RT texture to be able to copy RT even in windowed mode.
@@ -616,12 +913,12 @@ void CRenderTarget::phase_combine()
 	if (RImplementation.o.dx10_msaa)
 	{
 		if (PP_Complex) u_setrt(rt_Generic, 0, 0, HW.pBaseZB); // LDR RT
-		else u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
+		else u_setrt(scr_width(), scr_height(), HW.pBaseRT,NULL,NULL, HW.pBaseZB);
 	}
 	else
 	{
 		if (PP_Complex) u_setrt(rt_Color, 0, 0, HW.pBaseZB); // LDR RT
-		else u_setrt(Device.dwWidth, Device.dwHeight, HW.pBaseRT,NULL,NULL, HW.pBaseZB);
+		else u_setrt(scr_width(), scr_height(), HW.pBaseRT,NULL,NULL, HW.pBaseZB);
 	}
 	//. u_setrt				( Device.dwWidth,Device.dwHeight,HW.pBaseRT,NULL,NULL,HW.pBaseZB);
 	RCache.set_CullMode(CULL_NONE);
@@ -644,8 +941,8 @@ void CRenderTarget::phase_combine()
 			Fvector4 uv6;
 		};
 
-		float _w = float(Device.dwWidth);
-		float _h = float(Device.dwHeight);
+		float _w = float(scr_width());
+		float _h = float(scr_height());
 		float ddw = 1.f / _w;
 		float ddh = 1.f / _h;
 		p0.set(.5f / _w, .5f / _h);
@@ -758,6 +1055,7 @@ void CRenderTarget::phase_combine()
 		PIX_EVENT_C(phase_pp, dx10_marker_post);
 		phase_pp();
 	}
+	phase_upscale_debug();
 
 	//	Re-adapt luminance
 	RCache.set_Stencil(FALSE);
@@ -808,8 +1106,8 @@ void CRenderTarget::phase_combine()
 	/*
 	if (0)		{
 		u32		C					= color_rgba	(255,255,255,255);
-		float	_w					= float(Device.dwWidth)/3;
-		float	_h					= float(Device.dwHeight)/3;
+		float	_w					= float(scr_width())/3;
+		float	_h					= float(scr_height())/3;
 
 		// draw light-spheres
 #ifdef DEBUG

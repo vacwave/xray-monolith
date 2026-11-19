@@ -381,6 +381,9 @@
     <ClInclude Include="..\xrRender\occRasterizer.h">
       <Filter>Visibility\HOM Occlusion</Filter>
     </ClInclude>
+    <ClInclude Include="r4_dlss.h">
+      <Filter>Core_Target</Filter>
+    </ClInclude>
     <ClInclude Include="r4_rendertarget.h">
       <Filter>Core_Target</Filter>
     </ClInclude>
@@ -1068,7 +1071,13 @@
     <ClCompile Include="r4_rendertarget_phase_bloom.cpp">
       <Filter>Core_Target</Filter>
     </ClCompile>
+    <ClCompile Include="r4_dlss.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
     <ClCompile Include="r4_rendertarget_phase_combine.cpp">
+      <Filter>Core_Target</Filter>
+    </ClCompile>
+    <ClCompile Include="r4_rendertarget_phase_sharpen.cpp">
       <Filter>Core_Target</Filter>
     </ClCompile>
     <ClCompile Include="r4_rendertarget_phase_hdao.cpp">
@@ -1102,6 +1111,15 @@
       <Filter>Core_Target\ColorMap</Filter>
     </ClCompile>
     <ClCompile Include="..\xrRenderDX10\dx10HW.cpp">
+      <Filter>Refactored\HW</Filter>
+    </ClCompile>
+    <ClCompile Include="..\xrRenderDX10\dx12PresentBridge.cpp">
+      <Filter>Refactored\HW</Filter>
+    </ClCompile>
+    <ClCompile Include="..\xrRenderDX10\dx12FrameGen.cpp">
+      <Filter>Refactored\HW</Filter>
+    </ClCompile>
+    <ClCompile Include="..\xrRenderDX10\dxReflex.cpp">
       <Filter>Refactored\HW</Filter>
     </ClCompile>
     <ClCompile Include="..\xrRender\HWCaps.cpp">

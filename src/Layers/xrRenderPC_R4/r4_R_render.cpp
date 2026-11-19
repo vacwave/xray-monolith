@@ -9,6 +9,7 @@
 #include "../xrRender/QueryHelper.h"
 
 #include	"../xrRender/dxRenderDeviceRender.h"
+#include "../xrRenderDX10/dx12PresentBridge.h"
 namespace
 {
 bool ui_3d_icon_atlas_active = false;
@@ -20,6 +21,8 @@ Fmatrix ui_3d_icon_full_transform_saved;
 void CRender::render_menu()
 {
 	PIX_EVENT(render_menu);
+	if (Target->render_scaled())
+		Target->swap_output_rts(true); // menu PP-UI draws at output size
 	//	Globals
 	RCache.set_CullMode(CULL_CCW);
 	RCache.set_Stencil(FALSE);
@@ -65,6 +68,8 @@ void CRender::render_menu()
 	pv++;
 	RCache.Vertex.Unlock(4, Target->g_menu->vb_stride);
 	RCache.Render(D3DPT_TRIANGLELIST, Offset, 0, 4, 0, 2);
+
+	Target->end_output_size();
 }
 
 extern u32 g_r;
@@ -118,6 +123,7 @@ void CRender::Render()
 	ViewBase.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB + FRUSTUM_P_FAR);
     HOM.MT_RENDER();
 
+	Target->begin_scene_size();
 	Target->phase_scene_prepare();
 
 
@@ -143,7 +149,7 @@ void CRender::Render()
 
     if (RImplementation.o.ssfx_motionvectors)
     {
-        Target->u_setrt(Device.dwWidth, Device.dwHeight, 0, 0, Target->rt_ssfx_motion_vectors->pRT, 0);
+        Target->u_setrt(Target->scr_width(), Target->scr_height(), 0, 0, Target->rt_ssfx_motion_vectors->pRT, 0);
 
         FLOAT ColorRGBA[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
         HW.pContext->ClearRenderTargetView(Target->rt_ssfx_motion_vectors->pRT, ColorRGBA);
@@ -159,7 +165,7 @@ void CRender::Render()
 
 	if (ps_r2_ls_flags.test(R2FLAG_TERRAIN_PREPASS))
 	{
-		Target->u_setrt(Device.dwWidth, Device.dwHeight, NULL, NULL, NULL, !RImplementation.o.dx10_msaa ? HW.pBaseZB : Target->rt_MSAADepth->pZRT);
+		Target->u_setrt(Target->scr_width(), Target->scr_height(), NULL, NULL, NULL, !RImplementation.o.dx10_msaa ? HW.pBaseZB : Target->rt_MSAADepth->pZRT);
 	}
 
 	//******* Main render :: PART-0	-- first
@@ -345,7 +351,10 @@ void CRender::Render()
 	{
 		PIX_EVENT_C(DEFER_LIGHT_COMBINE, dx10_marker_lights);
 		Target->phase_combine();
+		DX12Present_CaptureHudless();
+		DX12Present_SetFrameGenInputs();
 	}
+	Target->end_output_size();
 
 	if (Details)
 		Details->details_clear();
@@ -495,4 +504,9 @@ void CRender::RenderToTarget(RRT target)
 	HW.m_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBuffer);
 	HW.pContext->CopyResource((*RT)->pSurface, pBuffer);
 	pBuffer->Release();
+}
+
+void CRender::BeginUI()
+{
+	DX12Present_BeginUI();
 }

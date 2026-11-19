@@ -19,6 +19,13 @@
 
 #include "StateManager\dx10SamplerStateCache.h"
 #include "StateManager\dx10StateCache.h"
+#include "dx12PresentBridge.h"
+
+#ifdef USE_DX11
+extern int ps_r4_dx12_present;
+extern int ps_r4_framegen;
+static bool s_dx12_bridge = false; // HW.m_pSwapChain is the DX12 presentation bridge
+#endif
 
 #ifndef _EDITOR
 void fill_vid_mode_list(CHW* _hw);
@@ -300,6 +307,18 @@ void CHW::DestroyD3D()
 
 extern u32 g_screenmode;
 
+#ifdef USE_DX11
+// the DX12 bridge (and FSR frame generation) has no exclusive fullscreen: use borderless
+static void dx12_force_borderless(bool bridge)
+{
+    if (bridge && g_screenmode == 2)
+    {
+        g_screenmode = 1;
+        Msg("! r4_dx12_present: exclusive fullscreen not supported, using borderless");
+    }
+}
+#endif
+
 void CHW::CreateDevice(HWND hwnd, bool move_window)
 {
 #if defined(USE_DX10) || defined(USE_DX11)
@@ -331,6 +350,9 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
     // TODO: DX10: Create appropriate initialization
 
     // General - select adapter and device
+#ifdef USE_DX11
+    dx12_force_borderless(ps_r4_dx12_present && !ps_r4_hdr10_on);
+#endif
     BOOL bWindowed = (g_screenmode != 2);
 
     m_DriverType = Caps.bForceGPU_REF ? D3D_DRIVER_TYPE_REFERENCE : D3D_DRIVER_TYPE_HARDWARE;
@@ -582,7 +604,19 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
     _RELEASE(context);
 
     // create swapchain
-    R_CHK(m_pFactory->CreateSwapChainForHwnd(pDevice, m_hWnd, &sd, &sd_fullscreen, NULL, &m_pSwapChain));
+    m_pSwapChain = nullptr;
+    if (ps_r4_dx12_present)
+    {
+        if (ps_r4_hdr10_on)
+            Msg("! r4_dx12_present: not supported with HDR10 output, using the DX11 swapchain");
+        else
+            m_pSwapChain = DX12Present_Create(pDevice, pContext, m_pFactory, m_hWnd, sd, sd_fullscreen, ps_r4_framegen != 0);
+    }
+    s_dx12_bridge = m_pSwapChain != nullptr;
+    if (ps_r4_framegen && !s_dx12_bridge)
+        Msg("! r4_framegen: needs the DX12 presentation bridge (r4_dx12_present 1), frame generation off");
+    if (!m_pSwapChain)
+        R_CHK(m_pFactory->CreateSwapChainForHwnd(pDevice, m_hWnd, &sd, &sd_fullscreen, NULL, &m_pSwapChain));
 
     // setup colorspace
     // HDR10 (U10 output) -> DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
@@ -790,6 +824,9 @@ void CHW::Reset(HWND hwnd)
     DXGI_SWAP_CHAIN_DESC& cd = m_ChainDesc;
 #endif
 
+#if defined(USE_DX11)
+    dx12_force_borderless(s_dx12_bridge);
+#endif
     BOOL bWindowed = (g_screenmode != 2);
 
 #if defined(USE_DX11)
