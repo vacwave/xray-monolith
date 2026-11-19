@@ -105,7 +105,12 @@ Test: `game_perf` frame time unchanged or better with it on, no hitching, toggle
 2. Only if D8's HUD-less mode shows warping or the change stays small; otherwise park with the findings. Off (framegen off) = today's UI path.
 Test: strafe + text on screen with frame generation on; the user judges generated frames.
 
-Order: Dev A D3 → D4 → D5 · Dev B D11 → D10 → D6 → D12 · then D9.
+### D13 Screen-fixed overlays after the upscale (coordinator, from the D4 findings)
+1. Gasmask drops, night vision, heat vision, fakescope, DOF, LUT, motion blur and PP-UI run before the upscale slot today, so DLSS treats them as moving scene (smear, lost NV grain). Move the upscale slot in front of them (or them behind it) so they run at output size; list of phases and what each reads is in `pipeline.md` (written by the D4 dev).
+2. DLSS / render scale off = today's order and frame. Sharpening stays directly after the upscale.
+Test: GAMMA night vision, gasmask, thermal, DOF and motion blur with DLSS quality vs off; D1's scale 0.67 checks again.
+
+Order: Dev A D3 → D4 → D13 → D5 · Dev B D11 → D10 → D6 → D12 · then D9.
 
 ## Open questions
 - Dependencies: DLSS SDK and AMD FSR SDK approved by the user 2026-11-18 (local/private; licences get sorted by the user before any public release).

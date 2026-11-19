@@ -12,5 +12,6 @@ void SimulationEnd();
 void RenderSubmitStart();
 void PresentStart(); // RENDERSUBMIT_END + PRESENT_START
 void PresentEnd();
+bool Failed(); // unsupported or an NvAPI call failed: off for the session
 }
 #endif
