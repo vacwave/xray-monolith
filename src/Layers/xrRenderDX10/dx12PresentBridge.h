@@ -16,6 +16,9 @@ void DX12Present_CaptureHudless();
 // the D3D12 device that presents (r4_reflex targets it), nullptr without the bridge
 IUnknown* DX12Present_Device();
 
+// r4_framegen was requested when the bridge was created this session (options menu status)
+bool DX12Present_FrameGenTried();
+
 // r4_framegen: true while the FG swapchain wants depth + motion vectors (turns the R4 temporal inputs on)
 bool DX12Present_FrameGenWantsInputs();
 // r4_framegen: hands this frame's rt_dlss_depth / rt_dlss_mv, jitter and camera to frame generation; call after

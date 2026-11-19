@@ -34,6 +34,7 @@ public:
 	              u32 render_w, u32 render_h, u32 out_w, u32 out_h, const Fvector2& jitter, bool reset);
 	void release_feature(); // with the render target
 	void shutdown(); // with the device
+	bool init_failed() const { return init_tried && !params; } // NGX unusable on this device (options menu status)
 
 private:
 	bool init();
