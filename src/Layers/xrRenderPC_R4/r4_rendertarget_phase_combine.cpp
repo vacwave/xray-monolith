@@ -190,11 +190,16 @@ void CRenderTarget::begin_temporal_frame()
 		want = false;
 	}
 
-	// Scope (SVP) frames keep their own camera: no jitter, no inputs, and the next main frame drops history
-	temporal_active = want && !Device.m_SecondViewport.IsSVPFrame();
+	// Scope (SVP) frames keep their own camera: no jitter, no inputs; the main view's history skips over them
+	const bool svp = Device.m_SecondViewport.IsSVPFrame();
+	temporal_active = want && !svp;
+	temporal_svp_frame = want && svp;
 	if (!temporal_active)
 	{
-		history_reset_pending = true;
+		if (temporal_svp_frame)
+			temporal_svp_last = Device.dwFrame;
+		else
+			history_reset_pending = true;
 		return;
 	}
 
@@ -205,14 +210,50 @@ void CRenderTarget::begin_temporal_frame()
 		s_temporal.create(b_temporal, "r2\\temporal");
 	}
 
-	// Skipped frames (load, menu, SVP frame), another level, or a camera jump (teleport / cut)
-	if (temporal_last_frame + 1 != Device.dwFrame || temporal_level != g_pGameLevel || Device.vCameraPosition.distance_to(temporal_cam_pos) > 5.f)
+	// Main frame right after a scope frame: Device's previous matrices are the scope camera's, use the last main frame's
+	const bool after_svp = temporal_svp_last + 1 == Device.dwFrame && temporal_last_frame + 2 == Device.dwFrame;
+	if (after_svp)
+	{
+		Device.mView_prev.set(temporal_view);
+		Device.mProject_prev.set(temporal_proj);
+		Device.mFullTransform_prev.mul(temporal_proj, temporal_view);
+		Device.mViewHud_prev.set(temporal_view_hud);
+		Device.mProjectHud_prev.set(temporal_proj_hud);
+		Device.mFullTransformHud_prev.mul(temporal_proj_hud, temporal_view_hud);
+		Device.mViewCam_prev.set(temporal_view_cam);
+		Device.mProjectCam_prev.set(temporal_proj_cam);
+		Device.mFullTransformCam_prev.mul(temporal_proj_cam, temporal_view_cam);
+		Device.m_pRender->SetCacheXform_prev(Device.mView_prev, Device.mProject_prev);
+	}
+
+	// Skipped frames (load, menu), another level, or a camera jump (teleport / cut)
+	if ((temporal_last_frame + 1 != Device.dwFrame && !after_svp) || temporal_level != g_pGameLevel
+		|| Device.vCameraPosition.distance_to(temporal_cam_pos) > 5.f)
 		history_reset_pending = true;
 	history_reset = history_reset_pending;
 	history_reset_pending = false;
 	temporal_last_frame = Device.dwFrame;
 	temporal_level = g_pGameLevel;
 	temporal_cam_pos.set(Device.vCameraPosition);
+	temporal_view.set(Device.mView);
+	temporal_proj.set(Device.mProject);
+	temporal_view_hud.set(Device.mViewHud);
+	temporal_proj_hud.set(Device.mProjectHud);
+	temporal_view_cam.set(Device.mViewCam);
+	temporal_proj_cam.set(Device.mProjectCam);
+
+	const bool svp_on = Device.m_SecondViewport.IsSVPActive();
+	if (svp_on != temporal_svp_on)
+	{
+		if (svp_on)
+			Msg("* temporal: scope view on");
+		else
+			Msg("* temporal: scope view off, %u history resets in %u main frames", temporal_svp_resets, temporal_svp_frames);
+		temporal_svp_on = svp_on;
+		temporal_svp_frames = temporal_svp_resets = 0;
+	}
+	temporal_svp_frames += svp_on;
+	temporal_svp_resets += svp_on && history_reset;
 
 	// Halton(2,3) in [-0.5, 0.5) render pixels, phase count 8 x (output / render)^2 as DLSS recommends
 	const float ratio = float(Device.dwWidth) / float(render_width);

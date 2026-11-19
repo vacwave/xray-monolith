@@ -256,6 +256,11 @@ public:
 	u32 temporal_frame, temporal_last_frame;
 	Fvector temporal_cam_pos;
 	const void* temporal_level;
+	// Scope (SVP) frames between main frames: the main view keeps its history and previous matrices
+	bool temporal_svp_frame; // this frame is a scope frame while the inputs are wanted (SkeletonX keeps its previous bones)
+	bool temporal_svp_on;
+	u32 temporal_svp_last, temporal_svp_frames, temporal_svp_resets;
+	Fmatrix temporal_view, temporal_proj, temporal_view_hud, temporal_proj_hud, temporal_view_cam, temporal_proj_cam;
 	// DLSS (r4_dlss): set up with this target (render size from NGX), evaluated this frame
 	bool dlss_target, dlss_active;
 	float dlss_mip_bias;

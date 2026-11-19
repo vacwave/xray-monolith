@@ -65,7 +65,8 @@ void CSkeletonX::_Render(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 #ifdef USE_DX11 //
 	if (RImplementation.o.ssfx_motionvectors)
 	{
-		if (Device.dwFrame > Parent->CurrentFrame)
+		// With temporal inputs wanted, scope frames keep the bones of the last main frame for the next one
+		if (Device.dwFrame > Parent->CurrentFrame && !RImplementation.Target->temporal_svp_frame)
 		{
 			// Save current frame
 			Parent->CurrentFrame = Device.dwFrame;
