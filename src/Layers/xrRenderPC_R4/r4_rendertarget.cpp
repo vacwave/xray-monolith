@@ -415,7 +415,7 @@ CRenderTarget::CRenderTarget()
 	}
 	scene_size_active = false;
 	output_zb = nullptr;
-	output_rts_swapped = output_generic1_swapped = false;
+	output_rts_swapped = output_generic1_swapped = swap_desync_logged = false;
 	if (render_scaled())
 		Msg("* render size %ux%u, output size %ux%u", render_width, render_height, Device.dwWidth, Device.dwHeight);
 
@@ -1410,7 +1410,8 @@ void CRenderTarget::phase_ui_3d_icons_postprocess()
 
 CRenderTarget::~CRenderTarget()
 {
-	Dlss.release_feature();
+	// Full NGX restart per target: no NGX state (parameters, resource pointers) outlives these RTs
+	Dlss.shutdown();
 	_RELEASE(t_ss_async);
 
 	// Textures

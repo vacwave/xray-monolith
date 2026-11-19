@@ -32,8 +32,8 @@ public:
 	// Upscales color (render size) into output (output size, UAV); false when DLSS failed this frame
 	bool evaluate(ID3D11Resource* color, ID3D11Resource* output, ID3D11Resource* depth, ID3D11Resource* mv,
 	              u32 render_w, u32 render_h, u32 out_w, u32 out_h, const Fvector2& jitter, bool reset);
-	void release_feature(); // with the render target
-	void shutdown(); // with the device
+	void release_feature();
+	void shutdown(); // with the render target and the device
 
 private:
 	bool init();

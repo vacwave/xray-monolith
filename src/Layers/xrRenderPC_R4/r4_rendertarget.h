@@ -237,7 +237,7 @@ public:
 	ref_rt rt_Color_out, rt_Generic_0_out, rt_Generic_1_out; // output-size twins used after the upscale slot
 	ref_shader s_upscale;
 	ID3DDepthStencilView* output_zb;
-	bool output_rts_swapped, output_generic1_swapped;
+	bool output_rts_swapped, output_generic1_swapped, swap_desync_logged;
 
 	// Temporal upscaler inputs (convention in notes/dlss/pipeline.md "Temporal inputs (D2)")
 	ref_rt rt_dlss_mv; // RG16F render size: previous minus current position in render pixels, jitter excluded

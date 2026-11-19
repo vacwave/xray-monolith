@@ -45,6 +45,14 @@ float hclip(float v, float dim) { return 2.f * v / dim - 1.f; }
 // Render resolution split: scene passes run at render size with their own depth buffer
 void CRenderTarget::begin_scene_size()
 {
+	// A frame that skipped end_output_size would feed the output twins to the scene passes and the upscaler
+	if (output_rts_swapped)
+	{
+		if (!swap_desync_logged)
+			Msg("! upscale: output render targets still swapped at the frame start, restored");
+		swap_desync_logged = true;
+		swap_output_rts(output_generic1_swapped);
+	}
 	upscaler_enabled = dlss_target;
 	begin_temporal_frame();
 	dlss_active = dlss_target && temporal_active;
@@ -113,14 +121,15 @@ void CRenderTarget::phase_upscale()
 bool CRenderTarget::phase_dlss()
 {
 	PIX_EVENT(phase_dlss);
-	// No target may stay bound while NGX reads the inputs and writes the output (NGX restores the rest of the context)
-	for (u32 i = 0; i < 4; ++i)
-		RCache.set_RT(nullptr, i);
-	RCache.set_ZB(nullptr);
-	HW.pContext->OMSetRenderTargets(0, nullptr, nullptr);
-
-	return Dlss.evaluate(rt_Generic_0->pSurface, rt_Generic_0_out->pSurface, rt_dlss_depth->pSurface, rt_dlss_mv->pSurface,
+	// Nothing bound while NGX reads the inputs and writes the output (no RT, no SRV of the output twin);
+	// afterwards the context may hold NGX's own state behind RCache's caches: clear both, as between frames
+	RCache.OnFrameEnd();
+	const bool ok = Dlss.evaluate(rt_Generic_0->pSurface, rt_Generic_0_out->pSurface, rt_dlss_depth->pSurface, rt_dlss_mv->pSurface,
 		render_width, render_height, Device.dwWidth, Device.dwHeight, jitter_px, history_reset);
+	RCache.OnFrameEnd();
+	RCache.set_CullMode(CULL_NONE);
+	RCache.set_Stencil(FALSE);
+	return ok;
 }
 
 static void swap_rt_pair(ref_rt& a, ref_rt& b)
