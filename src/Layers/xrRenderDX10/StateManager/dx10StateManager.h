@@ -46,10 +46,18 @@ public:
 	//	Reset value to current state's value if override is disabled.
 	void OverrideScissoring(bool bOverride = true, BOOL bValue = TRUE);
 
+#ifdef USE_DX11
+	//	r4_framegen UI target: draws into pRT get alpha blend factors that accumulate transmittance (nullptr = off)
+	void SetUiTarget(ID3D11RenderTargetView* pRT);
+#endif
+
 private:
 	void ValidateRDesc();
 	void ValidateDSDesc();
 	void ValidateBDesc();
+#ifdef USE_DX11
+	ID3D11BlendState* UiBlendState(ID3D11BlendState* pState);
+#endif
 
 private:
 	//	All states are supposed to live along all application lifetime
@@ -89,6 +97,11 @@ private:
 	bool m_bOverrideScissoring;
 	BOOL m_bOverrideScissoringValue;
 	UINT m_uiSampleMask;
+
+#ifdef USE_DX11
+	ID3D11RenderTargetView* m_pUiRT = nullptr;
+	bool m_bUiRemapApplied = false;
+#endif
 };
 
 extern dx10StateManager StateManager;

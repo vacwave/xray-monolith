@@ -5,6 +5,7 @@
 #include "../../xrEngine/shader_bus.h"
 #ifdef USE_DX11
 #include "../xrRenderDX10/dxReflex.h"
+#include "../xrRenderDX10/dx12PresentBridge.h"
 #endif
 
 // a shader bus texture lane's $user$bus_ alias and the texture it shows
@@ -469,6 +470,9 @@ void dxRenderDeviceRender::End()
 	RCache.OnFrameEnd();
 	Memory.dbg_check();
 
+#ifdef USE_DX11
+	DX12Present_EndUI();
+#endif
 	{
 		PROF_EVENT("Async Screenshot");
 		DoAsyncScreenshot();
