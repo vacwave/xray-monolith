@@ -799,27 +799,34 @@ void CRenderTarget::phase_combine()
 		phase_lut();
 	}
 
-	if(ps_r2_mask_control.x > 0)
+	// Screen-fixed overlays: with an upscaler they run after it (at output size), so DLSS does not reproject them
+	auto phase_screen_overlays = [&]()
 	{
-		phase_gasmask_dudv();
-		if (ps_r2_drops_control.x > 0)
+		if(ps_r2_mask_control.x > 0)
 		{
-			phase_gasmask_drops();
+			phase_gasmask_dudv();
+			if (ps_r2_drops_control.x > 0)
+			{
+				phase_gasmask_drops();
+			}
 		}
-	}
-	
-	if(ps_r2_nightvision > 0)
-		phase_nightvision();
 
-	//--DSR-- HeatVision_start
-	if (ps_r2_heatvision > 0)
-		phase_heatvision();
-	//--DSR-- HeatVision_end
+		if(ps_r2_nightvision > 0)
+			phase_nightvision();
 
-	if (scope_fake_enabled)
-	{
-		phase_fakescope(); //crookr
-	}
+		//--DSR-- HeatVision_start
+		if (ps_r2_heatvision > 0)
+			phase_heatvision();
+		//--DSR-- HeatVision_end
+
+		if (scope_fake_enabled)
+		{
+			phase_fakescope(); //crookr
+		}
+	};
+	const bool overlays_after_upscale = render_scaled() || dlss_target;
+	if (!overlays_after_upscale)
+		phase_screen_overlays();
 
     //SMAA
 	// DLSS replaces SMAA and SSS TAA
@@ -842,6 +849,13 @@ void CRenderTarget::phase_combine()
 	phase_temporal_inputs();
 	phase_upscale();
 	phase_sharpen();
+	if (overlays_after_upscale)
+	{
+		// Output-size targets, but screen_res / quads stay at render size: the overlay shaders Load() render-size s_position by screen_res
+		scene_size_active = true;
+		phase_screen_overlays();
+		scene_size_active = false;
+	}
 
 	// PP enabled ?
 	//	Render to RT texture to be able to copy RT even in windowed mode.
