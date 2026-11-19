@@ -1,0 +1,119 @@
+name: DLSS release
+run-name: DLSS release ${{ github.ref_name }} @ ${{ github.sha }}
+
+on:
+  push:
+    branches: [ "dev-mt-dlss" ]
+    paths-ignore: [ "README.md", "License.txt", "docs/**" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dlss-release-${{ github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  SOLUTION_FILE_PATH: src/engine-vs2022.sln
+  PACK_GAMEDATA_NAME: 00_modded_exes_gamedata.db0
+
+jobs:
+  pack_gamedata:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - name: Pack gamedata
+      run: |
+        new-item -path "./compressor/gamedata" -itemtype directory -force
+        copy-item -path "./gamedata/*" -destination "./compressor/gamedata" -recurse -force
+        cd ./compressor
+        start-process -filepath "./! compress_gamedata.cmd" -Wait
+        rename-item -path gamedata.db0 -newname ${{ env.PACK_GAMEDATA_NAME }}
+
+    - uses: actions/upload-artifact@v4.6.0
+      with:
+        name: gamedata
+        path: ./compressor/${{ env.PACK_GAMEDATA_NAME }}
+        if-no-files-found: error
+        retention-days: 1
+
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        buildconf: [ "DX11", "DX11-AVX" ]
+    steps:
+    - name: Configure Pagefile
+      uses: al-cheb/configure-pagefile-action@v1.3
+      with:
+        minimum-size: 8GB
+        maximum-size: 8GB
+        disk-root: "C:"
+
+    - uses: actions/checkout@v4
+      with:
+        submodules: true
+        persist-credentials: false
+
+    - uses: microsoft/setup-msbuild@v1.3.1
+      with:
+        msbuild-architecture: x64
+
+    - name: Build ${{ matrix.buildconf }}
+      run: msbuild /m /p:Configuration=${{ matrix.buildconf }} ${{ env.SOLUTION_FILE_PATH }}
+
+    - uses: actions/upload-artifact@v4.6.0
+      with:
+        name: ${{ matrix.buildconf }}_bin
+        path: |
+          ./_build/_game/bin_dbg/*.exe
+          ./_build/_game/bin_dbg/*.pdb
+        if-no-files-found: error
+        retention-days: 1
+
+  release:
+    needs: [ pack_gamedata, build ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - uses: actions/download-artifact@v4.1.8
+      with:
+        path: artifacts
+
+    - name: Version
+      id: version
+      run: echo "tag=dlss-$(date +'%Y.%-m.%-d')-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+    - name: Zip release
+      run: |
+        set -e
+        TAG='${{ steps.version.outputs.tag }}'
+        mkdir -p release/bin/licenses release/db/mods pdb/bin
+        cp artifacts/*_bin/*.exe release/bin/
+        cp artifacts/*_bin/*.pdb pdb/bin/
+        cp sdk/binaries/DLSS/nvngx_dlss.dll sdk/binaries/FidelityFX/*.dll release/bin/
+        cp sdk/binaries/DLSS/LICENSE.txt release/bin/licenses/DLSS_LICENSE.txt
+        cp sdk/binaries/FidelityFX/license.md release/bin/licenses/FidelityFX_license.md
+        cp License.txt release/bin/licenses/License.txt
+        cp artifacts/gamedata/${{ env.PACK_GAMEDATA_NAME }} release/db/mods/
+        (cd release && zip -r "../Anomaly-DLSS_${TAG#dlss-}.zip" .)
+        (cd pdb && zip -r "../Anomaly-DLSS_${TAG#dlss-}_pdb.zip" .)
+
+    - uses: softprops/action-gh-release@v2.3.2
+      with:
+        tag_name: ${{ steps.version.outputs.tag }}
+        target_commitish: ${{ github.sha }}
+        name: Anomaly DLSS ${{ steps.version.outputs.tag }}
+        files: |
+          Anomaly-DLSS_*.zip
+        generate_release_notes: false
+        token: ${{ secrets.GITHUB_TOKEN }}
