@@ -112,6 +112,14 @@ Test: GAMMA night vision, gasmask, thermal, DOF and motion blur with DLSS qualit
 
 Order: Dev A D3 → D4 → D13 → D5 · Dev B D11 → D10 → D6 → D12 · then D9.
 
+## Added by the user 2026-11-19 (real-use feedback, GAMMA)
+User ran preset K: works for them (couple of seconds to start, no black frames); HUD and crosshair looked fine with their setup.
+### D14 Motion blur on the HUD weapon
+SSS per-object motion blur (e.g. only the magazine blurs on reload) looks broken: drawing the weapon and walking forward, the blur smears / moves around the weapon; maybe motion blur in general. First find whether it is ours (A/B against the `dev-mt-mcp` exe and DLSS / FG / scale off), then fix.
+### D15 Transparent iron sights shift while aiming
+GAMMA's ADS feature that makes the iron sight transparent: the transparent part shifts around a bit. Not only the transparent part: the separate iron-sight model itself shifts too, worst on the SKS. A/B first, then fix.
+Order: D14 → D15. Both DONE by `70673ce1` (one cause), confirmed by the user 2026-11-19.
+
 ## Open questions
 - Dependencies: DLSS SDK and AMD FSR SDK approved by the user 2026-11-18 (local/private; licences get sorted by the user before any public release).
 - MSAA with the upscaler: plan says refuse with a log line; confirm.
