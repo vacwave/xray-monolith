@@ -322,7 +322,8 @@ void register_methods()
 		job& j = *current;
 		if (j.state == st_waiting)
 		{
-			if (Device.dwRenderedFrames == j.req_rendered)
+			// with a second-viewport scope every 2nd frame is a scope frame, the capture waits for the next main frame
+			if (Device.dwRenderedFrames < j.req_rendered + (Device.m_SecondViewport.IsSVPActive() ? 2u : 1u))
 			{
 				out = "{\"pending\":true,\"stage\":\"frame\"}";
 				return true;
