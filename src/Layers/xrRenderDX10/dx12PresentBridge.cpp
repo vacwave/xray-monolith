@@ -129,6 +129,7 @@ private:
 };
 
 CDX12PresentSwapChain* s_active = nullptr; // the bridge in use (one window, one swapchain)
+bool s_framegen_tried = false; // DX12Present_Create ran with framegen this session
 
 #define BRIDGE_CHK(expr, what)                                                       \
     do {                                                                             \
@@ -612,6 +613,7 @@ IDXGISwapChain1* DX12Present_Create(ID3D11Device1* device, ID3D11DeviceContext1*
                                     HWND hwnd, const DXGI_SWAP_CHAIN_DESC1& desc,
                                     const DXGI_SWAP_CHAIN_FULLSCREEN_DESC& desc_fullscreen, bool framegen)
 {
+    s_framegen_tried |= framegen;
     CDX12PresentSwapChain* sc = new CDX12PresentSwapChain(); // COM refcount; Release() deletes
     if (sc->Init(device, context, factory, hwnd, desc, desc_fullscreen, framegen))
         return sc;
@@ -630,6 +632,11 @@ void DX12Present_CaptureHudless()
 IUnknown* DX12Present_Device()
 {
     return s_active ? s_active->Device12() : nullptr;
+}
+
+bool DX12Present_FrameGenTried()
+{
+    return s_framegen_tried;
 }
 
 bool DX12Present_FrameGenWantsInputs()

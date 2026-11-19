@@ -1,0 +1,130 @@
+--- Upscaler / frame generation / Reflex entries in Video > Advanced
+-- Added through a hook on ui_options.init_opt_coder instead of a ui_options.script override (GAMMA ships its own copy).
+-- Loaded by dxml_core (modxml_*.script with on_xml_read).
+
+local clr_note = {255, 250, 150, 75}
+
+-- Engine status string ("on", "off", "unavailable: <reason>", "<state>: <note>"); nil on an exe without the command
+local function status(cmd)
+	local s = get_console_cmd(0, cmd)
+	if type(s) == "string" and s ~= "" then
+		return s
+	end
+end
+
+-- Precondition of a status line: shown only when the engine's text carries a reason or note
+function has_note(cmd)
+	local s = status(cmd)
+	return s and string.find(s, ":", 1, true) and true or false
+end
+
+function dlss_on()
+	return status("r4_dlss_status") == "on"
+end
+
+local function make_rows()
+	local r4 = {ui_options.for_renderer, "renderer_r4"}
+	local onoff = { {"0", "upscale_off"}, {"1", "upscale_on"} }
+	-- plain data only: ui_options draws a deep copy of the page (copy_table), so the text is built in Register_Desc
+	local function status_row(id, cmd, label)
+		return { id = id, type = "desc", text = label, status_cmd = cmd, clr = clr_note, precondition = r4, precondition_1 = {has_note, cmd} }
+	end
+	local st_dlss = status_row("dlss_status", "r4_dlss_status", "ui_mm_upscale_status_dlss")
+	local st_fg = status_row("framegen_status", "r4_framegen_status", "ui_mm_upscale_status_framegen")
+	local st_reflex = status_row("reflex_status", "r4_reflex_status", "ui_mm_upscale_status_reflex")
+
+	return {
+		{ id = "line", type = "line", precondition = r4 },
+		{ id = "title", type = "title", text = "ui_mm_header_upscaling", align = "l", clr = {255,200,200,200}, precondition = r4 },
+		{ id = "dlss", type = "list", val = 0, cmd = "r4_dlss", def = "off", vid = true, precondition = r4,
+			content = { {"off","dlss_off"}, {"dlaa","dlss_dlaa"}, {"quality","dlss_quality"}, {"balanced","dlss_balanced"}, {"performance","dlss_performance"}, {"ultra_performance","dlss_ultra_performance"} } },
+		st_dlss,
+		{ id = "upscale_sharpness", type = "track", val = 2, cmd = "r4_upscale_sharpness", min = 0, max = 1, step = 0.05, def = 0, precondition = r4 },
+		{ id = "dlss_preset", type = "list", val = 0, cmd = "r4_dlss_preset", def = "default", vid = true, precondition = r4,
+			content = { {"default","dlss_preset_default"}, {"k","dlss_preset_k"}, {"m","dlss_preset_m"}, {"l","dlss_preset_l"} } },
+		{ id = "render_scale", type = "track", val = 2, cmd = "r4_render_scale", min = 0.5, max = 1, step = 0.05, def = 1, vid = true, precondition = r4 },
+		{ id = "dx12_present", type = "list", val = 0, cmd = "r4_dx12_present", def = "0", restart = true, content = onoff, precondition = r4 },
+		{ id = "framegen", type = "list", val = 0, cmd = "r4_framegen", def = "0", restart = true, content = onoff, precondition = r4 },
+		st_fg,
+		{ id = "reflex", type = "list", val = 0, cmd = "r4_reflex", def = "0", precondition = r4,
+			content = { {"0","upscale_off"}, {"1","reflex_on"}, {"2","reflex_boost"} } },
+		st_reflex,
+	}
+end
+
+local function find_page(top_id, page_id)
+	for _, top in ipairs(ui_options.options) do
+		if top.id == top_id and top.gr then
+			for _, sub in ipairs(top.gr) do
+				if sub.id == page_id and sub.gr then
+					return sub
+				end
+			end
+		end
+	end
+end
+
+local function add_rows()
+	local adv = find_page("video", "advanced")
+	if not adv then
+		return
+	end
+	local gr = adv.gr
+	local smaa, msaa
+	for i, row in ipairs(gr) do
+		if row.id == "dlss" then
+			return
+		elseif row.id == "smaa" then
+			smaa = i
+		elseif row.id == "ssample_list" then
+			msaa = i
+		end
+	end
+
+	-- after the AA entries, before the next section line; else at the end
+	local at = #gr + 1
+	if smaa then
+		for i = smaa + 1, #gr do
+			if gr[i].type == "line" then
+				at = i
+				break
+			end
+		end
+	end
+	for i, row in ipairs(make_rows()) do
+		table.insert(gr, at + i - 1, row)
+	end
+
+	-- the engine ignores MSAA / SMAA while DLSS runs
+	local aa = msaa or smaa
+	if aa and (not smaa or aa <= smaa) then
+		table.insert(gr, aa, { id = "aa_dlss_note", type = "desc", text = "ui_mm_upscale_aa_ignored", clr = clr_note, precondition = {dlss_on} })
+	end
+end
+
+function on_xml_read()
+	if not (ui_options and ui_options.init_opt_coder and ui_options.init_opt_base) then
+		return
+	end
+	local coder = ui_options.init_opt_coder
+	ui_options.init_opt_coder = function(...)
+		local ok, err = pcall(add_rows)
+		if not ok then
+			printf("! modxml_options_dlss: %s", err)
+		end
+		return coder(...)
+	end
+	local cls = ui_options.UIOptions
+	if cls and cls.Register_Desc then
+		local reg_desc = cls.Register_Desc
+		cls.Register_Desc = function(self, xml, handler, v)
+			if v and v.status_cmd then
+				v = { text = game.translate_string(v.text) .. " " .. (status(v.status_cmd) or ""), clr = v.clr }
+			end
+			return reg_desc(self, xml, handler, v)
+		end
+	end
+	if ui_options.options and #ui_options.options > 0 then
+		ui_options.init_opt_base()
+	end
+end

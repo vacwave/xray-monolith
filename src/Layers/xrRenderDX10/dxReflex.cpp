@@ -42,6 +42,11 @@ void Marker(NV_LATENCY_MARKER_TYPE type)
 }
 } // namespace
 
+bool Reflex::Failed()
+{
+    return s_failed;
+}
+
 bool Reflex::FrameStart(int cap)
 {
     s_in_frame = false;
