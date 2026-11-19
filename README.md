@@ -1,5 +1,10 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/themrdemonized/xray-monolith)
 
+# DLSS / FSR Frame Generation (branch dev-mt-dlss)
+This branch adds NVIDIA DLSS (super resolution / DLAA) and AMD FSR frame generation to the DX11 renderer. It requires [Screen Space Shaders](https://www.moddb.com/mods/stalker-anomaly/addons/screen-space-shaders) by Ascii1457 (motion vectors). Settings are in the options menu under "Upscaling".
+
+Credits: GSC Game World (X-Ray engine, S.T.A.L.K.E.R.), the Anomaly team, themrdemonized and contributors (Modded Exes / xray-monolith), OpenXRay and IX-Ray, Ascii1457 (Screen Space Shaders). Uses NVIDIA DLSS (NVIDIA, DLSS and RTX are trademarks of NVIDIA Corporation), NVIDIA NvAPI and AMD FidelityFX (AMD and FidelityFX are trademarks of Advanced Micro Devices, Inc.). See `License.txt` for the terms of each part.
+
 # STALKER-Anomaly-modded-exes
 
 Here is list of exe files for Anomaly 1.5.3 that contains all engine patches by community required for some advanced mods to work.

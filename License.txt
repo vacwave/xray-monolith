@@ -21,3 +21,35 @@ THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN 
 THE SOFTWARE.
+
+--------------------------------------------------------------------------------
+DLSS / FSR Frame Generation additions (branch dev-mt-dlss)
+--------------------------------------------------------------------------------
+
+The X-Ray engine and S.T.A.L.K.E.R. belong to GSC Game World. S.T.A.L.K.E.R.
+Anomaly belongs to the Anomaly team. These engine patches ("Modded Exes" /
+xray-monolith) are maintained by themrdemonized and contributors, with parts
+adapted from OpenXRay and IX-Ray. The upscaling and frame generation additions
+in this branch are not owned by anyone separately: they are a contribution to
+this codebase, covered by the same terms as above (free to use, modify and
+redistribute, non-commercial only, keep this notice).
+
+Using DLSS or frame generation requires Screen Space Shaders by Ascii1457,
+which is not included here and keeps its own terms.
+
+Third-party components (the GSC terms above do NOT apply to them; each
+keeps its own licence, included next to it):
+
+- NVIDIA DLSS SDK (sdk/include/DLSS, sdk/libraries/x64/DLSS,
+  sdk/binaries/DLSS/nvngx_dlss.dll): NVIDIA RTX SDKs licence,
+  sdk/include/DLSS/LICENSE.txt.
+  This software contains source code provided by NVIDIA Corporation.
+  NVIDIA, DLSS and RTX are trademarks of NVIDIA Corporation.
+- NVIDIA NvAPI (sdk/include/nvapi, sdk/libraries/x64/nvapi.lib): MIT,
+  sdk/include/nvapi/License.txt.
+- AMD FidelityFX SDK 2.4.0 (sdk/include/FidelityFX,
+  sdk/binaries/FidelityFX/*.dll, gamedata/shaders/r3/upscale_sharpen.ps
+  (RCAS)): AMD licence, sdk/include/FidelityFX/license.md.
+  Copyright (C) Advanced Micro Devices, Inc. The DLLs are redistributed
+  unmodified, in binary form only.
+  AMD and FidelityFX are trademarks of Advanced Micro Devices, Inc.
