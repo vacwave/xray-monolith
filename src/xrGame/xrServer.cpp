@@ -62,6 +62,7 @@ xrServer::xrServer() : IPureServer(Device.GetTimerGlobal(), g_dedicated_server)
 	m_server_rules = NULL;
 	m_last_updates_size = 0;
 	m_last_update_time = 0;
+	ZeroMemory(m_entity_by_id, sizeof(m_entity_by_id));
 }
 
 xrServer::~xrServer()
@@ -81,6 +82,7 @@ xrServer::~xrServer()
 	}
 	m_aDelayedPackets.clear();
 	entities.clear();
+	ZeroMemory(m_entity_by_id, sizeof(m_entity_by_id));
 	delete_data(m_info_uploaders);
 	xr_delete(m_server_logo);
 	xr_delete(m_server_rules);
@@ -92,9 +94,7 @@ CSE_Abstract* xrServer::ID_to_entity(u16 ID)
 {
 	// #pragma todo("??? to all : ID_to_entity - must be replaced to 'game->entity_from_eid()'")	
 	if (0xffff == ID) return 0;
-	xrS_entities::iterator I = entities.find(ID);
-	if (entities.end() != I) return I->second;
-	else return 0;
+	return m_entity_by_id[ID];
 }
 
 //--------------------------------------------------------------------
@@ -870,6 +870,7 @@ if( dbg_net_Draw_Flags.test( dbg_destroy ) )
 #endif
 	R_ASSERT(P);
 	entities.erase(P->ID);
+	m_entity_by_id[P->ID] = NULL;
 	m_tID_Generator.vfFreeID(P->ID, Device.TimerAsync());
 
 	if (P->owner && P->owner->owner == P)
