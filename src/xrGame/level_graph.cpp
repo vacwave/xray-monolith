@@ -95,8 +95,18 @@ u32 CLevelGraph::vertex(const Fvector& position) const
 	float min_dist = flt_max;
 	u32 selected;
 	set_invalid_vertex(selected);
+	const float st = header().cell_size() * .5f;
 	for (u32 i = 0; i < header().vertex_count(); ++i)
 	{
+		// lower bound: xz distance to the cell square; a vertex beyond min_dist cannot win
+		float x, z;
+		unpack_xz(vertex(i), x, z);
+		float dx = _abs(position.x - x) - st, dz = _abs(position.z - z) - st;
+		if (dx < 0.f) dx = 0.f;
+		if (dz < 0.f) dz = 0.f;
+		if (dx * dx + dz * dz > min_dist * 1.01f + .01f)
+			continue;
+
 		float dist = distance(i, position);
 		if (dist < min_dist)
 		{
