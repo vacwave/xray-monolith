@@ -134,6 +134,9 @@ public:
 	ref_cbuffer m_aDomainConstants[MaxCBuffers];
 	ref_cbuffer m_aComputeConstants[MaxCBuffers];
 #	endif
+	//	Non-null entries of the arrays above in flush_cache order; rebuilt whenever they change
+	dx10ConstantBuffer* m_aBoundCBuffers[MaxCBuffers * 6];
+	u32 m_uiBoundCBuffers;
 	D3D_PRIMITIVE_TOPOLOGY m_PrimitiveTopology;
 	ID3DInputLayout* m_pInputLayout;
 	DWORD dummy0; //	Padding to avoid warning	
@@ -513,7 +516,7 @@ private:
 	void ApplyVertexLayout();
 	void ApplyRTandZB();
 	void ApplyPrimitieTopology(D3D_PRIMITIVE_TOPOLOGY Topology);
-	bool CBuffersNeedUpdate(ref_cbuffer buf1[MaxCBuffers], ref_cbuffer buf2[MaxCBuffers], u32& uiMin, u32& uiMax);
+	bool CBuffersNeedUpdate(dx10ConstantBuffer* const buf1[MaxCBuffers], ref_cbuffer buf2[MaxCBuffers], u32& uiMin, u32& uiMax);
 
 private:
 	ID3DBlob* m_pInputSignature;
