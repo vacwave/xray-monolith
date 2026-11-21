@@ -30,6 +30,8 @@ namespace luabind { namespace detail
 {
 	LUABIND_API int pcall(lua_State *L, int nargs, int nresults);
 	LUABIND_API int resume_impl(lua_State *L, int nargs, int nresults);
+	// Binds the cached pcall error handler to state L (null drops it); call around lua_close / new state
+	LUABIND_API void pcall_cache_reset(lua_State* L);
 
 	// Timing hook (mcp_perf): called with true before and false after each pcall/resume; null when off.
 	// fn = stack index of the called function on enter (0 for resume / on leave)

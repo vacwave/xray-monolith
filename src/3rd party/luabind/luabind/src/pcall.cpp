@@ -28,6 +28,39 @@ namespace luabind { namespace detail
 {
 	pcall_hook_fun pcall_hook = 0;
 
+	// Error handler closure kept in the registry of the state bound by pcall_cache_reset (other states push a fresh one)
+	static const void* cached_handler_registry = 0;
+	static pcall_callback_fun cached_handler_fun = 0;
+	static int cached_handler_ref = LUA_NOREF;
+
+	void pcall_cache_reset(lua_State* L)
+	{
+		cached_handler_fun = 0;
+		cached_handler_ref = LUA_NOREF;
+		cached_handler_registry = L ? lua_topointer(L, LUA_REGISTRYINDEX) : 0;
+	}
+
+	static void push_pcall_callback(lua_State* L, pcall_callback_fun e)
+	{
+		if (cached_handler_registry == lua_topointer(L, LUA_REGISTRYINDEX))
+		{
+			if (cached_handler_fun == e)
+			{
+				lua_rawgeti(L, LUA_REGISTRYINDEX, cached_handler_ref);
+				return;
+			}
+			if (cached_handler_ref == LUA_NOREF)
+			{
+				lua_pushcfunction(L, e);
+				lua_pushvalue(L, -1);
+				cached_handler_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+				cached_handler_fun = e;
+				return;
+			}
+		}
+		lua_pushcfunction(L, e);
+	}
+
 	int pcall(lua_State *L, int nargs, int nresults)
 	{
 		pcall_hook_fun hook = pcall_hook;
@@ -36,7 +69,7 @@ namespace luabind { namespace detail
 		int base = lua_gettop(L) - nargs;
 		if ( e )
 		{
-			lua_pushcfunction(L, e);
+			push_pcall_callback(L, e);
 			lua_insert(L, base);  // push pcall_callback under chunk and args
 			en = base;
 			base++;
