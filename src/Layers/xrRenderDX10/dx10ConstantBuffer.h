@@ -32,6 +32,8 @@ public:
 
 private:
 	Fvector4* Access(u16 offset);
+	//	Copy and mark the buffer dirty only if the bytes differ
+	void Update(void* dst, const void* src, u32 size);
 
 private:
 	shared_str m_strBufferName;
