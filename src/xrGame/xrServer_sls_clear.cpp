@@ -98,6 +98,7 @@ void xrServer::SLS_Clear()
 			}
 			Msg("! ERROR: FATAL: can't delete all entities !");
 			entities.clear();
+			ZeroMemory(m_entity_by_id, sizeof(m_entity_by_id));
 		}
 	}
 }
