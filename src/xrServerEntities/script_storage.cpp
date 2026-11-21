@@ -9,6 +9,7 @@
 #include "pch_script.h"
 #include "script_storage.h"
 #include "script_thread.h"
+#include <luabind/detail/pcall.hpp>
 #include "../xrGame/mcp_events.h"
 #include "../xrCore/mezz_stringbuffer.h"
 #include <stdarg.h>
@@ -313,6 +314,7 @@ CScriptStorage::~CScriptStorage()
 	if (m_virtual_machine)
 	{
 		mcp_lua_profiler_close(m_virtual_machine);
+		luabind::detail::pcall_cache_reset(nullptr);
 		lua_close(m_virtual_machine);
 	}
 }
@@ -398,6 +400,7 @@ void CScriptStorage::reinit()
 	if (m_virtual_machine)
 	{
 		mcp_lua_profiler_close(m_virtual_machine);
+		luabind::detail::pcall_cache_reset(nullptr);
 		lua_close(m_virtual_machine);
 	}
 	
@@ -406,6 +409,7 @@ void CScriptStorage::reinit()
 #else
 	m_virtual_machine = luaL_newstate();
 #endif //-USE_GSC_MEM_ALLOC
+	luabind::detail::pcall_cache_reset(m_virtual_machine);
 
 	if (!m_virtual_machine)
 	{
