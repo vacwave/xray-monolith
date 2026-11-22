@@ -405,6 +405,7 @@ public:
 	ICF void set_c(R_constant* C, float A) { if (C) constants.set(C, A); }
 	ICF void set_c(R_constant* C, int A) { if (C) constants.set(C, A); }
 	ICF void set_c_bytes(R_constant* C, const void* data, u32 bytes) { if (C) constants.set_bytes(C, data, bytes); }
+	ICF void set_ca(R_constant* C, u32 e, const Fvector4* A, u32 count) { if (C) constants.seta(C, e, A, count); }
 #endif	//	USE_DX10
 
 

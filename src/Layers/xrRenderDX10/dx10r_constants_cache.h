@@ -104,6 +104,18 @@ public:
 		seta(C, e, data);
 	}
 
+	ICF void seta(R_constant* C, u32 e, const Fvector4* A, u32 count)
+	{
+		if (C->destination & RC_dest_pixel) { seta(C, C->ps, e, A, count, BT_PixelBuffer); }
+		if (C->destination & RC_dest_vertex) { seta(C, C->vs, e, A, count, BT_VertexBuffer); }
+		if (C->destination & RC_dest_geometry) { seta(C, C->gs, e, A, count, BT_GeometryBuffer); }
+#ifdef USE_DX11
+		if (C->destination & RC_dest_hull) { seta(C, C->hs, e, A, count, BT_HullBuffer); }
+		if (C->destination & RC_dest_domain) { seta(C, C->ds, e, A, count, BT_DomainBuffer); }
+		if (C->destination & RC_dest_compute) { seta(C, C->cs, e, A, count, BT_Compute); }
+#endif
+	}
+
 	ICF void set_bytes(R_constant* C, const void* data, u32 bytes)
 	{
 		if (C->destination & RC_dest_pixel) { set_bytes(C, C->ps, data, bytes, BT_PixelBuffer); }
@@ -181,6 +193,12 @@ private:
 	{
 		dx10ConstantBuffer& Buffer = GetCBuffer(C, BType);
 		Buffer.seta(C, L, e, A);
+	}
+
+	void seta(R_constant* C, R_constant_load& L, u32 e, const Fvector4* A, u32 count, BufferType BType)
+	{
+		dx10ConstantBuffer& Buffer = GetCBuffer(C, BType);
+		Buffer.seta(C, L, e, A, count);
 	}
 
 	void set_bytes(R_constant* C, R_constant_load& L, const void* data, u32 bytes, BufferType BType)
