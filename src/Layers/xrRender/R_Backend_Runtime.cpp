@@ -134,15 +134,18 @@ void CBackend::Invalidate()
 	SRVSManager.ResetDeviceState();
 
 	for (u32 gs_it = 0; gs_it < mtMaxGeometryShaderTextures;) textures_gs[gs_it++] = 0;
+	textures_gs_end = 0;
 #ifdef USE_DX11
 	for (u32 hs_it = 0; hs_it < mtMaxHullShaderTextures;) textures_hs[hs_it++] = 0;
 	for (u32 ds_it = 0; ds_it < mtMaxDomainShaderTextures;) textures_ds[ds_it++] = 0;
 	for (u32 cs_it = 0; cs_it < mtMaxComputeShaderTextures;) textures_cs[cs_it++] = 0;
+	textures_hs_end = textures_ds_end = textures_cs_end = 0;
 #endif
 #endif	//	USE_DX10
 
 	for (u32 ps_it = 0; ps_it < mtMaxPixelShaderTextures;) textures_ps[ps_it++] = 0;
 	for (u32 vs_it = 0; vs_it < mtMaxVertexShaderTextures;) textures_vs[vs_it++] = 0;
+	textures_ps_end = textures_vs_end = 0;
 #ifdef _EDITOR
 	for (u32 m_it =0; m_it< 8;)		matrices	[m_it++]	= 0;
 #endif
@@ -374,7 +377,9 @@ void CBackend::set_Textures(STextureList* _T)
 
 
 	// clear remaining stages (PS)
-	for (++_last_ps; _last_ps < mtMaxPixelShaderTextures; _last_ps++)
+	int _end_ps = textures_ps_end;
+	textures_ps_end = _last_ps + 1;
+	for (++_last_ps; _last_ps < _end_ps; _last_ps++)
 	{
 		if (!textures_ps[_last_ps])
 			continue;
@@ -390,7 +395,9 @@ void CBackend::set_Textures(STextureList* _T)
 #endif	//	USE_DX10
 	}
 	// clear remaining stages (VS)
-	for (++_last_vs; _last_vs < mtMaxVertexShaderTextures; _last_vs++)
+	int _end_vs = textures_vs_end;
+	textures_vs_end = _last_vs + 1;
+	for (++_last_vs; _last_vs < _end_vs; _last_vs++)
 	{
 		if (!textures_vs[_last_vs])
 			continue;
@@ -408,7 +415,9 @@ void CBackend::set_Textures(STextureList* _T)
 
 #if defined(USE_DX10) || defined(USE_DX11)
 	// clear remaining stages (VS)
-	for (++_last_gs; _last_gs < mtMaxGeometryShaderTextures; _last_gs++)
+	int _end_gs = textures_gs_end;
+	textures_gs_end = _last_gs + 1;
+	for (++_last_gs; _last_gs < _end_gs; _last_gs++)
 	{
 		if (!textures_gs[_last_gs])
 			continue;
@@ -421,7 +430,9 @@ void CBackend::set_Textures(STextureList* _T)
 		SRVSManager.SetGSResource(_last_gs, pRes);
 	}
 #ifdef USE_DX11
-	for (++_last_hs; _last_hs < mtMaxHullShaderTextures; _last_hs++)
+	int _end_hs = textures_hs_end;
+	textures_hs_end = _last_hs + 1;
+	for (++_last_hs; _last_hs < _end_hs; _last_hs++)
 	{
 		if (!textures_hs[_last_hs])
 			continue;
@@ -432,7 +443,9 @@ void CBackend::set_Textures(STextureList* _T)
 		ID3DShaderResourceView* pRes = 0;
 		SRVSManager.SetHSResource(_last_hs, pRes);
 	}
-	for (++_last_ds; _last_ds < mtMaxDomainShaderTextures; _last_ds++)
+	int _end_ds = textures_ds_end;
+	textures_ds_end = _last_ds + 1;
+	for (++_last_ds; _last_ds < _end_ds; _last_ds++)
 	{
 		if (!textures_ds[_last_ds])
 			continue;
@@ -443,7 +456,9 @@ void CBackend::set_Textures(STextureList* _T)
 		ID3DShaderResourceView* pRes = 0;
 		SRVSManager.SetDSResource(_last_ds, pRes);
 	}
-	for (++_last_cs; _last_cs < mtMaxComputeShaderTextures; _last_cs++)
+	int _end_cs = textures_cs_end;
+	textures_cs_end = _last_cs + 1;
+	for (++_last_cs; _last_cs < _end_cs; _last_cs++)
 	{
 		if (!textures_cs[_last_cs])
 			continue;

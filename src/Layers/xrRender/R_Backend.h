@@ -216,6 +216,14 @@ private:
 	CTexture* textures_cs [mtMaxComputeShaderTextures]; // 4 vs
 #	endif
 #endif	//	USE_DX10
+	// per stage: no non-null textures_xx entry at or above this slot
+	int textures_ps_end, textures_vs_end;
+#if defined(USE_DX10) || defined(USE_DX11)
+	int textures_gs_end;
+#	ifdef USE_DX11
+	int textures_hs_end, textures_ds_end, textures_cs_end;
+#	endif
+#endif	//	USE_DX10
 #ifdef _EDITOR
 	CMatrix*						matrices	[8	];	// matrices are supported only for FFP
 #endif
