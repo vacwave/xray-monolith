@@ -180,6 +180,10 @@ void CActor::PickupModeUpdate_COD(pickup_result_t pickup_result)
 
 	CFrustum frustum;
 	frustum.CreateFromMatrix(Device.mFullTransform, FRUSTUM_P_LRTB | FRUSTUM_P_FAR);
+	// items are accepted only within 2 m of Position(), so cut everything 25 m past it along the view
+	Fplane far_cut;
+	far_cut.build(Fvector().mad(Position(), Device.vCameraDirection, 25.f), Device.vCameraDirection);
+	frustum._add(far_cut);
 
 	ISpatialResult.clear_not_free();
 	g_SpatialSpace->q_frustum(ISpatialResult, 0, STYPE_COLLIDEABLE, frustum);
@@ -195,13 +199,6 @@ void CActor::PickupModeUpdate_COD(pickup_result_t pickup_result)
 		if (0 == pIItem) continue;
 		if (pIItem->object().H_Parent() != NULL) continue;
 		if (!pIItem->CanTake()) continue;
-		if (smart_cast<CExplosiveRocket*>(&pIItem->object())) continue;
-
-		CGrenade* pGrenade = smart_cast<CGrenade*>(spatial->dcast_CObject());
-		if (pGrenade && !pGrenade->Useful()) continue;
-
-		CMissile* pMissile = smart_cast<CMissile*>(spatial->dcast_CObject());
-		if (pMissile && !pMissile->Useful()) continue;
 
 		Fvector A, B, tmp;
 		pIItem->object().Center(A);
@@ -211,6 +208,14 @@ void CActor::PickupModeUpdate_COD(pickup_result_t pickup_result)
 		B.mad(cam_Active()->vPosition, cam_Active()->vDirection, tmp.dotproduct(cam_Active()->vDirection));
 		float len = B.distance_to_sqr(A);
 		if (len > 1) continue;
+
+		if (smart_cast<CExplosiveRocket*>(&pIItem->object())) continue;
+
+		CGrenade* pGrenade = smart_cast<CGrenade*>(spatial->dcast_CObject());
+		if (pGrenade && !pGrenade->Useful()) continue;
+
+		CMissile* pMissile = smart_cast<CMissile*>(spatial->dcast_CObject());
+		if (pMissile && !pMissile->Useful()) continue;
 
 		if (maxlen > len && !pIItem->object().getDestroy())
 		{
