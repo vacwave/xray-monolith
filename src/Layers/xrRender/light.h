@@ -101,6 +101,14 @@ public:
 	u32				m_xform_frame, m_parent_p_frame, m_parent_u_frame;
 	Fmatrix			m_xform;
 
+	// inputs of the last xform_calc; compared bitwise to skip unchanged recalcs
+	struct _xform_in	{
+		Fvector		position, direction, right;
+		float		range, cone, virtual_size;
+		u32			type, ortho;
+	}				m_xform_in;
+	bool			m_xform_in_valid;
+
 	struct _vis		{
 		u32			frame2test;		// frame the test is sheduled to
 		ID3DQuery*	Q;
