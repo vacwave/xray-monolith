@@ -23,6 +23,7 @@ public:
 	IInputReceiver* m_pStoredInputReceiver;
 	CUISequencer();
 	void Start(LPCSTR tutor_name);
+	static void PreloadXml();
 	void Stop();
 	void Next();
 
