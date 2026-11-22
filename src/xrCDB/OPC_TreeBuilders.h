@@ -148,13 +148,14 @@ class OPCODE_API AABBTreeOfTrianglesBuilder : public AABBTreeBuilder
 {
 public:
 	//! Constructor
-	AABBTreeOfTrianglesBuilder() : mTriList(null), mVerts(null), mNbTriangles(0)
+	AABBTreeOfTrianglesBuilder() : mTriList(null), mVerts(null), mNbTriangles(0), mCenters(null)
 	{
 	}
 
 	//! Destructor
 	virtual ~AABBTreeOfTrianglesBuilder()
 	{
+		CFREE(mCenters);
 	}
 
 	override(AABBTreeBuilder) bool ComputeGlobalBox(const udword* primitives, udword nb_prims, AABB& global_box) const;
@@ -165,6 +166,7 @@ public:
 	const IndexedTriangle* mTriList; //!< Shortcut to an app-controlled list of triangles.
 	const Point* mVerts; //!< Shortcut to an app-controlled list of vertices.
 	const udword mNbTriangles; //!< Total number of triangles.
+	float* mCenters; //!< Optional build-time cache of GetSplittingValue results, 3 floats per triangle.
 };
 #pragma warning(default:4512)
 

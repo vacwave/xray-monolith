@@ -218,7 +218,14 @@ bool OPCODE_Model::Build(const OPCODECREATE& create)
 	TB.mVerts = create.Verts;
 	TB.mRules = create.Rules;
 	TB.mNbPrimitives = create.NbTris;
+	// Cache the per-triangle centres once (filled by the uncached GetSplittingValue, so values are identical)
+	float* Centers = CALLOC(float, create.NbTris * 3);
+	CHECKALLOC(Centers);
+	for (udword i = 0; i < create.NbTris; i++)
+		for (udword j = 0; j < 3; j++) Centers[i * 3 + j] = TB.GetSplittingValue(i, j);
+	TB.mCenters = Centers;
 	if (!mSource->Build(&TB)) return false;
+	CFREE(TB.mCenters);
 
 	// 3) Create an optimized tree according to user-settings
 	// 3-1) Create the correct class
