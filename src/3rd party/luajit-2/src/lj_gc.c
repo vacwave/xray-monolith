@@ -128,11 +128,11 @@ void *_InterlockedCompareExchangePointer(void *volatile *, void *, void *);
 /*
 ** Node addresses of the previous userdata walk of one big state, in list
 ** order. They are only prefetched or compared, never dereferenced. Plain
-** malloc memory, so GC pacing is unaffected. Only the owner state touches them.
+** malloc memory, so GC pacing is unaffected. Only the owner state (set with
+** luaJIT_gc_udhint) touches them.
 */
 #define GCUDH_DIST	24	/* Prefetch distance in nodes. */
 #define GCUDH_WIN	8	/* Resync window. */
-#define GCUDH_MIN	4096	/* Walk length needed to adopt a state. */
 
 static void *volatile gc_udh_owner;  /* Owning global_State or NULL. */
 static GCobj **gc_udh_prev, **gc_udh_next, **gc_udh_mv;
@@ -197,7 +197,7 @@ size_t lj_gc_separateudata(global_State *g, int all)
   GCobj *o;
 #if LJ_GC_UDHINT
   GCobj **hp = NULL, **hn = NULL, **hm = NULL;
-  size_t np = 0, j = 0, pf = 0, nn = 0, szn = 0, nm = 0, szm = 0, cnt = 0;
+  size_t np = 0, j = 0, pf = 0, nn = 0, szn = 0, nm = 0, szm = 0;
   int own = (gc_udh_owner == (void *)g), rec = 1, recm = 1;
   if (own && all) {  /* Closing the state. */
     gc_udh_release(g);
@@ -228,8 +228,6 @@ size_t lj_gc_separateudata(global_State *g, int all)
 	else
 	  hn[nn++] = o;
       }
-    } else {
-      cnt++;
     }
 #endif
     if (!(iswhite(o) || all) || isfinalized(gco2ud(o))) {
@@ -265,11 +263,19 @@ size_t lj_gc_separateudata(global_State *g, int all)
     gc_udh_next = hp; gc_udh_sznext = gc_udh_szprev;
     gc_udh_prev = hn; gc_udh_szprev = szn; gc_udh_nprev = rec ? nn : 0;
     gc_udh_mv = hm; gc_udh_szmv = szm; gc_udh_nmv = recm ? nm : 0;
-  } else if (!all && cnt > GCUDH_MIN && gc_udh_owner == NULL) {
-    _InterlockedCompareExchangePointer(&gc_udh_owner, (void *)g, NULL);
   }
 #endif
   return m;
+}
+
+/* Let this state use the userdata walk hints. One state at a time, until it is closed. */
+LUA_API void luaJIT_gc_udhint(lua_State *L)
+{
+#if LJ_GC_UDHINT
+  _InterlockedCompareExchangePointer(&gc_udh_owner, (void *)G(L), NULL);
+#else
+  UNUSED(L);
+#endif
 }
 
 /* -- Propagation phase --------------------------------------------------- */
