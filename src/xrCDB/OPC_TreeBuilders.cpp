@@ -140,6 +140,8 @@ float AABBTreeOfTrianglesBuilder::GetSplittingValue(udword index, udword axis) c
 		// Return value
 		return Center[axis];*/
 
+	if (mCenters) return mCenters[index * 3 + axis];
+
 	// Compute correct component from center of triangle
 	return (((const float*)mVerts[mTriList[index].mVRef[0]])[axis]
 		+ ((const float*)mVerts[mTriList[index].mVRef[1]])[axis]

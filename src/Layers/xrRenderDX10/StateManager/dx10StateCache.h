@@ -26,16 +26,22 @@ private:
 	{
 		u32 m_crc;
 		IDeviceState* m_pState;
+		StateDecs m_desc;
 	};
 
 private:
 	void CreateState(StateDecs desc, IDeviceState** ppIState);
 	IDeviceState* FindState(const StateDecs& desc, u32 StateCRC);
+	IDeviceState* FindOrCreateState(const StateDecs& desc, bool& bFound);
 
 	//	Private data
 private:
 	//	This must be cleared on device destroy
 	xr_vector<StateRecord> m_StateArray;
+
+	//	Last desc found by GetState(StateDecs&) (StateManager path only) and its state
+	StateDecs m_LastDesc;
+	IDeviceState* m_pLastState;
 };
 
 extern dx10StateCache<ID3DRasterizerState, D3D_RASTERIZER_DESC> RSManager;

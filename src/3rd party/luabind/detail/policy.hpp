@@ -757,6 +757,21 @@ namespace luabind { namespace detail
 			// trying to use an unregistered type
 			assert(crep && "you are trying to use an unregistered type");
 
+			// small trivial values live in the userdata right after the object_rep: no separate heap block
+			if constexpr (std::is_trivially_copyable_v<T> && std::is_trivially_destructible_v<T> && alignof(T) <= alignof(object_rep) && sizeof(T) <= 64)
+			{
+				if (!crep->has_holder())
+				{
+					void* mem = lua_newuserdata(L, sizeof(object_rep) + sizeof(T));
+					T* object_ptr = new(static_cast<char*>(mem) + sizeof(object_rep)) T(ref);
+					new(mem) object_rep(object_ptr, crep, object_rep::owner, &destruct_only_s<T>::apply);
+
+					detail::getref(L, crep->metatable_ref());
+					lua_setmetatable(L, -2);
+					return;
+				}
+			}
+
 			void* obj_rep;
 			void* held;
 

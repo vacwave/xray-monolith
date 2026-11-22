@@ -24,6 +24,7 @@
 
 #include <typeinfo>
 #include <map>
+#include <atomic>
 
 #include <luabind/config.hpp>
 #include <luabind/open.hpp>
@@ -35,8 +36,12 @@ namespace luabind { namespace detail
 	struct LUABIND_API class_registry
 	{
 		class_registry(lua_State* L);
+		~class_registry();
 
 		static class_registry* get_registry(lua_State* L);
+
+		// bumped when any registry is created, destroyed or gets a class; invalidates the get_class_rep caches
+		static std::atomic<unsigned> epoch;
 
 		int cpp_instance() const { return m_cpp_instance_metatable; }
 		int cpp_class() const { return m_cpp_class_metatable; }

@@ -90,6 +90,8 @@ class xrServer : public IPureServer
 {
 private:
 	xrS_entities entities;
+	CSE_Abstract* m_entity_by_id[0x10000]; // O(1) mirror of entities by u16 ID; update together with entities
+	void entity_Insert(u16 ID, CSE_Abstract* E) { m_entity_by_id[ID] = entities.insert(xrS_entities::value_type(ID, E)).first->second; }
 	xr_multiset<svs_respawn> q_respawn;
 	xr_vector<u16> conn_spawned_ids;
 	cheaters_t m_cheaters;

@@ -16,14 +16,20 @@
 struct CBorderMergePredicate
 {
 	CSpaceRestrictionShape* m_restriction;
+	Fsphere m_bounds;
 
 	IC CBorderMergePredicate(CSpaceRestrictionShape* restriction)
 	{
 		m_restriction = restriction;
+		m_bounds = restriction->sphere();
+		m_bounds.R += ai().level_graph().header().cell_size();
 	}
 
 	IC void operator()(const CLevelGraph::CVertex& vertex) const
 	{
+		// inside() samples within half a cell of the node and fails outside the restrictor's bounding sphere
+		if (_abs(ai().level_graph().vertex_position(vertex).z - m_bounds.P.z) > m_bounds.R)
+			return;
 		if (m_restriction->inside(ai().level_graph().vertex_id(&vertex), true) && !m_restriction->inside(
 			ai().level_graph().vertex_id(&vertex), false))
 			m_restriction->m_border.push_back(ai().level_graph().vertex_id(&vertex));

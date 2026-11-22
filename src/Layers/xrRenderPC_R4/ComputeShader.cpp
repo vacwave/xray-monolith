@@ -85,7 +85,11 @@ void ComputeShader::Dispatch(u32 dimx, u32 dimy, u32 dimz)
 		HW.pContext->CSSetShaderResources(0, m_Textures.size(), &m_Textures[0]);
 
 	if (!m_Samplers.empty())
+	{
 		HW.pContext->CSSetSamplers(0, m_Samplers.size(), &m_Samplers[0]);
+		//	Bound behind SSManager's back
+		SSManager.ResetDeviceState();
+	}
 
 	if (!m_Outputs.empty())
 	{

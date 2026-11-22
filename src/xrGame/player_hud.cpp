@@ -34,7 +34,7 @@ player_hud_motion* player_hud_motion_container::find_motion(const shared_str& na
 	return NULL;
 }
 
-void player_hud_motion_container::load(IKinematicsAnimated* model, const shared_str& sect)
+void player_hud_motion_container::load(const xr_unordered_flat_map<std::string_view, MotionID>& cycles, const shared_str& sect)
 {
 	CInifile::Sect& _sect = pSettings->r_section(sect);
 	CInifile::SectCIt _b = _sect.Data.begin();
@@ -43,6 +43,12 @@ void player_hud_motion_container::load(IKinematicsAnimated* model, const shared_
 
 	string512 buff;
 	MotionID motion_ID;
+
+	const auto find_cycle = [&cycles](LPCSTR name)
+	{
+		const auto it = cycles.find(std::string_view(name));
+		return it != cycles.end() ? it->second : MotionID();
+	};
 
 	for (; _b != _e; ++_b)
 	{
@@ -100,10 +106,10 @@ void player_hud_motion_container::load(IKinematicsAnimated* model, const shared_
 				else
 					xr_sprintf(buff, "%s%d", pm->m_base_name.c_str(), i);
 
-				motion_ID = model->ID_Cycle_Safe(buff);
+				motion_ID = find_cycle(buff);
 				if (!motion_ID.valid() && i == 0)
 				{
-					motion_ID = model->ID_Cycle_Safe("hand_idle_doun");
+					motion_ID = find_cycle("hand_idle_doun");
 				}
 				if (motion_ID.valid())
 				{
@@ -903,6 +909,7 @@ void player_hud::load(const shared_str& player_hud_sect, bool force)
 	force_hands_bone_parts = true;
 	m_model = smart_cast<IKinematicsAnimated*>(::Render->model_Create(model_name.c_str()));
 	m_model_2 = smart_cast<IKinematicsAnimated*>(::Render->model_Create(pSettings->line_exist(player_hud_sect, "visual_2") ? pSettings->r_string(player_hud_sect, "visual_2") : model_name.c_str()));
+	m_hand_cycles.clear();
 
     if (m_model)
     {
@@ -2077,15 +2084,24 @@ u32 player_hud::anim_play(u16 part, const MotionID& M, BOOL bMixIn, const CMotio
 
 player_hud_motion_container* player_hud::get_hand_motions(LPCSTR section)
 {
+	const shared_str sect = section;
 	for (hand_motions* phm : m_hand_motions)
 	{
-		if (phm->section == section)
+		if (phm->section == sect)
 			return &phm->pm;
 	}
 
+	if (m_hand_cycles.empty())
+	{
+		// highest slot first, emplace keeps the first match: same result as ID_Cycle_Safe
+		for (int k = int(m_model->LL_MotionsSlotCount()) - 1; k >= 0; --k)
+			for (const auto& it : *m_model->LL_MotionsSlot(u16(k)).cycle())
+				m_hand_cycles.emplace(std::string_view(it.first.c_str(), it.first.size()), MotionID(u16(k), it.second));
+	}
+
 	hand_motions* res = xr_new<hand_motions>();
-	res->section = section;
-	res->pm.load(m_model, section);
+	res->section = sect;
+	res->pm.load(m_hand_cycles, sect);
 	m_hand_motions.push_back(res);
 
 	return &res->pm;

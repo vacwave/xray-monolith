@@ -15,7 +15,11 @@ dx10StateCache<IDeviceState, StateDecs>
 	dx10StateUtils::ResetDescription(desc);
 	state_code.UpdateDesc(desc);
 
-	return GetState(desc);
+	dx10StateUtils::ValidateState(desc);
+
+	//	Shader creation path (may run off the render thread): never touches the memo
+	bool bFound;
+	return FindOrCreateState(desc, bFound);
 
 	/*
 	u32 crc = crc32( &desc, sizeof(desc));
@@ -40,19 +44,46 @@ IDeviceState*
 dx10StateCache<IDeviceState, StateDecs>
 ::GetState(StateDecs& desc)
 {
-	IDeviceState* pResult;
-
 	dx10StateUtils::ValidateState(desc);
+
+	//	Records are append-only, so the same bytes as the last found desc find the same first record
+	if (m_pLastState && !memcmp(&m_LastDesc, &desc, sizeof(desc)))
+		return m_pLastState;
+
+	bool bFound;
+	IDeviceState* pResult = FindOrCreateState(desc, bFound);
+
+	if (bFound)
+	{
+		CopyMemory(&m_LastDesc, &desc, sizeof(desc));
+		m_pLastState = pResult;
+	}
+
+	return pResult;
+}
+
+template <class IDeviceState, class StateDecs>
+IDeviceState*
+dx10StateCache<IDeviceState, StateDecs>
+::FindOrCreateState(const StateDecs& desc, bool& bFound)
+{
+	IDeviceState* pResult;
 
 	u32 crc = dx10StateUtils::GetHash(desc);
 
 	pResult = FindState(desc, crc);
+	bFound = (pResult != NULL);
 
 	if (!pResult)
 	{
 		StateRecord rec;
 		rec.m_crc = crc;
 		CreateState(desc, &rec.m_pState);
+		//	Store what GetDesc reports (FindState used to call it per candidate); the object is immutable
+		if (rec.m_pState)
+			rec.m_pState->GetDesc(&rec.m_desc);
+		else
+			rec.m_desc = desc;
 		pResult = rec.m_pState;
 		m_StateArray.push_back(rec);
 	}
@@ -70,10 +101,8 @@ dx10StateCache<IDeviceState, StateDecs>
 	{
 		if (m_StateArray[i].m_crc == StateCRC)
 		{
-			StateDecs descCandidate;
-			m_StateArray[i].m_pState->GetDesc(&descCandidate);
 			//if ( !memcmp(&descCandidate, &desc, sizeof(desc)) )
-			if (descCandidate == desc)
+			if (m_StateArray[i].m_desc == desc)
 				//break;
 				//	TEST
 			{

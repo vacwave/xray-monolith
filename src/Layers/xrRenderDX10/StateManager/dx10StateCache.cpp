@@ -8,6 +8,7 @@ dx10StateCache<ID3DBlendState, D3D_BLEND_DESC> BSManager;
 template <class IDeviceState, class StateDecs>
 dx10StateCache<IDeviceState, StateDecs>
 ::dx10StateCache()
+	: m_pLastState(NULL)
 {
 	static const int iMasRSStates = 10;
 	m_StateArray.reserve(iMasRSStates);
@@ -42,6 +43,7 @@ dx10StateCache<IDeviceState, StateDecs>
 	}
 
 	m_StateArray.clear_not_free();
+	m_pLastState = NULL;
 }
 
 template <>

@@ -320,7 +320,7 @@ extern float ps_r__ssaDISCARD_exp;
 extern float ps_r__ssaDISCARD_fade_k;
 void CDSGraphManager::r_dsgraph_insert_static(dxRender_Visual *pVisual)
 {
-	if (m_static_seen.find(pVisual) != m_static_seen.end())
+	if (!m_static_seen.insert(pVisual).second)
 	{
 		if (PortalTraverseDbg_Enabled())
 		{
@@ -334,7 +334,6 @@ void CDSGraphManager::r_dsgraph_insert_static(dxRender_Visual *pVisual)
 		}
 		return;
 	}
-	m_static_seen.insert(pVisual);
 	if (PortalTraverseDbg_Enabled())
 	{
 		PortalTraverseDebugStats& dbg = PortalTraverseDbg_Get();
@@ -709,7 +708,13 @@ void CDSGraphManager::add_Static(IRenderVisual* piVisual, CFrustum& frustum, u32
 
 void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_vector<CFrustum>& frustums, const xr_vector<u32>& masks)
 {
+	add_Static_MultiFrustum(piVisual, frustums, masks.data(), u32(masks.size()));
+}
+
+void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_vector<CFrustum>& frustums, const u32* masks, u32 count)
+{
 	constexpr u32 FULLY_VISIBLE_MASK = u32(-1);
+	constexpr u32 STACK_MASKS = 16;
 
 	dxRender_Visual* pVisual = (dxRender_Visual*)piVisual;
 	if (!pVisual) return;
@@ -722,10 +727,17 @@ void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_
 	vis_data& vis = pVisual->vis;
 	bool anyVisible = false;
 	bool hasFullyVisibleFrustum = false;
-	xr_vector<u32> childMasks;
-	childMasks.resize(masks.size(), 0);
+	// Child masks per recursion level: on the stack, on the heap only beyond STACK_MASKS frustums
+	u32 stackMasks[STACK_MASKS] = {};
+	xr_vector<u32> heapMasks;
+	u32* childMasks = stackMasks;
+	if (count > STACK_MASKS)
+	{
+		heapMasks.resize(count, 0);
+		childMasks = heapMasks.data();
+	}
 
-	for (u32 i = 0; i < masks.size(); ++i)
+	for (u32 i = 0; i < count; ++i)
 	{
 		u32 planeMask = masks[i];
 		if (!planeMask)
@@ -783,7 +795,7 @@ void CDSGraphManager::add_Static_MultiFrustum(IRenderVisual* piVisual, const xr_
 		else
 		{
 			for (auto V : pV->children)
-				add_Static_MultiFrustum(V, frustums, childMasks);
+				add_Static_MultiFrustum(V, frustums, childMasks, count);
 		}
 	}break;
 

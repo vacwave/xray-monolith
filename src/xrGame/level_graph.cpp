@@ -88,21 +88,90 @@ CLevelGraph::~CLevelGraph()
 	FS.r_close(m_reader);
 }
 
+// first node in [b, e) with packed xz >= key (u64 so row arithmetic cannot wrap)
+static const CLevelGraph::CVertex* lower_xz(const CLevelGraph::CVertex* b, const CLevelGraph::CVertex* e, u64 key)
+{
+	return std::lower_bound(b, e, key, [](const CLevelGraph::CVertex& v, u64 k) { return v.position().xz() < k; });
+}
+
+// cell index a grid coordinate rounds to, clamped to [0, last] (NaN gives 0)
+static u32 clamped_cell(float f, u32 last)
+{
+	if (!(f > 0.f))
+		return 0;
+	if (f >= float(last))
+		return last;
+	return u32(iFloor(f));
+}
+
 u32 CLevelGraph::vertex(const Fvector& position) const
 {
-	CLevelGraph::CPosition _node_position;
-	vertex_position(_node_position, position);
 	float min_dist = flt_max;
 	u32 selected;
 	set_invalid_vertex(selected);
-	for (u32 i = 0; i < header().vertex_count(); ++i)
+	const float st = header().cell_size() * .5f;
+	const CVertex* B = m_nodes;
+	const CVertex* E = m_nodes + header().vertex_count();
+	const u64 rl = m_row_length;
+	const u32 z0 = clamped_cell((position.z - header().box().min.z) / header().cell_size() + .5f, m_row_length - 1);
+	const u32 x0 = clamped_cell((position.x - header().box().min.x) / header().cell_size() + .5f, m_column_length - 1);
+
+	// lower bound: xz distance to the cell square; a vertex beyond min_dist cannot win. Returns false if skipped
+	auto visit = [&](const CVertex* I, float dx, float& z) -> bool
 	{
+		float x;
+		unpack_xz(*I, x, z);
+		float dz = _abs(position.z - z) - st;
+		if (dz < 0.f) dz = 0.f;
+		if (dx * dx + dz * dz > min_dist * 1.01f + .01f)
+			return false;
+
+		const u32 i = u32(I - B);
 		float dist = distance(i, position);
-		if (dist < min_dist)
+		// lowest index wins a tie, as in an ascending full scan
+		if (dist < min_dist || (dist == min_dist && valid_vertex_id(selected) && i < selected))
 		{
 			min_dist = dist;
 			selected = i;
 		}
+		return true;
+	};
+
+	// scans one x row outward from z0; returns true when this and all rows farther in this direction are beyond the bound
+	auto scan_row = [&](const CVertex* rb, const CVertex* re, bool up) -> bool
+	{
+		float x, z;
+		unpack_xz(*rb, x, z);
+		float dx = _abs(position.x - x) - st;
+		if (dx < 0.f) dx = 0.f;
+		if (dx * dx > min_dist * 1.01f + .01f)
+			return up ? x >= position.x : x <= position.x;
+
+		const CVertex* mid = lower_xz(rb, re, u64(rb->position().xz() / m_row_length) * rl + z0);
+		for (const CVertex* I = mid; I != re; ++I)
+			if (!visit(I, dx, z) && z >= position.z)
+				break;
+		for (const CVertex* I = mid; I != rb;)
+			if (!visit(--I, dx, z) && z <= position.z)
+				break;
+		return false;
+	};
+
+	// nodes are sorted by packed xz = x * row_length + z: walk rows outward from x0 in both directions
+	const CVertex* S = lower_xz(B, E, u64(x0) * rl);
+	for (const CVertex* rb = S; rb != E;)
+	{
+		const CVertex* re = lower_xz(rb, E, u64(rb->position().xz() / m_row_length + 1) * rl);
+		if (scan_row(rb, re, true))
+			break;
+		rb = re;
+	}
+	for (const CVertex* re = S; re != B;)
+	{
+		const CVertex* rb = lower_xz(B, re, u64((re - 1)->position().xz() / m_row_length) * rl);
+		if (scan_row(rb, re, false))
+			break;
+		re = rb;
 	}
 
 	VERIFY(valid_vertex_id(selected));

@@ -1177,6 +1177,7 @@ namespace luabind
 			detail::construct_rep::overload_t o;
 
 			o.set_constructor(&detail::construct_class<T, Policies...>::template apply<Ts...>);
+			o.set_needs_backref(false);
 			o.set_match_fun(&detail::constructor_match<2, Ts...>::template apply<Policies...>);
 
 #ifndef LUABIND_NO_ERROR_CHECKING
@@ -1196,6 +1197,7 @@ namespace luabind
 			detail::construct_rep::overload_t o;
 
 			o.set_constructor(&detail::construct_wrapped_class<T, WrappedType, Policies...>::template apply<Ts...>);
+			o.set_needs_backref(true);
 			o.set_match_fun(&detail::constructor_match<2, Ts...>::template apply<Ts...>);
 
 #ifndef LUABIND_NO_ERROR_CHECKING

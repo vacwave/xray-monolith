@@ -134,6 +134,9 @@ public:
 	ref_cbuffer m_aDomainConstants[MaxCBuffers];
 	ref_cbuffer m_aComputeConstants[MaxCBuffers];
 #	endif
+	//	Non-null entries of the arrays above in flush_cache order; rebuilt whenever they change
+	dx10ConstantBuffer* m_aBoundCBuffers[MaxCBuffers * 6];
+	u32 m_uiBoundCBuffers;
 	D3D_PRIMITIVE_TOPOLOGY m_PrimitiveTopology;
 	ID3DInputLayout* m_pInputLayout;
 	DWORD dummy0; //	Padding to avoid warning	
@@ -214,6 +217,14 @@ private:
 	CTexture* textures_hs [mtMaxHullShaderTextures]; // 4 vs
 	CTexture* textures_ds [mtMaxDomainShaderTextures]; // 4 vs
 	CTexture* textures_cs [mtMaxComputeShaderTextures]; // 4 vs
+#	endif
+#endif	//	USE_DX10
+	// per stage: no non-null textures_xx entry at or above this slot
+	int textures_ps_end, textures_vs_end;
+#if defined(USE_DX10) || defined(USE_DX11)
+	int textures_gs_end;
+#	ifdef USE_DX11
+	int textures_hs_end, textures_ds_end, textures_cs_end;
 #	endif
 #endif	//	USE_DX10
 #ifdef _EDITOR
@@ -405,6 +416,7 @@ public:
 	ICF void set_c(R_constant* C, float A) { if (C) constants.set(C, A); }
 	ICF void set_c(R_constant* C, int A) { if (C) constants.set(C, A); }
 	ICF void set_c_bytes(R_constant* C, const void* data, u32 bytes) { if (C) constants.set_bytes(C, data, bytes); }
+	ICF void set_ca(R_constant* C, u32 e, const Fvector4* A, u32 count) { if (C) constants.seta(C, e, A, count); }
 #endif	//	USE_DX10
 
 
@@ -493,6 +505,10 @@ public:
 	void dbg_DrawEllipse			(Fmatrix& T, u32 C);
 
 	CBackend() { Invalidate(); };
+#if defined(USE_DX10) || defined(USE_DX11)
+	//	One store: a draw always has a non-null decl, so a null m_pLayoutDecl never matches
+	void ResetVertexLayoutCache() { m_pLayoutDecl = NULL; }
+#endif
 
 private:
 	// Debug Draw
@@ -513,10 +529,14 @@ private:
 	void ApplyVertexLayout();
 	void ApplyRTandZB();
 	void ApplyPrimitieTopology(D3D_PRIMITIVE_TOPOLOGY Topology);
-	bool CBuffersNeedUpdate(ref_cbuffer buf1[MaxCBuffers], ref_cbuffer buf2[MaxCBuffers], u32& uiMin, u32& uiMax);
+	bool CBuffersNeedUpdate(dx10ConstantBuffer* const buf1[MaxCBuffers], ref_cbuffer buf2[MaxCBuffers], u32& uiMin, u32& uiMax);
 
 private:
 	ID3DBlob* m_pInputSignature;
+	//	Last ApplyVertexLayout lookup: (decl, input signature) -> layout; reset when either can be destroyed
+	SDeclaration* m_pLayoutDecl;
+	ID3DBlob* m_pLayoutSignature;
+	ID3DInputLayout* m_pLayoutCached;
 
 	bool m_bChangedRTorZB;
 #endif	//	USE_DX10

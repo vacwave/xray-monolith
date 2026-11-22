@@ -17,10 +17,12 @@ game_state actor.cheats shows the live state. g_unlimitedammo (infinite reserve)
 game_root: default C:\AnomalyMO2 (the testers' MO2: C:\Anomaly with their mods); C:\Anomaly = plain vanilla;
 C:\GAMMA counts against the GAMMA cap. An MO2 folder (ModOrganizer.exe, no fsgame.ltx) is started through its own
 MO2 (`run`, MO2's selected profile, active mods and gamePath), which is killed once the game runs; refused while
-any MO2 runs. exe: default for an MO2 root = MO2's own AnomalyDX11AVX.exe entry (<gamePath>\bin), else
-<repo>/_build/_game/bin_dbg/AnomalyDX11AVX.exe. Result: game_root, exe, mo2 {profile, game_path, mods_active,
+any MO2 runs. exe: default = <game path>\bin_mcp\AnomalyDX11AVX.exe (the deployed MCP
+build; <gamePath> of the MO2 ini for an MO2 root). Result: game_root, exe, mo2 {profile, game_path, mods_active,
 mods_total} (null without MO2).
 The game saves its options (axr_options.ltx) into the slot's appdata, never into the game's. new_game: start a new game straight into a level. extra_args: more engine args.
+GAMMA: every launch writes mcp/templates/options_overrides_gamma.ltx into that copy (result `option_overrides`); with
+overrides, new_game starts the game from the main menu after they are applied (no `-start` in args).
 timeout: seconds to wait for the first engine.info reply after connecting (a new_game level load blocks it).
 full_dumps: Windows Error Reporting writes full dumps (GBs) instead of mid dumps; the setting is global per exe
 name, so the last launch wins for all running instances. hang_timeout / load_timeout: seconds of stalled frames

@@ -78,8 +78,8 @@ protected:
 #endif // #ifdef USE_DEBUGGER
 
 private:
-	string128 m_last_no_file;
-	u32 m_last_no_file_length;
+	// names of missing scripts; std::less<> lets find() take a const char* without allocating
+	xr_set<xr_string, std::less<>> m_no_files;
 
 #ifdef USE_LUA_FUNCTOR_CACHE
 
@@ -121,8 +121,8 @@ public:
 	void invalidate_functor_cache();
 #endif
 
-	bool no_file_exists(LPCSTR file_name, u32 string_length);
-	void add_no_file(LPCSTR file_name, u32 string_length);
+	bool no_file_exists(LPCSTR file_name);
+	void add_no_file(LPCSTR file_name);
 
 public:
 	CScriptEngine();

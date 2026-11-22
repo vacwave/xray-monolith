@@ -40,7 +40,8 @@ static void ApplyTexgen(const Fmatrix& mVP)
 #endif	//	USE_DX10
 
 	mTexgen.mul(mTexelAdjust, mVP);
-	RCache.set_c("mVPTexgen", mTexgen);
+	static shared_str strVPTexgen("mVPTexgen");
+	RCache.set_c(strVPTexgen, mTexgen);
 }
 
 void PS::OnEffectParticleBirth(void* owner, u32, PAPI::Particle& m, u32)

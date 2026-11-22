@@ -137,6 +137,14 @@ void CRenderTarget::accum_spot(light* L)
 	//Device.mView.transform_dir(L_dir, L->direction);
 	//L_dir.normalize();
 
+	static shared_str strLdynamicPos("Ldynamic_pos");
+	static shared_str strLdynamicColor("Ldynamic_color");
+	static shared_str strTexgen("m_texgen");
+	static shared_str strTexgenJ("m_texgen_J");
+	static shared_str strShadow("m_shadow");
+	static shared_str strLmap("m_lmap");
+	static shared_str strSssId("sss_id");
+
 	// Draw volume with projective texgen
 	{
 		// Select shader
@@ -160,18 +168,18 @@ void CRenderTarget::accum_spot(light* L)
 		// Constants
 		float att_R = L->range * .95f;
 		float att_factor = 1.f / (att_R * att_R);
-		RCache.set_c("Ldynamic_pos", L_pos.x, L_pos.y, L_pos.z, att_factor);
-		RCache.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, L_spec);
-		RCache.set_c("m_texgen", m_Texgen);
-		RCache.set_c("m_texgen_J", m_Texgen_J);
-		RCache.set_c("m_shadow", m_Shadow);
-		RCache.set_ca("m_lmap", 0, m_Lmap._11, m_Lmap._21, m_Lmap._31, m_Lmap._41);
-		RCache.set_ca("m_lmap", 1, m_Lmap._12, m_Lmap._22, m_Lmap._32, m_Lmap._42);
+		RCache.set_c(strLdynamicPos, L_pos.x, L_pos.y, L_pos.z, att_factor);
+		RCache.set_c(strLdynamicColor, L_clr.x, L_clr.y, L_clr.z, L_spec);
+		RCache.set_c(strTexgen, m_Texgen);
+		RCache.set_c(strTexgenJ, m_Texgen_J);
+		RCache.set_c(strShadow, m_Shadow);
+		RCache.set_ca(strLmap, 0, m_Lmap._11, m_Lmap._21, m_Lmap._31, m_Lmap._41);
+		RCache.set_ca(strLmap, 1, m_Lmap._12, m_Lmap._22, m_Lmap._32, m_Lmap._42);
 
 		if (!Device.m_SecondViewport.IsSVPFrame())
-			RCache.set_c("sss_id", L->sss_id);
+			RCache.set_c(strSssId, L->sss_id);
 		else
-			RCache.set_c("sss_id", -1);
+			RCache.set_c(strSssId, -1);
 
 		// Fetch4 : enable
 		//		if (RImplementation.o.HW_smap_FETCH4)	{
@@ -231,8 +239,8 @@ void CRenderTarget::accum_spot(light* L)
 		else
 			u_setrt(rt_Accumulator,NULL,NULL, rt_MSAADepth->pZRT);
 		RCache.set_Element(s_accum_mask->E[SE_MASK_ACCUM_VOL]);
-		RCache.set_c("m_texgen", m_Texgen);
-		RCache.set_c("m_texgen_J", m_Texgen_J);
+		RCache.set_c(strTexgen, m_Texgen);
+		RCache.set_c(strTexgenJ, m_Texgen_J);
 		if (!RImplementation.o.dx10_msaa)
 		{
 			RCache.set_Stencil(TRUE, D3DCMP_EQUAL, dwLightMarkerID, 0xff, 0x00);
@@ -372,11 +380,15 @@ void CRenderTarget::accum_volumetric_lv(light* L)
 
 	RCache.set_ColorWriteEnable();
 	//Set constants
-	RCache.set_c("Ldynamic_pos", L_pos.x, L_pos.y, L_pos.z, att_factor);
-	RCache.set_c("Ldynamic_dir", L_dir.x, L_dir.y, L_dir.z, -cos(L->cone * 0.5));
-	RCache.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, L->get_LOD());
+	static shared_str strLdynamicPos("Ldynamic_pos");
+	static shared_str strLdynamicDir("Ldynamic_dir");
+	static shared_str strLdynamicColor("Ldynamic_color");
+	static shared_str strShadow("m_shadow");
+	RCache.set_c(strLdynamicPos, L_pos.x, L_pos.y, L_pos.z, att_factor);
+	RCache.set_c(strLdynamicDir, L_dir.x, L_dir.y, L_dir.z, -cos(L->cone * 0.5));
+	RCache.set_c(strLdynamicColor, L_clr.x, L_clr.y, L_clr.z, L->get_LOD());
 
-	RCache.set_c("m_shadow", m_Shadow);
+	RCache.set_c(strShadow, m_Shadow);
 
 	//Render, no IB/VB - geometry in VS
 	draw_volume(L);
@@ -651,16 +663,22 @@ void CRenderTarget::accum_volumetric(light* L)
 		// Constants
 		float att_R = L->m_volumetric_distance * L->range * .95f;
 		float att_factor = 1.f / (att_R * att_R);
-		RCache.set_c("Ldynamic_pos", L_pos.x, L_pos.y, L_pos.z, att_factor);
-		RCache.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, L_spec);
+		static shared_str strLdynamicPos("Ldynamic_pos");
+		static shared_str strLdynamicColor("Ldynamic_color");
+		static shared_str strShadow("m_shadow");
+		static shared_str strLmap("m_lmap");
+		static shared_str strMinBounds("vMinBounds");
+		static shared_str strMaxBounds("vMaxBounds");
+		RCache.set_c(strLdynamicPos, L_pos.x, L_pos.y, L_pos.z, att_factor);
+		RCache.set_c(strLdynamicColor, L_clr.x, L_clr.y, L_clr.z, L_spec);
 		//RCache.set_c("m_texgen", m_Texgen);
 		//RCache.set_c("m_texgen_J", m_Texgen_J);
-		RCache.set_c("m_shadow", m_Shadow);
-		RCache.set_ca("m_lmap", 0, m_Lmap._11, m_Lmap._21, m_Lmap._31, m_Lmap._41);
-		RCache.set_ca("m_lmap", 1, m_Lmap._12, m_Lmap._22, m_Lmap._32, m_Lmap._42);
-		RCache.set_c("vMinBounds", aabb.x1, aabb.y1, aabb.z1, 0);
+		RCache.set_c(strShadow, m_Shadow);
+		RCache.set_ca(strLmap, 0, m_Lmap._11, m_Lmap._21, m_Lmap._31, m_Lmap._41);
+		RCache.set_ca(strLmap, 1, m_Lmap._12, m_Lmap._22, m_Lmap._32, m_Lmap._42);
+		RCache.set_c(strMinBounds, aabb.x1, aabb.y1, aabb.z1, 0);
 		//	Increase camera-space aabb z size to compensate decrease of slices number
-		RCache.set_c("vMaxBounds", aabb.x2, aabb.y2, aabb.z1 + (aabb.z2 - aabb.z1) / fQuality, 0);
+		RCache.set_c(strMaxBounds, aabb.x2, aabb.y2, aabb.z1 + (aabb.z2 - aabb.z1) / fQuality, 0);
 
 		//	Set up user clip planes
 		{

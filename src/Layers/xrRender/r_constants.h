@@ -200,6 +200,11 @@ public:
 	cb_table m_CBTable;
 #endif	//	USE_DX10
 private:
+	//	Entries of "table" that have a handler, in table order; rebuilt on first use after "table" changes
+	xr_vector<R_constant*> m_handlers;
+	bool m_handlers_valid = false;
+	void build_handlers();
+
 	void fatal(LPCSTR s, LPCSTR name);
 
 #if defined(USE_DX10) || defined(USE_DX11)
@@ -223,6 +228,13 @@ public:
 	BOOL equal(R_constant_table& C);
 	BOOL equal(R_constant_table* C) { return equal(*C); }
 	BOOL empty() { return 0 == table.size(); }
+
+	const xr_vector<R_constant*>& handlers()
+	{
+		if (!m_handlers_valid)
+			build_handlers();
+		return m_handlers;
+	}
 
 };
 

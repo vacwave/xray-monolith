@@ -77,6 +77,11 @@ void CRenderTarget::accum_point(light* L)
 	Fmatrix m_Texgen_J;
 	u_compute_texgen_jitter(m_Texgen_J);
 
+	static shared_str strLdynamicPos("Ldynamic_pos");
+	static shared_str strLdynamicColor("Ldynamic_color");
+	static shared_str strTexgen("m_texgen");
+	static shared_str strSssId("sss_id");
+
 	// Draw volume with projective texgen
 	{
 		// Select shader
@@ -96,14 +101,14 @@ void CRenderTarget::accum_point(light* L)
 		RCache.set_Element(shader->E[_id]);
 
 		// Constants
-		RCache.set_c("Ldynamic_pos", L_pos.x, L_pos.y, L_pos.z, 1 / (L_R * L_R));
-		RCache.set_c("Ldynamic_color", L_clr.x, L_clr.y, L_clr.z, L_spec);
-		RCache.set_c("m_texgen", m_Texgen);
+		RCache.set_c(strLdynamicPos, L_pos.x, L_pos.y, L_pos.z, 1 / (L_R * L_R));
+		RCache.set_c(strLdynamicColor, L_clr.x, L_clr.y, L_clr.z, L_spec);
+		RCache.set_c(strTexgen, m_Texgen);
 
 		if (!Device.m_SecondViewport.IsSVPFrame())
-			RCache.set_c("sss_id", L->sss_id);
+			RCache.set_c(strSssId, L->sss_id);
 		else
-			RCache.set_c("sss_id", -1);
+			RCache.set_c(strSssId, -1);
 
 		// Fetch4 : enable
 		//		if (RImplementation.o.HW_smap_FETCH4)	{
@@ -164,7 +169,7 @@ void CRenderTarget::accum_point(light* L)
 		else
 			u_setrt(rt_Accumulator,NULL,NULL, rt_MSAADepth->pZRT);
 		RCache.set_Element(s_accum_mask->E[SE_MASK_ACCUM_VOL]);
-		RCache.set_c("m_texgen", m_Texgen);
+		RCache.set_c(strTexgen, m_Texgen);
 		if (! RImplementation.o.dx10_msaa)
 		{
 			RCache.set_Stencil(TRUE, D3DCMP_LESSEQUAL, dwLightMarkerID, 0xff, 0x00);

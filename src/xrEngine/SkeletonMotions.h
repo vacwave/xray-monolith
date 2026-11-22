@@ -322,6 +322,12 @@ public:
 		return &p_->m_cycle;
 	}
 
+	const accel_map* cycle() const
+	{
+		VERIFY(p_);
+		return &p_->m_cycle;
+	}
+
 	accel_map* fx()
 	{
 		VERIFY(p_);

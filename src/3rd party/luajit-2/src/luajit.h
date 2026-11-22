@@ -75,6 +75,9 @@ LUA_API const char *luaJIT_profile_dumpstack(lua_State *L, const char *fmt,
 /* Host gate: timer ticks are dropped while *gate == 0 (host not inside Lua). NULL = sample always. */
 LUA_API void luaJIT_profile_gate(volatile long *gate);
 
+/* Speed up the GC userdata walk of this state (one state per process). */
+LUA_API void luaJIT_gc_udhint(lua_State *L);
+
 /* Enforce (dynamic) linker error for version mismatches. Call from main. */
 LUA_API void LUAJIT_VERSION_SYM(void);
 

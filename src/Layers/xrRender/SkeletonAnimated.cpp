@@ -180,10 +180,11 @@ LPCSTR CKinematicsAnimated::LL_MotionDefName_dbg	(LPVOID ptr)
 MotionID CKinematicsAnimated::LL_MotionID(LPCSTR B)
 {
 	MotionID motion_ID;
+	const shared_str name = B;
 	for (int k = int(m_Motions.size()) - 1; k >= 0; --k)
 	{
 		shared_motions* s_mots = &m_Motions[k].motions;
-		accel_map::iterator I = s_mots->motion_map()->find(LPSTR(B));
+		accel_map::iterator I = s_mots->motion_map()->find(name);
 		if (I != s_mots->motion_map()->end())
 		{
 			motion_ID.set(u16(k), I->second);
@@ -209,10 +210,11 @@ u16 CKinematicsAnimated::LL_PartID(LPCSTR B)
 MotionID CKinematicsAnimated::ID_Cycle_Safe(LPCSTR N)
 {
 	MotionID motion_ID;
+	const shared_str name = N;
 	for (int k = int(m_Motions.size()) - 1; k >= 0; --k)
 	{
 		shared_motions* s_mots = &m_Motions[k].motions;
-		accel_map::const_iterator I = s_mots->cycle()->find(LPSTR(N));
+		accel_map::const_iterator I = s_mots->cycle()->find(name);
 		if (I != s_mots->cycle()->end())
 		{
 			motion_ID.set(u16(k), I->second);
@@ -476,10 +478,11 @@ CBlend* CKinematicsAnimated::PlayCycle(u16 partition, MotionID motion_ID, BOOL b
 MotionID CKinematicsAnimated::ID_FX_Safe(LPCSTR N)
 {
 	MotionID motion_ID;
+	const shared_str name = N;
 	for (int k = int(m_Motions.size()) - 1; k >= 0; --k)
 	{
 		shared_motions* s_mots = &m_Motions[k].motions;
-		accel_map::iterator I = s_mots->fx()->find(LPSTR(N));
+		accel_map::iterator I = s_mots->fx()->find(name);
 		if (I != s_mots->fx()->end())
 		{
 			motion_ID.set(u16(k), I->second);

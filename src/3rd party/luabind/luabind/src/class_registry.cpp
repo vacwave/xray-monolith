@@ -183,6 +183,8 @@ namespace luabind { namespace detail {
 
     class class_rep;
 
+    std::atomic<unsigned> class_registry::epoch(0);
+
     class_registry::class_registry(lua_State* L)
         : m_cpp_instance_metatable(create_cpp_instance_metatable(L))
         , m_cpp_class_metatable(create_cpp_class_metatable(L))
@@ -190,6 +192,12 @@ namespace luabind { namespace detail {
         , m_lua_class_metatable(create_lua_class_metatable(L))
         , m_lua_function_metatable(create_lua_function_metatable(L))
     {
+        epoch.fetch_add(1);
+    }
+
+    class_registry::~class_registry()
+    {
+        epoch.fetch_add(1);
     }
 
     class_registry* class_registry::get_registry(lua_State* L)
@@ -229,6 +237,8 @@ namespace luabind { namespace detail {
 
         assert((m_classes.find(info) == m_classes.end()) && "you are trying to register a class twice");
         m_classes[info] = crep;
+        // with NDEBUG the assert is gone, so a re-registered type replaces its class_rep
+        epoch.fetch_add(1);
     }
 
     class_rep* class_registry::find_class(LUABIND_TYPE_INFO info) const

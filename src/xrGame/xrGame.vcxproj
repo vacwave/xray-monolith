@@ -1641,6 +1641,7 @@
     <ClInclude Include="script_monster_hit_info.h" />
     <ClInclude Include="script_monster_enemy_info.h" />
     <ClInclude Include="script_monster_home_info.h" />
+    <ClInclude Include="script_monster_movement_info.h" />
     <ClInclude Include="script_movement_action.h" />
     <ClInclude Include="script_movement_action_inline.h" />
     <ClInclude Include="script_object.h" />
@@ -2040,7 +2041,7 @@
     <ClInclude Include="WeaponAmmo.h" />
     <ClInclude Include="WeaponAutomaticShotgun.h" />
     <ClInclude Include="WeaponBinoculars.h" />
-    <ClInclude Include="WeaponBinocularsVision.h" />
+    <ClInclude Include="ui\UIBinocularsVision.h" />
     <ClInclude Include="weaponBM16.h" />
     <ClInclude Include="WeaponCustomAuto.h" />
     <ClInclude Include="WeaponCustomPistol.h" />
@@ -3651,6 +3652,10 @@
       <PrecompiledHeaderFile>pch_script.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(ProjectName)_script.pch</PrecompiledHeaderOutputFile>
     </ClCompile>
+    <ClCompile Include="script_monster_movement_info_script.cpp">
+      <PrecompiledHeaderFile>pch_script.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile>$(IntDir)$(ProjectName)_script.pch</PrecompiledHeaderOutputFile>
+    </ClCompile>
     <ClCompile Include="script_movement_action.cpp" />
     <ClCompile Include="script_movement_action_script.cpp">
       <PrecompiledHeaderFile>pch_script.h</PrecompiledHeaderFile>
@@ -4326,7 +4331,11 @@
     </ClCompile>
     <ClCompile Include="WeaponAutomaticShotgun.cpp" />
     <ClCompile Include="WeaponBinoculars.cpp" />
-    <ClCompile Include="WeaponBinocularsVision.cpp" />
+    <ClCompile Include="ui\UIBinocularsVision.cpp" />
+    <ClCompile Include="ui\UIBinocularsVision_script.cpp">
+      <PrecompiledHeaderFile>pch_script.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile>$(IntDir)$(ProjectName)_script.pch</PrecompiledHeaderOutputFile>
+    </ClCompile>
     <ClCompile Include="WeaponBinoculars_script.cpp">
       <PrecompiledHeaderFile>pch_script.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)$(ProjectName)_script.pch</PrecompiledHeaderOutputFile>

@@ -45,17 +45,21 @@ private:
 	struct StateRecord
 	{
 		u32 m_crc;
+		//	Active state: one of the two variants below, holds no reference of its own
 		IDeviceState* m_pState;
+		//	Variant for MaxAnisotropy 1 and for m_uiCachedAnisotropy, kept to avoid recreation
+		IDeviceState* m_pStateNoAniso;
+		IDeviceState* m_pStateAniso;
 	};
 
 private:
 	void CreateState(StateDecs desc, IDeviceState** ppIState);
 	SHandle FindState(const StateDecs& desc, u32 StateCRC);
 
-	void PrepareSamplerStates(
+	bool PrepareSamplerStates(
 		HArray& samplers,
 		ID3DSamplerState* pSS[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT],
-		SHandle pCurrentState[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT],
+		ID3DSamplerState* pCurrentState[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT],
 		u32& uiMin,
 		u32& uiMax
 	) const;
@@ -65,17 +69,20 @@ private:
 	//	This must be cleared on device destroy
 	xr_vector<StateRecord> m_StateArray;
 
-	SHandle m_aPSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
-	SHandle m_aVSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
-	SHandle m_aGSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
+	//	Samplers last bound per stage and slot
+	ID3DSamplerState* m_aPSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
+	ID3DSamplerState* m_aVSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
+	ID3DSamplerState* m_aGSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
 #ifdef USE_DX11
-	SHandle m_aHSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
-	SHandle m_aDSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
-	SHandle m_aCSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
+	ID3DSamplerState* m_aHSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
+	ID3DSamplerState* m_aDSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
+	ID3DSamplerState* m_aCSSamplers[D3D_COMMONSHADER_SAMPLER_SLOT_COUNT];
 #endif
 
 	u32 m_uiMaxAnisotropy;
-	float m_uiMipLODBias;	
+	//	MaxAnisotropy the m_pStateAniso variants were created with
+	u32 m_uiCachedAnisotropy;
+	float m_uiMipLODBias;
 };
 
 extern dx10SamplerStateCache SSManager;

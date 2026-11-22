@@ -9,6 +9,7 @@
 #include "pch_script.h"
 #include "script_storage.h"
 #include "script_thread.h"
+#include <luabind/detail/pcall.hpp>
 #include "../xrGame/mcp_events.h"
 #include "../xrCore/mezz_stringbuffer.h"
 #include <stdarg.h>
@@ -313,6 +314,7 @@ CScriptStorage::~CScriptStorage()
 	if (m_virtual_machine)
 	{
 		mcp_lua_profiler_close(m_virtual_machine);
+		luabind::detail::pcall_cache_reset(nullptr);
 		lua_close(m_virtual_machine);
 	}
 }
@@ -398,6 +400,7 @@ void CScriptStorage::reinit()
 	if (m_virtual_machine)
 	{
 		mcp_lua_profiler_close(m_virtual_machine);
+		luabind::detail::pcall_cache_reset(nullptr);
 		lua_close(m_virtual_machine);
 	}
 	
@@ -406,6 +409,9 @@ void CScriptStorage::reinit()
 #else
 	m_virtual_machine = luaL_newstate();
 #endif //-USE_GSC_MEM_ALLOC
+	if (m_virtual_machine)
+		luaJIT_gc_udhint(m_virtual_machine); // GC userdata walk hints go to the game state
+	luabind::detail::pcall_cache_reset(m_virtual_machine);
 
 	if (!m_virtual_machine)
 	{
@@ -905,11 +911,7 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 		// Get contents of the script file and split by lines
 		xr_vector<xr_string> tokens;
 		xr_string temp;
-		while (!l_tpFileReader->eof())
-		{
-			char c = l_tpFileReader->r_u8();
-			temp += c;
-		}
+		temp.assign(scriptContents, scriptLength);
 
 		std::stringstream stringStream(std::string(temp.c_str()));
 		xr_string line;
@@ -934,11 +936,14 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 				continue;
 			}
 
-			std::regex pattern;
+			// both patterns are anchored at "local"
+			if (strncmp(s.c_str(), "local", 5) != 0) {
+				continue;
+			}
 
 			//local function x(a,b,c)
-			pattern = std::regex(R"((^local)([\t ]+)(function)([\t ]+)([_a-zA-Z].*)([\t ]*)(\(.*$))");
-			if (unlocalRegex(unlocals, s, pattern, 5, "$3$4$5$6$7")) {
+			static const std::regex functionPattern(R"((^local)([\t ]+)(function)([\t ]+)([_a-zA-Z].*)([\t ]*)(\(.*$))");
+			if (unlocalRegex(unlocals, s, functionPattern, 5, "$3$4$5$6$7")) {
 				unlocalPerformed = true;
 				continue;
 			}
@@ -947,7 +952,7 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 			//local a
 			//local a,b,c = ... (if one of a,b,c is in unlocalizers list - all of them will be unlocalized)
 			//local x; local y; - unsupported yet
-			pattern = std::regex(R"((^local)([\t ]+)(.*))");
+			static const std::regex pattern(R"((^local)([\t ]+)(.*))");
 			if (std::regex_match(s, pattern)) {
 				std::smatch match;
 				std::regex_search(s, match, pattern);
@@ -1147,6 +1152,15 @@ bool CScriptStorage::object(LPCSTR identifier, int type)
             return true;
         }
         lua_pop(lua(), 1);
+
+        // the scan below can still match only a number key by its string form
+        const char c = identifier[0];
+        if (!(c >= '0' && c <= '9') && c != '-' && c != '+' && c != '.' && strncmp(identifier, "inf", 3) && strncmp(identifier, "nan", 3))
+        {
+            lua_pop(lua(), 1);
+            VERIFY(lua_gettop(lua()) == start - 1);
+            return false;
+        }
    	}    
 
     //Original behavior

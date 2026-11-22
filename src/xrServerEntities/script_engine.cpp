@@ -140,8 +140,6 @@ CScriptEngine::CScriptEngine()
 {
 	m_stack_level = 0;
 	m_reload_modules = false;
-	m_last_no_file_length = 0;
-	*m_last_no_file = 0;
 
 #ifdef USE_LUA_FUNCTOR_CACHE
 	m_cache_valid = true;
@@ -183,8 +181,7 @@ CScriptEngine::~CScriptEngine()
 void CScriptEngine::unload()
 {
 	lua_settop(lua(), m_stack_level);
-	m_last_no_file_length = 0;
-	*m_last_no_file = 0;
+	m_no_files.clear();
 }
 
 int CScriptEngine::lua_panic(lua_State* L)
@@ -508,8 +505,7 @@ void CScriptEngine::load_common_scripts()
 
 void CScriptEngine::process_file_if_exists(LPCSTR file_name, bool warn_if_not_exist)
 {
-	u32 string_length = xr_strlen(file_name);
-	if (!warn_if_not_exist && no_file_exists(file_name, string_length))
+	if (!warn_if_not_exist && no_file_exists(file_name))
 		return;
 
 	string_path S, S1;
@@ -528,7 +524,7 @@ void CScriptEngine::process_file_if_exists(LPCSTR file_name, bool warn_if_not_ex
                 m_stack_is_ready	= true;
             }
 #endif
-			add_no_file(file_name, string_length);
+			add_no_file(file_name);
 			return;
 		}
 		//#ifndef MASTER_GOLD
@@ -637,18 +633,14 @@ void CScriptEngine::restartDebugger				()
 }
 #endif // #if defined(USE_DEBUGGER) && !defined(USE_LUA_STUDIO)
 
-bool CScriptEngine::no_file_exists(LPCSTR file_name, u32 string_length)
+bool CScriptEngine::no_file_exists(LPCSTR file_name)
 {
-	if (m_last_no_file_length != string_length)
-		return (false);
-
-	return (!memcmp(m_last_no_file, file_name, string_length * sizeof(char)));
+	return (m_no_files.find(file_name) != m_no_files.end());
 }
 
-void CScriptEngine::add_no_file(LPCSTR file_name, u32 string_length)
+void CScriptEngine::add_no_file(LPCSTR file_name)
 {
-	m_last_no_file_length = string_length;
-	CopyMemory(m_last_no_file, file_name, (string_length + 1)*sizeof(char));
+	m_no_files.emplace(file_name);
 }
 
 void CScriptEngine::collect_all_garbage()

@@ -1568,9 +1568,19 @@ BOOL CInifile::section_exist(LPCSTR S) const
 
 BOOL CInifile::line_exist(LPCSTR S, LPCSTR L) const
 {
-	if (!section_exist(S)) return FALSE;
+	RootCIt R = std::lower_bound(DATA.begin(), DATA.end(), S, sect_pred);
+	if (!(R != DATA.end() && xr_strcmp(*(*R).Name, S) == 0)) return FALSE;
 
-	Sect& I = r_section(S);
+	// r_section(S) looks up strlwr(S): reuse R when that is S itself, else keep the r_section path (asserts included)
+	char section[256];
+	bool same = S[0] && strlen(S) < sizeof(section);
+	if (same)
+	{
+		xr_strcpy(section, sizeof(section), S);
+		strlwr(section);
+		same = xr_strcmp(section, S) == 0;
+	}
+	const Sect& I = same ? *R : r_section(S);
 	auto A = std::lower_bound(I.Data.begin(), I.Data.end(), L, item_comparator());
 	return A != I.Data.end() && xr_strcmp(*A->first, L) == 0;
 }

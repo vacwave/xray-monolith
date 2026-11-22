@@ -56,6 +56,7 @@ light::light()
 	X.S.posX = 0;
 	X.S.posY = 0;
 	X.S.size = SMAP_adapt_max;
+	m_xform_in_valid = false;
 	RImplementation.v_all_lights.emplace(this);
 #endif // (RENDER==R_R2) || (RENDER==R_R3) || (RENDER==R_R4)
 }
@@ -395,6 +396,19 @@ void light::xform_calc()
 {
 	if (Device.dwFrame == m_parent_u_frame) return;
 	m_parent_u_frame = Device.dwFrame;
+
+	_xform_in in;
+	in.position = position;
+	in.direction = direction;
+	in.right = right;
+	in.range = range;
+	in.cone = cone;
+	in.virtual_size = virtual_size;
+	in.type = flags.type;
+	in.ortho = flags.bOrtho;
+	if (m_xform_in_valid && 0 == memcmp(&in, &m_xform_in, sizeof(in))) return;
+	m_xform_in = in;
+	m_xform_in_valid = true;
 
 	// build final rotation / translation
 	Fvector L_dir, L_up, L_right;

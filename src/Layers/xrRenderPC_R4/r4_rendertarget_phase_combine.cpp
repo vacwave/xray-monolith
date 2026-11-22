@@ -557,10 +557,15 @@ void CRenderTarget::phase_combine()
 		// Setup textures
 		ID3DBaseTexture* e0 = _menu_pp ? 0 : envdescren.sky_r_textures_env[0].second->surface_get();
 		ID3DBaseTexture* e1 = _menu_pp ? 0 : envdescren.sky_r_textures_env[1].second->surface_get();
-		t_envmap_0->surface_set(e0);
+		ID3DBaseTexture* c0 = t_envmap_0->surface_get();
+		ID3DBaseTexture* c1 = t_envmap_1->surface_get();
+		// surface_set recreates the view; skip it when the texture already holds this surface
+		if (!e0 || e0 != c0) t_envmap_0->surface_set(e0);
 		_RELEASE(e0);
-		t_envmap_1->surface_set(e1);
+		_RELEASE(c0);
+		if (!e1 || e1 != c1) t_envmap_1->surface_set(e1);
 		_RELEASE(e1);
+		_RELEASE(c1);
 
 		// Draw
 		RCache.set_Element(s_combine->E[0]);

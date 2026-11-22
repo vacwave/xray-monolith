@@ -728,6 +728,9 @@ void CGamePersistent::OnFrame()
 	if (!g_pGameLevel) return;
 	if (!g_pGameLevel->bReady) return;
 
+	// first frame after the load screen: load the tutorials xml now, not at the first tutorial during play
+	CUISequencer::PreloadXml();
+
 	if (Device.Paused())
 	{
 		if (Level().IsDemoPlay())

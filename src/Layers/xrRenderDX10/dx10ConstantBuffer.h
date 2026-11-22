@@ -25,6 +25,8 @@ public:
 	//	Array buffer member
 	void seta(R_constant* C, R_constant_load& L, u32 e, const Fmatrix& A);
 	void seta(R_constant* C, R_constant_load& L, u32 e, const Fvector4& A);
+	//	count consecutive elements from e, same bytes as count single seta calls
+	void seta(R_constant* C, R_constant_load& L, u32 e, const Fvector4* A, u32 count);
 	//	Raw bytes over the declared size, the tail past the data is zeroed
 	void set_bytes(R_constant_load& L, const void* data, u32 bytes);
 
@@ -32,6 +34,8 @@ public:
 
 private:
 	Fvector4* Access(u16 offset);
+	//	Copy and mark the buffer dirty only if the bytes differ
+	void Update(void* dst, const void* src, u32 size);
 
 private:
 	shared_str m_strBufferName;

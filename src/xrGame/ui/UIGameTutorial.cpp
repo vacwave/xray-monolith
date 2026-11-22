@@ -100,6 +100,26 @@ CUISequencer::CUISequencer()
 }
 
 extern BOOL g_bootComplete;
+static bool uiXmlLoaded;
+
+static CUIXml& tutorials_xml()
+{
+	static CUIXml uiXml;
+	return uiXml;
+}
+
+// loads game_tutorials.xml once after level loading, as the first Start during play would
+void CUISequencer::PreloadXml()
+{
+	if (uiXmlLoaded || !g_bootComplete)
+		return;
+	CUIXml& uiXml = tutorials_xml();
+	uiXmlLoaded = true;
+	uiXml.ClearInternal();
+	uiXml.Load(CONFIG_PATH, UI_PATH, "game_tutorials.xml");
+	uiXml.SetLocalRoot(uiXml.GetRoot());
+}
+
 void CUISequencer::Start(LPCSTR tutor_name)
 {
 	VERIFY(m_sequencer_items.size()==0);
@@ -110,8 +130,7 @@ void CUISequencer::Start(LPCSTR tutor_name)
 
 	m_name = tutor_name;
 
-    static CUIXml uiXml;
-    static bool uiXmlLoaded;
+    CUIXml& uiXml = tutorials_xml();
     if (uiXmlLoaded && g_bootComplete)
     {
         uiXml.SetLocalRoot(uiXml.GetRoot());

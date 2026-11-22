@@ -100,7 +100,8 @@ void CSkeletonX::_Render(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 			p_WVP.mul(RCache.xforms.m_p_prev, p_WV);
 		}
 
-		RCache.set_c("m_wvp_prev", p_WVP); // Apply prev matrix
+		static shared_str strWVPPrev("m_wvp_prev");
+		RCache.set_c(strWVPPrev, p_WVP); // Apply prev matrix
 	}
 #endif
 
@@ -141,6 +142,36 @@ void CSkeletonX::_Render(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 			{
 				PROF_EVENT("SEND_MATRICES");
 				u32 count = RMS_bonecount;
+#if defined(USE_DX10) || defined(USE_DX11)
+				// DX10+ caps report 256 registers, so _Load keeps RMS_bonecount <= (256 - 22 - 3) / 3 + 1
+				Fvector4 rows[((256 - 22 - 3) / 3 + 1) * 3];
+				VERIFY(count * 3 <= sizeof(rows) / sizeof(rows[0]));
+				for (u32 mid = 0; mid < count; mid++)
+				{
+					Fmatrix& M = Parent->LL_GetTransform_R(u16(mid));
+					u32 id = mid * 3;
+					rows[id + 0].set(M._11, M._21, M._31, M._41);
+					rows[id + 1].set(M._12, M._22, M._32, M._42);
+					rows[id + 2].set(M._13, M._23, M._33, M._43);
+				}
+				RCache.set_ca(&*array, 0, rows, count * 3);
+
+#ifdef USE_DX11
+				if (array_prev && RImplementation.phase == RImplementation.PHASE_NORMAL && RImplementation.o.ssfx_motionvectors)
+				{
+					// Save previous transform
+					for (u32 mid = 0; mid < count; mid++)
+					{
+						Fmatrix& Mprev = Parent->LL_GetBoneInstance(u16(mid)).mRenderTransform_prev;
+						u32 id = mid * 3;
+						rows[id + 0].set(Mprev._11, Mprev._21, Mprev._31, Mprev._41);
+						rows[id + 1].set(Mprev._12, Mprev._22, Mprev._32, Mprev._42);
+						rows[id + 2].set(Mprev._13, Mprev._23, Mprev._33, Mprev._43);
+					}
+					RCache.set_ca(&*array_prev, 0, rows, count * 3);
+				}
+#endif
+#else
 				for (u32 mid = 0; mid < count; mid++)
 				{
 					Fmatrix& M = Parent->LL_GetTransform_R(u16(mid));
@@ -148,21 +179,8 @@ void CSkeletonX::_Render(ref_geom& hGeom, u32 vCount, u32 iOffset, u32 pCount)
 					RCache.set_ca(&*array, id + 0, M._11, M._21, M._31, M._41);
 					RCache.set_ca(&*array, id + 1, M._12, M._22, M._32, M._42);
 					RCache.set_ca(&*array, id + 2, M._13, M._23, M._33, M._43);
-
-#ifdef USE_DX11
-					if (RImplementation.phase == RImplementation.PHASE_NORMAL)
-					{
-						if (RImplementation.o.ssfx_motionvectors)
-						{
-							// Save previous transform
-							Fmatrix& Mprev = Parent->LL_GetBoneInstance(u16(mid)).mRenderTransform_prev;
-							RCache.set_ca(&*array_prev, id + 0, Mprev._11, Mprev._21, Mprev._31, Mprev._41);
-							RCache.set_ca(&*array_prev, id + 1, Mprev._12, Mprev._22, Mprev._32, Mprev._42);
-							RCache.set_ca(&*array_prev, id + 2, Mprev._13, Mprev._23, Mprev._33, Mprev._43);
-						}
-					}
-#endif
 				}
+#endif
 			}
 
 			// render

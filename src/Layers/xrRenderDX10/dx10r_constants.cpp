@@ -412,5 +412,6 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
 	}
 
 	std::sort(table.begin(), table.end(), p_sort);
+	m_handlers_valid = false;
 	return TRUE;
 }

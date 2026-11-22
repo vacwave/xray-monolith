@@ -29,7 +29,7 @@ All tools take an optional `instance` (default: the last launched or attached on
 
 | Tool | What it does |
 |---|---|
-| `game_launch` | `exe` (default: MO2's `AnomalyDX11AVX.exe` entry for an MO2 root, else `<repo>\_build\_game\bin_dbg\AnomalyDX11AVX.exe`), `game_root` (default `C:\AnomalyMO2`, the testers' MO2; `C:\Anomaly` = vanilla), `show_window`, `new_game`, `extra_args`, `timeout`, `full_dumps`, `hang_timeout`, `load_timeout`, `load` (start straight into a save already in the slot's savedgames; waits until the actor is in control, result `load` as game_load), `keep_shader_cache` (default false: the slot's shader cache is deleted before launch), `debug` (default true: passes `-dbg`), `cheats`/`god`/`infinite_mag`/`norecoil` (default true: `g_god`, `g_infinite_mag`, `g_norecoil` set on after connect; `cheats=false` turns all off; result `cheats`) |
+| `game_launch` | `exe` (default: `<game path>\bin_mcp\AnomalyDX11AVX.exe`, the deployed MCP build), `game_root` (default `C:\AnomalyMO2`, the testers' MO2; `C:\Anomaly` = vanilla), `show_window`, `new_game`, `extra_args`, `timeout`, `full_dumps`, `hang_timeout`, `load_timeout`, `load` (start straight into a save already in the slot's savedgames; waits until the actor is in control, result `load` as game_load), `keep_shader_cache` (default false: the slot's shader cache is deleted before launch), `debug` (default true: passes `-dbg`), `cheats`/`god`/`infinite_mag`/`norecoil` (default true: `g_god`, `g_infinite_mag`, `g_norecoil` set on after connect; `cheats=false` turns all off; result `cheats`) |
 | `game_attach` | attach to a running `-mcp_port` game by `port` or `appdata` dir |
 | `game_status` | pid, alive, exit code, port, `crashed`, `hung` (+ frame stall, loading), `engine.info`, log rate (lines/s), last lines |
 | `game_list` | instances of this supervisor and the caps |
@@ -106,8 +106,8 @@ capped at 20k chars, and `omitted` says what was left out. The engine itself ret
 - Default `game_root` is `C:\AnomalyMO2`: the testers' MO2 (game `C:\Anomaly`, their selected profile and active
   mods as MO2 has them, read-only). `game_root=C:\Anomaly` = plain vanilla without MO2; `C:\GAMMA` = GAMMA.
 - Profile: `gamma` when `game_root` is `C:\GAMMA`, else `vanilla` (`C:\AnomalyMO2` shares the vanilla slots and cap).
-- Default exe for an MO2 root: MO2's own `AnomalyDX11AVX.exe` executable entry (`<gamePath>\bin`, the exe testers
-  start); else `<repo>\_build\_game\bin_dbg\AnomalyDX11AVX.exe`. Result: `game_root`, `exe`, `mo2` {`profile`,
+- Default exe: `<game path>\bin_mcp\AnomalyDX11AVX.exe` (the deployed MCP build; `<gamePath>` of the MO2 ini for
+  an MO2 root; the game's own `bin` is never used). Result: `game_root`, `exe`, `mo2` {`profile`,
   `game_path`, `mods_active`, `mods_total`} (null without MO2).
 - MO2 folder as `game_root` (ModOrganizer.exe, no fsgame.ltx, e.g. `C:\GAMMA`): the supervisor starts its own MO2
   (`ModOrganizer.exe -p <selected_profile> run <exe> -a "<args>"`, `-fsltx` from MO2's `gamePath`), takes the game
@@ -117,7 +117,10 @@ capped at 20k chars, and `omitted` says what was left out. The engine itself ret
 - Options: with `-mcp_port` the engine saves `axr_options.ltx` into the slot's appdata and reads it from there once
   it exists; every launch deletes it, so a run starts from the game's (or GAMMA's MCM) options and never modifies
   them. Launch sets `sound/general/master_volume` and `music_volume` to 0 in that copy (GAMMA re-applies
-  master_volume on every level load).
+  master_volume on every level load). GAMMA launches then write every `path = value` line of
+  `mcp/templates/options_overrides_gamma.ltx` (read per launch; `[mcm]` / `[options]` sections as in axr_options.ltx)
+  into that copy; with overrides, `new_game` drops `-start` and starts the new game from the main menu afterwards
+  (ALife reads the population options when it is created). Result `option_overrides` lists what was applied.
 - Machine-wide caps: 3 vanilla, 1 GAMMA (vanilla ~4.1 GB private RAM / 1.6 GB VRAM in Cordon; GAMMA ~10.6 GB / 7.0 GB). Slots are lock files in
   `%LOCALAPPDATA%\anomaly-mcp\slots\`, held while the game runs and freed by the OS if the supervisor dies.
   Override with `ANOMALY_MCP_MAX_VANILLA` / `ANOMALY_MCP_MAX_GAMMA` or `%LOCALAPPDATA%\anomaly-mcp\config.json`
@@ -127,7 +130,7 @@ capped at 20k chars, and `omitted` says what was left out. The engine itself ret
   `r__framelimit 0` via `console_exec` for FPS tests) and deletes the slot's `shaders_cache` so the game rebuilds it
   (`keep_shader_cache=true` keeps it and seeds a new slot from `<game_root>\appdata` once).
 - DLLs in `<game_root>\bin` missing next to the exe are copied there first.
-- Args: `-fsltx <game_root or MO2 gamePath>\fsgame.ltx -appdata <dir> -mcp_port 0` (+ `-showwindow`, + `-start server(all/single/alife/new) client(localhost)` for `new_game`).
+- Args: `-fsltx <game_root or MO2 gamePath>\fsgame.ltx -appdata <dir> -mcp_port 0` (+ `-showwindow`, + `-start server(all/single/alife/new) client(localhost)` for `new_game`, except GAMMA with option overrides, see Options).
   Runs are silent (minimized, no focus steal) unless `show_window`.
 - A game that exits with code 0 within seconds was blocked by the presence mutex (same exe dir and appdata
   already running) or failed to start; `game_launch` reports it with the log tail.

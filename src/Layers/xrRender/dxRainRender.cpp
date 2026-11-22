@@ -121,11 +121,15 @@ void dxRainRender::Render(CEffect_Rain& owner)
 		Fvector sC, lineD;
 		float sR;
 		sC.sub(pos_head, pos_trail);
-		lineD.normalize(sC);
 		sC.mul(.5f);
 		sR = sC.magnitude();
 		sC.add(pos_trail);
 		if (!::Render->ViewBase.testSphere_dirty(sC, sR)) continue;
+
+		// only visible drops need the direction
+		Fvector line;
+		line.sub(pos_head, pos_trail);
+		lineD.normalize(line);
 
 		static Fvector2 UV[2][4] = {
 			{{0, 1}, {0, 0}, {1, 1}, {1, 0}},

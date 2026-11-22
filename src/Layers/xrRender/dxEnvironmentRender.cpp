@@ -248,11 +248,16 @@ void dxEnvironmentRender::OnFrame(CEnvironment& env)
 	//. Setup skybox textures, somewhat ugly
 	ID3DBaseTexture* e0 = mixRen.sky_r_textures[0].second->surface_get();
 	ID3DBaseTexture* e1 = mixRen.sky_r_textures[1].second->surface_get();
+	ID3DBaseTexture* c0 = tsky0->surface_get();
+	ID3DBaseTexture* c1 = tsky1->surface_get();
 
-	tsky0->surface_set(e0);
+	// surface_set recreates the view; skip it when the texture already holds this surface
+	if (!e0 || e0 != c0) tsky0->surface_set(e0);
 	_RELEASE(e0);
-	tsky1->surface_set(e1);
+	_RELEASE(c0);
+	if (!e1 || e1 != c1) tsky1->surface_set(e1);
 	_RELEASE(e1);
+	_RELEASE(c1);
 
 	// ******************** Environment params (setting)
 #if defined(USE_DX10) || defined(USE_DX11)

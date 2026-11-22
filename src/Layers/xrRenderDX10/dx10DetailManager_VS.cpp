@@ -281,6 +281,11 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 
 				u32 dwBatch = 0;
 
+				// sector visibility cannot change inside this call: test once, not per instance (lock + map find)
+				const bool base_visible = RImplementation.GMBase.is_sector_visible(RImplementation.pOutdoorSector);
+				const bool light_phase = RImplementation.phase == CRender::PHASE_SMAP && L;
+				const bool light_visible = base_visible && light_phase && L->GMLight.is_sector_visible(RImplementation.pOutdoorSector);
+
 				xr_vector<SlotItemVec*>::iterator _vI = vis.begin();
 				xr_vector<SlotItemVec*>::iterator _vE = vis.end();
 				for (; _vI != _vE; _vI++)
@@ -292,12 +297,12 @@ void CDetailManager::hw_Render_dump(const Fvector4& consts, const Fvector4& wave
 					{
 						SlotItem& Instance = **_iI;
 
-						if (!RImplementation.GMBase.is_sector_visible(RImplementation.pOutdoorSector))
+						if (!base_visible)
 							continue;
 
-						if (RImplementation.phase == CRender::PHASE_SMAP && L)
+						if (light_phase)
 						{
-							if (!L->GMLight.is_sector_visible(RImplementation.pOutdoorSector))
+							if (!light_visible)
 								continue;
 
 							if (L->position.distance_to_sqr(Instance.position) >= _sqr(L->range))

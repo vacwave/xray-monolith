@@ -36,6 +36,7 @@ log = logging.getLogger("anomaly-mcp")
 REPO = Path(__file__).resolve().parent.parent
 RUN_DIR = REPO / ".mcp-run"
 TEMPLATE_USER_LTX = Path(__file__).resolve().parent / "templates" / "user.ltx"
+GAMMA_OPTION_OVERRIDES = Path(__file__).resolve().parent / "templates" / "options_overrides_gamma.ltx"
 DEFAULT_EXE = REPO / "_build" / "_game" / "bin_dbg" / "AnomalyDX11AVX.exe"
 DEFAULT_GAME_ROOT = Path(r"C:\AnomalyMO2")  # testers' MO2: game C:\Anomaly + their mods; C:\Anomaly = plain vanilla
 GAMMA_ROOT = Path(r"C:\GAMMA")
@@ -924,8 +925,8 @@ def copy_missing_dlls(game_root, exe_dir):
 
 
 def mo2_setup(root):
-    """MO2 folder (ModOrganizer.exe, no fsgame.ltx) -> (ModOrganizer.exe, profile, game path, MO2's own DX11-AVX
-    executable, (active mods, total mods)) from its ini and the profile's modlist.txt, else None."""
+    """MO2 folder (ModOrganizer.exe, no fsgame.ltx) -> (ModOrganizer.exe, profile, game path, the deployed MCP
+    exe (<game path>\\bin_mcp), (active mods, total mods)) from its ini and the profile's modlist.txt, else None."""
     if (root / "fsgame.ltx").is_file() or not (root / "ModOrganizer.exe").is_file():
         return None
     ini = (root / "ModOrganizer.ini").read_text(encoding="utf-8", errors="replace")
@@ -936,8 +937,7 @@ def mo2_setup(root):
             raise ValueError(f"no {key} in {root / 'ModOrganizer.ini'}")
         return m.group(1).replace("\\\\", "\\")
     profile, game_path = val("selected_profile"), Path(val("gamePath"))
-    bins = [Path(b.replace("\\\\", "\\")) for b in re.findall(r"^\d+\\binary=(.*?)\s*$", ini, re.M)]
-    exe = next((b for b in bins if b.name.lower() == DEFAULT_EXE.name.lower()), game_path / "bin" / DEFAULT_EXE.name)
+    exe = game_path / "bin_mcp" / DEFAULT_EXE.name
     mods = [l for l in (root / "profiles" / profile / "modlist.txt").read_text(encoding="utf-8", errors="replace")
             .splitlines() if l[:1] in "+-" and l[1:] and not l.endswith("_separator")]
     return root / "ModOrganizer.exe", profile, game_path, exe, (sum(l[0] == "+" for l in mods), len(mods))
@@ -990,6 +990,58 @@ c:w_value("options", "sound/general/music_volume", 0)
 c.ini:save_as(getFS():update_path("$app_data_root$", "axr_options.ltx"))
 '''
 
+# deferred `new_game` start (the menu path of game_load / game_teleport), so ALife is created with the overrides
+NEW_GAME_LUA = r'''
+exec_console_cmd("keypress_on_start off")
+device():pause(false)
+exec_console_cmd("start server(all/single/alife/new) client(localhost)")
+exec_console_cmd("main_menu off")
+'''
+
+
+def read_option_overrides(path):
+    """`[section]` then `path = value` lines (axr_options.ltx form, `;` comments) -> ([(section, path, value)],
+    numbers of unusable lines); a missing file -> no overrides."""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        return [], []
+    out, bad, section = [], [], None
+    for n, line in enumerate(text.splitlines(), 1):
+        line = line.split(";", 1)[0].strip()
+        if not line:
+            continue
+        m = re.fullmatch(r"\[\s*([^\]]+?)\s*\]", line)
+        if m:
+            section = m.group(1)
+        elif section and "=" in line and line.split("=", 1)[0].strip():
+            out.append((section, *(s.strip() for s in line.split("=", 1))))
+        else:
+            bad.append(n)
+    return out, bad
+
+
+def overrides_lua(overrides):
+    """Lua chunk writing the overrides into axr_main.config with Lua types (ui_mcm/ui_options return the cached
+    value as written) and saving it to the slot's axr_options.ltx like MUTE_LUA."""
+    def lit(v):
+        if v in ("true", "false") or re.fullmatch(r"-?\d+(\.\d+)?", v):
+            return v
+        return lua_str(v)
+    lines = [f"c:w_value({lua_str(s)}, {lua_str(k)}, {lit(v)})" for s, k, v in overrides]
+    return "\n".join(["local c = axr_main.config", *lines,
+                      'c.ini:save_as(getFS():update_path("$app_data_root$", "axr_options.ltx"))'])
+
+
+def wait_main_menu(inst, timeout):
+    deadline = time.time() + timeout
+    while not (inst.call("state.get", {}, timeout=5).get("ui") or {}).get("main_menu"):
+        if inst.dead:
+            raise RuntimeError("the game exited")
+        if time.time() > deadline:
+            raise TimeoutError(f"main menu not up after {timeout} s")
+        time.sleep(0.25)
+
 
 def info_or_error(inst, timeout=5):
     try:
@@ -1004,7 +1056,7 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
     params ={k: v for k, v in locals().items() if k != "slot_index"}
     game_root = Path(game_root) if game_root else DEFAULT_GAME_ROOT
     mo2 = mo2_setup(game_root)
-    exe = Path(exe) if exe else mo2[3] if mo2 else DEFAULT_EXE  # MO2: the DX11-AVX exe from its executables list
+    exe = Path(exe) if exe else mo2[3] if mo2 else game_root / "bin_mcp" / DEFAULT_EXE.name  # deployed MCP build
     if not exe.is_file():
         raise FileNotFoundError(f"exe not found: {exe}")
     fs_root = mo2[2] if mo2 else game_root
@@ -1016,6 +1068,16 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
         w = wer_set_dump_type(exe.name, full_dumps)
         if w:
             warnings.append(w)
+    overrides = []
+    if profile == "gamma":
+        try:
+            overrides, bad = read_option_overrides(GAMMA_OPTION_OVERRIDES)
+            if bad:
+                warnings.append(f"{GAMMA_OPTION_OVERRIDES.name}: skipped lines {bad} (need [section], then path = value)")
+        except Exception as e:
+            warnings.append(f"option overrides not read: {e}")
+    # sim_board fills the start population at ALife creation, and -start would create it before lua.exec can run
+    defer_start = new_game and bool(overrides)
     slot = acquire_slot(profile, slot_index)
     try:
         iid = slot.name
@@ -1033,7 +1095,8 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
         if debug:
             args.append("-dbg")
         if new_game:
-            args += ["-start", "server(all/single/alife/new)", "client(localhost)"]
+            if not defer_start:
+                args += ["-start", "server(all/single/alife/new)", "client(localhost)"]
         elif load:
             args += ["-start", f"server({load}/single/alife/load)", "client(localhost)"]
         if extra_args:
@@ -1090,6 +1153,11 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
         inst.call("lua.exec", {"code": MUTE_LUA, "quiet": 1}, timeout=timeout)
     except Exception as e:
         warnings.append(f"mute via options failed: {e}")
+    if overrides:
+        try:
+            inst.call("lua.exec", {"code": overrides_lua(overrides), "quiet": 1}, timeout=timeout)
+        except Exception as e:
+            warnings.append(f"option overrides failed: {e}")
     # process-wide actor flags: set once, they hold across loads, new games and level changes
     cheat_state = {n: bool(cheats and on) for n, on in
                    (("g_god", god), ("g_infinite_mag", infinite_mag), ("g_norecoil", norecoil))}
@@ -1098,12 +1166,18 @@ def launch(exe=None, game_root=None, show_window=False, new_game=False, extra_ar
             inst.call("console.exec", {"cmd": f"{n} {'on' if on else 'off'}"}, timeout=timeout)
         except Exception as e:
             warnings.append(f"{n} failed: {e}")
+    if defer_start:
+        try:
+            wait_main_menu(inst, timeout)
+            inst.call("lua.exec", {"code": NEW_GAME_LUA, "quiet": 1}, timeout=timeout)
+        except Exception as e:
+            warnings.append(f"new game start failed: {e}")
     return {"instance": iid, "pid": pid, "port": port, "profile": profile, "appdata": str(appdata),
             "game_root": str(game_root), "exe": str(exe),
             "mo2": {"profile": mo2[1], "game_path": str(fs_root), "mods_active": mo2[4][0],
                     "mods_total": mo2[4][1]} if mo2 else None,
             "args": args[1:], "copied_dlls": copied, "full_dumps": full_dumps, "cheats": cheat_state, "engine_info": info,
-            "warnings": warnings or None}
+            "option_overrides": [f"[{s}] {k} = {v}" for s, k, v in overrides] or None, "warnings": warnings or None}
 
 
 def attach(port, appdata):
@@ -1300,8 +1374,8 @@ async def game_launch(exe: str | None = None, game_root: str | None = None, show
                       infinite_mag: bool = True, norecoil: bool = True) -> dict:
     """Start a game (hidden, muted) and connect to it.
     game_root: default C:/AnomalyMO2 (Anomaly + the tester's MO2 mods); C:/Anomaly = plain vanilla; C:/GAMMA =
-    GAMMA. An MO2 root is refused while any MO2 is open. new_game: straight into a new game; load: straight into a
-    save of this slot. Cheats are on by default: god, infinite_mag, norecoil (cheats=False = all off). exe: another
+    GAMMA. An MO2 root is refused while any MO2 is open. new_game: straight into a new game (GAMMA: started from the
+    main menu once mcp/templates/options_overrides_gamma.ltx is applied); load: straight into a save of this slot. Cheats are on by default: god, infinite_mag, norecoil (cheats=False = all off). exe: another
     engine exe. show_window: visible window. Refused at the instance cap."""
     t0 = time.time()
     res = await run(launch, exe, game_root, show_window, new_game, extra_args, timeout, full_dumps, hang_timeout,

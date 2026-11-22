@@ -1004,6 +1004,12 @@ void CLevel::MakeReconnect()
 	}
 }
 
+void CLevel::SkipMusicTrack()
+{
+	if (m_level_sound_manager)
+		m_level_sound_manager->SkipMusicTrack();
+}
+
 BOOL mt_ph_commander = FALSE;
 BOOL mt_TaskManager = FALSE;
 void CLevel::OnFrame()
@@ -1360,15 +1366,18 @@ void CLevel::OnRender()
 	ScriptDebugRender();
 	mcp_nav_render();
 
-	for (u32 I = 0; I < Level().Objects.o_count(); I++)
+	if (psDeviceFlags2.test(rsDBGDrawPHShapes | rsDBGDrawPHBones))
 	{
-		CObject* _O = Level().Objects.o_get_by_iterator(I);
-		CGameObject* obj = smart_cast<CGameObject*>(_O);
-		if (obj) obj->DBGDrawPhysicsShell();
-	}
+		for (u32 I = 0; I < Level().Objects.o_count(); I++)
+		{
+			CObject* _O = Level().Objects.o_get_by_iterator(I);
+			CGameObject* obj = smart_cast<CGameObject*>(_O);
+			if (obj) obj->DBGDrawPhysicsShell();
+		}
 
-	for (auto& pair : m_script_attachments)
-		pair.second->DBGDrawPhysicsShell();
+		for (auto& pair : m_script_attachments)
+			pair.second->DBGDrawPhysicsShell();
+	}
 
 #ifdef DEBUG
     draw_wnds_rects();

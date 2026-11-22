@@ -32,7 +32,7 @@ struct player_hud_motion_container
 {
 	xr_vector<player_hud_motion> m_anims;
 	player_hud_motion* find_motion(const shared_str& name);
-	void load(IKinematicsAnimated* model, const shared_str& sect);
+	void load(const xr_unordered_flat_map<std::string_view, MotionID>& cycles, const shared_str& sect);
 };
 
 struct hand_motions
@@ -411,6 +411,7 @@ public:
 	xr_vector<script_layer*> m_script_layers;
 
 	xr_vector<hand_motions*> m_hand_motions;
+	xr_unordered_flat_map<std::string_view, MotionID> m_hand_cycles; // cycle name -> MotionID of m_model, as ID_Cycle_Safe resolves it
 	player_hud_motion_container* get_hand_motions(LPCSTR section);
 
 	void update_script_item();

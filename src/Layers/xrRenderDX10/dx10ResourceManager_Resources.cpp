@@ -234,6 +234,7 @@ SVS* CResourceManager::_CreateVS(LPCSTR _name)
 
 void CResourceManager::_DeleteVS(const SVS* vs)
 {
+	RCache.ResetVertexLayoutCache();
 	if (0 == (vs->dwFlags & xr_resource_flagged::RF_REGISTERED)) return;
 	xrCriticalSectionGuard guard(creationGuard);
 	LPSTR N = LPSTR(*vs->cName);
@@ -484,6 +485,7 @@ SDeclaration* CResourceManager::_CreateDecl(D3DVERTEXELEMENT9* dcl)
 
 void CResourceManager::_DeleteDecl(const SDeclaration* dcl)
 {
+	RCache.ResetVertexLayoutCache();
 	if (0 == (dcl->dwFlags & xr_resource_flagged::RF_REGISTERED)) return;
 	xrCriticalSectionGuard guard(creationGuard);
 	if (reclaim(v_declarations, dcl)) return;
@@ -929,6 +931,7 @@ SInputSignature* CResourceManager::_CreateInputSignature(ID3DBlob* pBlob)
 //--------------------------------------------------------------------------------------------------------------
 void CResourceManager::_DeleteInputSignature(const SInputSignature* pSignature)
 {
+	RCache.ResetVertexLayoutCache();
 	if (0 == (pSignature->dwFlags & xr_resource_flagged::RF_REGISTERED)) return;
 	xrCriticalSectionGuard guard(creationGuard);
 	if (reclaim(v_input_signature, pSignature)) return;

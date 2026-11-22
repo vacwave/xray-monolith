@@ -39,7 +39,8 @@ namespace luabind { namespace detail
 		{
 			overload_t()
 		        : construct_fun(nullptr),
-		          wrapped_construct_fun(nullptr) 
+		          wrapped_construct_fun(nullptr),
+		          needs_backref_(true)
 			{
 			}
 
@@ -58,12 +59,17 @@ namespace luabind { namespace detail
 			void* construct_wrapped(lua_State* L, weak_ref const& ref) const { return wrapped_construct_fun(L, ref); } 
 			bool has_wrapped_construct() const { return wrapped_construct_fun != nullptr; }
 
+			// false when construct_fun ignores its weak_ref argument (plain construct_class)
+			void set_needs_backref(bool b) { needs_backref_ = b; }
+			bool needs_backref() const { return needs_backref_; }
+
 			void set_arity(const int arity) { m_arity = arity; }
 
 		private:
 
 			construct_ptr construct_fun;
 			wrapped_construct_ptr wrapped_construct_fun;
+			bool needs_backref_;
 
 		};
 

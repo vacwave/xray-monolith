@@ -530,9 +530,11 @@ int luabind::detail::class_rep::constructor_dispatcher(lua_State* L)
 
 		std::tie(obj_rep,held) = crep->allocate(L);
 
-		weak_ref backref(L, -1);
-
-		void* object_ptr = rep->overloads[match_index].construct(L, backref);
+		const construct_rep::overload_t& overload = rep->overloads[match_index];
+		// the weak ref costs an allocation and registry/table writes; only wrapped constructors use it
+		void* object_ptr = overload.needs_backref()
+			? overload.construct(L, weak_ref(L, -1))
+			: overload.construct(L, weak_ref());
 
 		if (crep->has_holder())
 		{
@@ -987,9 +989,13 @@ int luabind::detail::class_rep::super_callback(lua_State* L)
 		{
 
 #endif
-			lua_pushvalue(L, lua_upvalueindex(2));
-			weak_ref backref(L, -1);
-			lua_pop(L, 1);
+			weak_ref backref;
+			if (rep->overloads[match_index].needs_backref())
+			{
+				lua_pushvalue(L, lua_upvalueindex(2));
+				weak_ref(L, -1).swap(backref);
+				lua_pop(L, 1);
+			}
 
 			void* storage_ptr = obj->ptr();		
 

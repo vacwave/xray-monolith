@@ -23,6 +23,8 @@
 #pragma once
 
 #include <luabind/prefix.hpp>
+#include <luabind/lua_include.hpp>
+#include <luabind/detail/class_registry.hpp>
 
 #include <type_traits>
 
@@ -69,11 +71,32 @@ namespace luabind { namespace detail {
 
 #else
 
+    struct class_cache_entry
+    {
+        const void* key;
+        unsigned epoch;
+        class_rep* class_;
+    };
+
     template<class T>
     class_rep* get_class_rep(lua_State* L)
     {
+        // keyed on the registry table, which a state shares with its coroutines; thread_local since states run on several threads
+        static thread_local class_cache_entry cache;
+        const void* key = lua_topointer(L, LUA_REGISTRYINDEX);
+        const unsigned epoch = class_registry::epoch.load(std::memory_order_relaxed);
+        if (cache.key == key && cache.epoch == epoch)
+            return cache.class_;
+
         class_registry* registry = class_registry::get_registry(L);
-        return registry->find_class(LUABIND_TYPEID(T));
+        class_rep* crep = registry->find_class(LUABIND_TYPEID(T));
+        if (crep)
+        {
+            cache.key = key;
+            cache.epoch = epoch;
+            cache.class_ = crep;
+        }
+        return crep;
     }
 
 #endif
