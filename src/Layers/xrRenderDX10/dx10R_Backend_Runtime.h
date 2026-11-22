@@ -555,6 +555,10 @@ IC void CBackend::set_Constants(R_constant_table* C)
 		static ref_cbuffer aDomainConstants[MaxCBuffers];
 		static ref_cbuffer aComputeConstants[MaxCBuffers];
 #endif
+		//	Bit (buffer type >> 4) per stage that may have a non-null slot in m_a*Constants / the previous bindings
+		static u32 uiCurStages = 0;
+		static u32 uiOldStages = 0;
+		u32 uiNewStages = 0;
 
 		dx10ConstantBuffer* aNewPixel[MaxCBuffers] = {};
 		dx10ConstantBuffer* aNewVertex[MaxCBuffers] = {};
@@ -571,6 +575,7 @@ IC void CBackend::set_Constants(R_constant_table* C)
 		{
 			//ID3DxxBuffer*	pBuffer = (it->second)->GetBuffer();
 			u32 uiBufferIndex = it->first;
+			uiNewStages |= 1u << ((uiBufferIndex & CB_BufferTypeMask) >> 4);
 
 			if ((uiBufferIndex & CB_BufferTypeMask) == CB_BufferPixelShader)
 			{
@@ -667,73 +672,90 @@ IC void CBackend::set_Constants(R_constant_table* C)
 		}
 
 
-		bUpdate = CBuffersNeedUpdate(aNewGeometry, m_aGeometryConstants, uiMin, uiMax);
-		AssignCBuffers(aNewGeometry, m_aGeometryConstants, aGeometryConstants);
-		bAnyUpdate |= bUpdate;
-		if (bUpdate)
-		{
-			++uiMax;
+		//	A stage with no current, previous or new buffer would only compare nulls: skip it
+		const u32 uiLiveStages = uiCurStages | uiOldStages | uiNewStages;
+		uiOldStages = uiCurStages;
+		uiCurStages = uiNewStages;
 
-			for (u32 i = uiMin; i < uiMax; ++i)
+		if (uiLiveStages & (1u << (CB_BufferGeometryShader >> 4)))
+		{
+			bUpdate = CBuffersNeedUpdate(aNewGeometry, m_aGeometryConstants, uiMin, uiMax);
+			AssignCBuffers(aNewGeometry, m_aGeometryConstants, aGeometryConstants);
+			bAnyUpdate |= bUpdate;
+			if (bUpdate)
 			{
-				if (m_aGeometryConstants[i])
-					tempBuffer[i] = m_aGeometryConstants[i]->GetBuffer();
-				else
-					tempBuffer[i] = 0;
+				++uiMax;
+
+				for (u32 i = uiMin; i < uiMax; ++i)
+				{
+					if (m_aGeometryConstants[i])
+						tempBuffer[i] = m_aGeometryConstants[i]->GetBuffer();
+					else
+						tempBuffer[i] = 0;
+				}
+				HW.pContext->GSSetConstantBuffers(uiMin, uiMax - uiMin, &tempBuffer[uiMin]);
 			}
-			HW.pContext->GSSetConstantBuffers(uiMin, uiMax - uiMin, &tempBuffer[uiMin]);
 		}
 
 #ifdef USE_DX11
-		bUpdate = CBuffersNeedUpdate(aNewHull, m_aHullConstants, uiMin, uiMax);
-		AssignCBuffers(aNewHull, m_aHullConstants, aHullConstants);
-		bAnyUpdate |= bUpdate;
-		if (bUpdate)
+		if (uiLiveStages & (1u << (CB_BufferHullShader >> 4)))
 		{
-			++uiMax;
-
-			for (u32 i=uiMin; i<uiMax; ++i)
+			bUpdate = CBuffersNeedUpdate(aNewHull, m_aHullConstants, uiMin, uiMax);
+			AssignCBuffers(aNewHull, m_aHullConstants, aHullConstants);
+			bAnyUpdate |= bUpdate;
+			if (bUpdate)
 			{
-				if (m_aHullConstants[i])
-					tempBuffer[i] = m_aHullConstants[i]->GetBuffer();
-				else
-					tempBuffer[i] = 0;
+				++uiMax;
+
+				for (u32 i=uiMin; i<uiMax; ++i)
+				{
+					if (m_aHullConstants[i])
+						tempBuffer[i] = m_aHullConstants[i]->GetBuffer();
+					else
+						tempBuffer[i] = 0;
+				}
+				HW.pContext->HSSetConstantBuffers(uiMin, uiMax-uiMin, &tempBuffer[uiMin]);
 			}
-			HW.pContext->HSSetConstantBuffers(uiMin, uiMax-uiMin, &tempBuffer[uiMin]);
 		}
 
-		bUpdate = CBuffersNeedUpdate(aNewDomain, m_aDomainConstants, uiMin, uiMax);
-		AssignCBuffers(aNewDomain, m_aDomainConstants, aDomainConstants);
-		bAnyUpdate |= bUpdate;
-		if (bUpdate)
+		if (uiLiveStages & (1u << (CB_BufferDomainShader >> 4)))
 		{
-			++uiMax;
-
-			for (u32 i=uiMin; i<uiMax; ++i)
+			bUpdate = CBuffersNeedUpdate(aNewDomain, m_aDomainConstants, uiMin, uiMax);
+			AssignCBuffers(aNewDomain, m_aDomainConstants, aDomainConstants);
+			bAnyUpdate |= bUpdate;
+			if (bUpdate)
 			{
-				if (m_aDomainConstants[i])
-					tempBuffer[i] = m_aDomainConstants[i]->GetBuffer();
-				else
-					tempBuffer[i] = 0;
+				++uiMax;
+
+				for (u32 i=uiMin; i<uiMax; ++i)
+				{
+					if (m_aDomainConstants[i])
+						tempBuffer[i] = m_aDomainConstants[i]->GetBuffer();
+					else
+						tempBuffer[i] = 0;
+				}
+				HW.pContext->DSSetConstantBuffers(uiMin, uiMax-uiMin, &tempBuffer[uiMin]);
 			}
-			HW.pContext->DSSetConstantBuffers(uiMin, uiMax-uiMin, &tempBuffer[uiMin]);
 		}
 
-		bUpdate = CBuffersNeedUpdate(aNewCompute, m_aComputeConstants, uiMin, uiMax);
-		AssignCBuffers(aNewCompute, m_aComputeConstants, aComputeConstants);
-		bAnyUpdate |= bUpdate;
-		if (bUpdate)
+		if (uiLiveStages & (1u << (CB_BufferComputeShader >> 4)))
 		{
-			++uiMax;
-
-			for (u32 i=uiMin; i<uiMax; ++i)
+			bUpdate = CBuffersNeedUpdate(aNewCompute, m_aComputeConstants, uiMin, uiMax);
+			AssignCBuffers(aNewCompute, m_aComputeConstants, aComputeConstants);
+			bAnyUpdate |= bUpdate;
+			if (bUpdate)
 			{
-				if (m_aComputeConstants[i])
-					tempBuffer[i] = m_aComputeConstants[i]->GetBuffer();
-				else
-					tempBuffer[i] = 0;
+				++uiMax;
+
+				for (u32 i=uiMin; i<uiMax; ++i)
+				{
+					if (m_aComputeConstants[i])
+						tempBuffer[i] = m_aComputeConstants[i]->GetBuffer();
+					else
+						tempBuffer[i] = 0;
+				}
+				HW.pContext->CSSetConstantBuffers(uiMin, uiMax-uiMin, &tempBuffer[uiMin]);
 			}
-			HW.pContext->CSSetConstantBuffers(uiMin, uiMax-uiMin, &tempBuffer[uiMin]);
 		}
 #endif
 
@@ -789,15 +811,8 @@ IC void CBackend::set_Constants(R_constant_table* C)
 	}
 
 	// process constant-loaders
-	R_constant_table::c_table::iterator it = C->table.begin();
-	R_constant_table::c_table::iterator end = C->table.end();
-	for (; it != end; it++)
-	{
-		R_constant* Cs = &**it;
-		VERIFY(Cs);
-		if (Cs && Cs->handler)
-			Cs->handler->setup(Cs);
-	}
+	for (R_constant* Cs : C->handlers())
+		Cs->handler->setup(Cs);
 }
 
 ICF void CBackend::ApplyRTandZB()

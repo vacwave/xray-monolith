@@ -37,6 +37,20 @@ void R_constant_table::_copy(const R_constant_table& Other)
 #if defined(USE_DX10) || defined(USE_DX11)
 	m_CBTable = Other.m_CBTable;
 #endif
+	m_handlers_valid = false;
+}
+
+void R_constant_table::build_handlers()
+{
+	m_handlers.clear();
+	for (u32 it = 0; it < table.size(); it++)
+	{
+		R_constant* Cs = &*table[it];
+		VERIFY(Cs);
+		if (Cs && Cs->handler)
+			m_handlers.push_back(Cs);
+	}
+	m_handlers_valid = true;
 }
 
 
@@ -207,6 +221,7 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
 		}
 	}
 	std::sort(table.begin(), table.end(), p_sort_constants);
+	m_handlers_valid = false;
 	return TRUE;
 }
 #endif	//	USE_DX10
@@ -216,6 +231,7 @@ BOOL R_constant_table::parse(void* _desc, u32 destination)
 void R_constant_table::merge(R_constant_table* T)
 {
 	if (0 == T) return;
+	m_handlers_valid = false;
 
 	// Real merge
 	xr_vector<ref_constant> table_tmp;
@@ -289,6 +305,8 @@ void R_constant_table::clear()
 #if defined(USE_DX10) || defined(USE_DX11)
 	m_CBTable.clear();
 #endif	//	
+	m_handlers.clear();
+	m_handlers_valid = false;
 }
 
 BOOL R_constant_table::equal(R_constant_table& C)
