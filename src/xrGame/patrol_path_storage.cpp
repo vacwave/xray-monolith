@@ -108,6 +108,8 @@ void CPatrolPathStorage::load(IReader& stream)
 	m_compiled.clear();
 
 	PATROL_REGISTRY::value_type pair;
+	xr_vector<PATROL_REGISTRY::value_type> paths;
+	paths.reserve(size);
 
 	chunk = stream.open_chunk(1);
 	for (u32 i = 0; i < size; ++i)
@@ -126,18 +128,24 @@ void CPatrolPathStorage::load(IReader& stream)
 
 		chunk1->close();
 
-		const_iterator I = m_registry.find(pair.first);
-		VERIFY3(I == m_registry.end(), "Duplicated patrol path found ", *pair.first);
+		// m_compiled holds exactly the names loaded so far, so it detects a duplicate as m_registry.find did
+		const bool unique = m_compiled.insert(pair.first).second;
+		VERIFY3(unique, "Duplicated patrol path found ", *pair.first);
 
 #ifdef DEBUG
 		pair.second->name(pair.first);
 #endif
 
-		m_registry.insert(pair);
-		m_compiled.insert(pair.first);
+		if (unique)
+			paths.push_back(pair);
+		else // the later path replaces the earlier one, as the sorted insert did
+			std::find_if(paths.begin(), paths.end(), [&](const PATROL_REGISTRY::value_type& p) { return p.first == pair.first; })->second = pair.second;
 	}
 
 	chunk->close();
+
+	// one sort instead of a tail-shifting sorted insert per path
+	m_registry.insert(paths.begin(), paths.end());
 }
 
 void CPatrolPathStorage::load_from_config(const CGameGraph* game_graph)
