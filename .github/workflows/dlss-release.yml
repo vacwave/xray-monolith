@@ -91,12 +91,16 @@ jobs:
 
     - name: Version
       id: version
-      run: echo "tag=dlss-$(date +'%Y.%-m.%-d')-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      run: |
+        # Date in the format of the upstream release tags (2026.11.22)
+        DATE="$(date -u +'%Y.%m.%d')"
+        echo "date=$DATE" >> "$GITHUB_OUTPUT"
+        echo "tag=dlss-$DATE-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
     - name: Zip release
       run: |
         set -e
-        TAG='${{ steps.version.outputs.tag }}'
+        DATE='${{ steps.version.outputs.date }}'
         mkdir -p release/bin/licenses release/db/mods pdb/bin
         cp artifacts/*_bin/*.exe release/bin/
         cp artifacts/*_bin/*.pdb pdb/bin/
@@ -105,14 +109,14 @@ jobs:
         cp sdk/binaries/FidelityFX/license.md release/bin/licenses/FidelityFX_license.md
         cp License.txt release/bin/licenses/License.txt
         cp artifacts/gamedata/${{ env.PACK_GAMEDATA_NAME }} release/db/mods/
-        (cd release && zip -r "../Anomaly-DLSS_${TAG#dlss-}.zip" .)
-        (cd pdb && zip -r "../Anomaly-DLSS_${TAG#dlss-}_pdb.zip" .)
+        (cd release && zip -r "../Anomaly-DLSS_${DATE}.zip" .)
+        (cd pdb && zip -r "../Anomaly-DLSS_${DATE}_pdb.zip" .)
 
     - uses: softprops/action-gh-release@v2.3.2
       with:
         tag_name: ${{ steps.version.outputs.tag }}
         target_commitish: ${{ github.sha }}
-        name: Anomaly DLSS ${{ steps.version.outputs.tag }}
+        name: DLSS release ${{ github.ref_name }} ${{ steps.version.outputs.date }}
         files: |
           Anomaly-DLSS_*.zip
         generate_release_notes: false
