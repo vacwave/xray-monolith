@@ -30,8 +30,9 @@ Source: upstream git history (239 merged PRs since 2026-01) + `gh` reads of PR b
 - He reviews code, not benchmarks; other contributors (erepb) ask for data, e.g. on #856 whether the time limit skews which objects update. Post-merge fixes by himself are common (#705).
 - Merges in batches, often days after opening; whole weekends of merges.
 
-## Our record (checked 2026-11-26 with gh + git)
-- vacwave upstream PRs: 19. Merged 17: #734, #758, #763, #766, #773, #822 (reverted by #826, redone as #827), #827, #830, #845, #862, #868, #882 (HDR fonts), #887 (MT rain dupe), #888 (MT bump wait = LD1), #889 (XML load X1-X4), #890 (crash fixes C1 C2 C5 PS1 PS2). Open: #856 / #857 (A-Life scheduled_time_limit). Nothing of ours reverted since #822.
+## Our record (checked 2026-11-28 with gh + git)
+- vacwave upstream PRs: 24. Merged 19: #734, #758, #763, #766, #773, #822 (reverted by #826, redone as #827), #827, #830, #845, #862, #868, #882 (HDR fonts), #887 (MT rain dupe), #888 (MT bump wait = LD1), #889 (XML load X1-X4), #890 (crash fixes C1 C2 C5 PS1 PS2), #892 (LuaJIT GC udata walk, 11-27), #893 (CActor_OnChangedSlot NPCs, 11-27). Open: #856 / #857 (A-Life scheduled_time_limit), #899 / #900 (3DSS ADS), #901 (axr_main callbacks). Nothing of ours reverted since #822. upstream/dev-mt = 7e27ed3d2 (= our base), upstream/dev = aa535f4c4 (11-28).
+- Per-fix status of everything we ever fixed: `fixes.md`.
 - README changelog (last entry 2026.11.22) does not list #882-#890 yet; #766 and #862 are listed under TheLostInPlace, not vacwave.
 - 2026-11-26 the maintainer merged, reverted and re-applied #778 / #779 (TheLostInPlace profiler / Optick); merged into dev-mt-mcp at cc1fe272.
 - Overlaps to check before PRs: #688 is upstream (our de78e126 builds on it); #879 (spawn prefetch races, CModelPool lock) MERGED 11-25; open #800 (oneTBB scheduler), #567 / #577 (grass instancing) touch render/threading areas of our R-fixes.
