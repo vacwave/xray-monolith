@@ -194,8 +194,8 @@ PROTECT_API void CRenderDevice::Create()
 		style = WS_POPUP;
 	}
 
-	SetWindowLongPtr(m_hWnd, GWL_STYLE, style);
-	SetWindowPos(m_hWnd, HWND_TOP, monX, monY, w, h, SWP_FRAMECHANGED);
+	SetWindowStyle(style);
+	SetWindowRect(HWND_TOP, monX, monY, w, h, SWP_FRAMECHANGED);
 
 	Statistic = xr_new<CStats>();
 #ifdef DEBUG
@@ -231,13 +231,9 @@ PROTECT_API void CRenderDevice::Create()
 
 	DisableProcessWindowsGhosting();
 
-	RECT winRect;
-	GetClientRect(m_hWnd, &winRect);
-	clientWidth = winRect.right;
-	clientHeight = winRect.bottom;
-	MapWindowPoints(m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
-	ClipCursor(&winRect);
-	SetActiveWindow(m_hWnd);
+	UpdateClientRect();
+	if (!IsSilent())
+		SetActiveWindow(m_hWnd);
 
 	string_path fname;
 	FS.update_path(fname, "$game_data$", "shaders.xr");

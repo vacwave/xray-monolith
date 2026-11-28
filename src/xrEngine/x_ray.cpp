@@ -33,6 +33,7 @@
 #include "xrSash.h"
 #include "MonitorList.h"
 #include "renderdoc_integration.h"
+#include "mcp_server.h"
 
 extern "C" void XR_EARLY_INIT();
 
@@ -661,6 +662,18 @@ void Startup()
 	//Discord Rich Presence - Rezy
 	Init_Discord();
 
+	if (Core.ParamsData.test(ECoreParams::mcp_port))
+	{
+		LPCSTR p = strstr(Core.Params, "-mcp_port ");
+		int port = -1;
+		if (p)
+			sscanf(p + xr_strlen("-mcp_port "), "%d", &port);
+		if (port >= 0 && port < 65536) // 0 = ephemeral port
+			mcp::start((u16)port, make_string("%s (build %d, %s)", XRAY_MONOLITH_VERSION, build_id, build_date).c_str());
+		else
+			Msg("! [MCP] -mcp_port: invalid or missing port");
+	}
+
 	//Reshade
 	use_reshade = init_reshade();
 	if (use_reshade)
@@ -673,6 +686,8 @@ void Startup()
 	//Memory.mem_usage();
 
 	Device.Run();
+
+	mcp::stop();
 
 	// Discord
 	clearDiscordPresence();
@@ -1028,6 +1043,14 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 	// Create hash
 	u32 pathHash = path_crc32(exePath, xr_strlen(exePath));
 
+	// Instances with different -appdata may share one bin dir
+	string_path appdata;
+	if (xrParams::GetAppDataArg(lpCmdLine, appdata))
+	{
+		xr_strlwr(appdata);
+		pathHash = crc32(appdata, xr_strlen(appdata), pathHash);
+	}
+
 	// Create unique mutex name  
 	string256 mutexName = {};
 	xr_sprintf(mutexName, sizeof(mutexName), STALKER_PRESENCE_MUTEX"_%08x", pathHash);
@@ -1046,44 +1069,47 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
     g_dedicated_server = true;
 #endif // DEDICATED_SERVER
 
-	// Title window
-    logoWindow = CreateDialog(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_STARTUP), 0, logDlgProc);
+	// Title window; MCP runs show no splash unless -showwindow
+	if (!strstr(lpCmdLine, "-mcp_port") || strstr(lpCmdLine, "-showwindow"))
+	{
+	    logoWindow = CreateDialog(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_STARTUP), 0, logDlgProc);
    
-	HWND logoPicture = GetDlgItem(logoWindow, IDC_STATIC_LOGO);
-	RECT logoRect;
-	GetWindowRect(logoPicture, &logoRect);
-	int splashW = logoRect.right - logoRect.left;
-	int splashH = logoRect.bottom - logoRect.top;
+		HWND logoPicture = GetDlgItem(logoWindow, IDC_STATIC_LOGO);
+		RECT logoRect;
+		GetWindowRect(logoPicture, &logoRect);
+		int splashW = logoRect.right - logoRect.left;
+		int splashH = logoRect.bottom - logoRect.top;
 
-	u32 screenW, screenH;
-	int monX, monY;
-	GetMonitorResolution(screenW, screenH);
-	GetMonitorPosition(monX, monY);
-	int x = monX + (screenW - splashW) / 2;
-	int y = monY + (screenH - splashH) / 2;
+		u32 screenW, screenH;
+		int monX, monY;
+		GetMonitorResolution(screenW, screenH);
+		GetMonitorPosition(monX, monY);
+		int x = monX + (screenW - splashW) / 2;
+		int y = monY + (screenH - splashH) / 2;
 
-    // verdatim: set the size of the splash window to be zero when the flag "-nosplashwindow" is given
-    if (strstr(xr_strdup(GetCommandLine()), "-nosplashwindow")) {
-        splashW = int(0);
-        splashH = int(0);
-    }
+	    // verdatim: set the size of the splash window to be zero when the flag "-nosplashwindow" is given
+	    if (strstr(xr_strdup(GetCommandLine()), "-nosplashwindow")) {
+	        splashW = int(0);
+	        splashH = int(0);
+	    }
 
 
-	SetWindowPos(
-		logoWindow,
-#ifndef DEBUG
-        HWND_TOP,
-#else
-        HWND_NOTOPMOST,
-#endif // NDEBUG
-		x,
-		y,
-		splashW,
-		splashH,
-		SWP_SHOWWINDOW
-	);
+		SetWindowPos(
+			logoWindow,
+	#ifndef DEBUG
+	        HWND_TOP,
+	#else
+	        HWND_NOTOPMOST,
+	#endif // NDEBUG
+			x,
+			y,
+			splashW,
+			splashH,
+			SWP_SHOWWINDOW
+		);
 	
-	UpdateWindow(logoWindow);
+		UpdateWindow(logoWindow);
+	}
 
 	// AVI
 	g_bIntroFinished = TRUE;
@@ -1105,6 +1131,8 @@ int APIENTRY WinMain_impl(HINSTANCE hInstance,
 
 	compute_build_id();
 	Core._initialize("xray", NULL, TRUE, fsgame[0] ? fsgame : NULL);
+	if (Core.ParamsData.test(ECoreParams::mcp_port))
+		mcp::capture_log();
 	renderdoc_initialize();
 
 	InitSettings();

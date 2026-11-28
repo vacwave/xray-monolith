@@ -183,6 +183,21 @@
     <ClInclude Include="x_ray.h">
       <Filter>General</Filter>
     </ClInclude>
+    <ClInclude Include="mcp_input.h">
+      <Filter>General</Filter>
+    </ClInclude>
+    <ClInclude Include="mcp_perf.h">
+      <Filter>General</Filter>
+    </ClInclude>
+    <ClInclude Include="mcp_screenshot.h">
+      <Filter>General</Filter>
+    </ClInclude>
+    <ClInclude Include="mcp_time.h">
+      <Filter>General</Filter>
+    </ClInclude>
+    <ClInclude Include="mcp_server.h">
+      <Filter>General</Filter>
+    </ClInclude>
     <ClInclude Include="resource.h">
       <Filter>General\Resources</Filter>
     </ClInclude>
@@ -514,6 +529,21 @@
       <Filter>General</Filter>
     </ClCompile>
     <ClCompile Include="x_ray.cpp">
+      <Filter>General</Filter>
+    </ClCompile>
+    <ClCompile Include="mcp_input.cpp">
+      <Filter>General</Filter>
+    </ClCompile>
+    <ClCompile Include="mcp_perf.cpp">
+      <Filter>General</Filter>
+    </ClCompile>
+    <ClCompile Include="mcp_screenshot.cpp">
+      <Filter>General</Filter>
+    </ClCompile>
+    <ClCompile Include="mcp_time.cpp">
+      <Filter>General</Filter>
+    </ClCompile>
+    <ClCompile Include="mcp_server.cpp">
       <Filter>General</Filter>
     </ClCompile>
     <ClCompile Include="IInputReceiver.cpp">

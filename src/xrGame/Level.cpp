@@ -69,6 +69,7 @@
 #include "PHDebug.h"
 #include "debug_text_tree.h"
 #endif
+#include "../xrEngine/mcp_perf.h"
 extern ENGINE_API bool g_dedicated_server;
 extern ENGINE_API BOOL	g_bootComplete;
 extern CUISequencer* g_tutorial;
@@ -1301,6 +1302,7 @@ void CLevel::script_gc()
 	if (!(psLua_ParallelGC && Device.LuaGC))
 	{
 		PROF_EVENT("CLevel::script_gc", PROF_CAT(Script));
+		mcp_perf::gc_scope perf_gc(false);
 		lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLUA_GCSTEP);
 	}
 	
@@ -1320,6 +1322,7 @@ bool CLevel::Load(u32 dwNum)
 // demonized: called from Device, via Device.LuaGC pointer
 int CLevel::LuaGC()
 {
+    mcp_perf::gc_scope perf_gc(true);
     return lua_gc(ai().script_engine().lua(), LUA_GCSTEP, psLua_ParallelGCStep);
 }
 void CLevel::LuaGCDebug()
@@ -1342,6 +1345,7 @@ extern bool use_reshade;
 extern void render_reshade_effects();
 
 extern int ps_r4_hdr10_pda; // NOTE: this is a hack to avoid double HDR tonemapping the PDA
+extern void mcp_nav_render();
 
 void CLevel::OnRender()
 {
@@ -1431,6 +1435,7 @@ void CLevel::OnRender()
 		RENDER_SCOPE(script_debug);
 		ScriptDebugRender();
 	}
+	mcp_nav_render();
 
 	for (u32 I = 0; I < Level().Objects.o_count(); I++)
 	{

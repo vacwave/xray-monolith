@@ -654,6 +654,10 @@ public:
 		u32 prev_mode = g_screenmode;
 		CCC_Token::Execute(args);
 
+		// Exclusive fullscreen would take over the display: silent runs use borderless
+		if (g_screenmode == 2 && Device.IsSilent())
+			g_screenmode = 1;
+
 		if (!Device.b_is_Ready)
 			return;
 
@@ -687,12 +691,7 @@ public:
 			}
 		}
 
-		RECT winRect;
-		GetClientRect(Device.m_hWnd, &winRect);
-		Device.clientWidth = winRect.right;
-		Device.clientHeight = winRect.bottom;
-		MapWindowPoints(Device.m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
-		ClipCursor(&winRect);
+		Device.UpdateClientRect();
 	}
 };
 //-----------------------------------------------------------------------

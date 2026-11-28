@@ -9,6 +9,7 @@
 #include "pch_script.h"
 #include "script_storage.h"
 #include "script_thread.h"
+#include "../xrGame/mcp_events.h"
 #include "../xrCore/mezz_stringbuffer.h"
 #include <stdarg.h>
 #include <unordered_map>
@@ -305,10 +306,15 @@ CScriptStorage::CScriptStorage()
 #endif //-USE_LUA_STUDIO
 }
 
+void mcp_lua_profiler_close(lua_State* L);
+
 CScriptStorage::~CScriptStorage()
 {
 	if (m_virtual_machine)
+	{
+		mcp_lua_profiler_close(m_virtual_machine);
 		lua_close(m_virtual_machine);
+	}
 }
 
 extern int luaopen_lua_extensions(lua_State* L, bool IsDebug = false);
@@ -390,7 +396,10 @@ BOOL lua_use_functor_cache = FALSE;
 void CScriptStorage::reinit()
 {
 	if (m_virtual_machine)
+	{
+		mcp_lua_profiler_close(m_virtual_machine);
 		lua_close(m_virtual_machine);
+	}
 	
 #ifdef USE_GSC_MEM_ALLOC
     m_virtual_machine = lua_newstate(lua_alloc, NULL);
@@ -781,6 +790,7 @@ bool CScriptStorage::load_buffer(lua_State* L, LPCSTR caBuffer, size_t tSize, LP
 //#ifdef DEBUG
 		if (Core.isDebug()) print_output(L,caScriptName,l_iErrorCode);
 //#endif //-DEBUG
+		mcp_script_error(L, "load", caScriptName);
 		on_error(L);
 		return (false);
 	}
@@ -1043,6 +1053,7 @@ bool CScriptStorage::do_file(LPCSTR caScriptName, LPCSTR caNameSpaceName)
 //#ifdef DEBUG
 		if (Core.isDebug()) print_output(lua(),caScriptName,l_iErrorCode);
 //#endif
+		mcp_script_error(lua(), "load", caScriptName);
 		on_error(lua());
 		lua_settop(lua(), start);
 		return (false);

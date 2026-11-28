@@ -26,6 +26,8 @@ enum
 	AF_FIREDIR_THIRD_PERSON = (1 << 22),
 	AF_AIMPOS = (1 << 23),
 	AF_AIMPOS_ZOOM = (1 << 24),
+	AF_INFINITE_MAG = (1 << 25),
+	AF_NORECOIL = (1 << 26),
 };
 
 extern Flags32 psActorFlags;

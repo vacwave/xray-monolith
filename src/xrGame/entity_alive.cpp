@@ -20,6 +20,7 @@
 #include "game_object_space.h"
 #include "material_manager.h"
 #include "game_base_space.h"
+#include "mcp_events.h"
 
 #define SMALL_ENTITY_RADIUS		0.6f
 #define BLOOD_MARKS_SECT		"bloody_marks"
@@ -321,6 +322,7 @@ void CEntityAlive::OnEvent(NET_Packet& P, u16 type)
 
 void CEntityAlive::Die(CObject* who)
 {
+	mcp_combat_death(this, who); // before the kill's relation changes
 	if (IsGameTypeSingle())
 		RELATION_REGISTRY().Action(smart_cast<CEntityAlive*>(who), this, RELATION_REGISTRY::KILL);
 	inherited::Die(who);

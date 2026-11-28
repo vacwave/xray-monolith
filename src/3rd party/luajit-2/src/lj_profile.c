@@ -158,11 +158,20 @@ void LJ_FASTCALL lj_profile_interpreter(lua_State *L)
   profile_unlock(ps);
 }
 
+static volatile long *profile_gate = NULL;
+
+LUA_API void luaJIT_profile_gate(volatile long *gate)
+{
+  profile_gate = gate;
+}
+
 /* Trigger profile hook. Asynchronous call from OS-specific profile timer. */
 static void profile_trigger(ProfileState *ps)
 {
   global_State *g = ps->g;
   uint8_t mask;
+  volatile long *gate = profile_gate;
+  if (gate && !*gate) return;  /* Host is outside Lua: the tick would be charged to the next Lua code. */
   profile_lock(ps);
   ps->samples++;  /* Always increment number of samples. */
   mask = g->hookmask;

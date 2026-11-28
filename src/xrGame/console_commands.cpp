@@ -1,4 +1,5 @@
 #include "pch_script.h"
+#include "mcp_events.h"
 #include "../xrEngine/xr_ioconsole.h"
 #include "../xrEngine/xr_ioc_cmd.h"
 #include "../xrEngine/customhud.h"
@@ -1988,12 +1989,15 @@ public:
 				l_iErrorCode = lua_pcall(ai().script_engine().lua(), 0, 0, 0);
 				if (l_iErrorCode)
 				{
+					mcp_script_error(ai().script_engine().lua(), "console", *m_script_name);
 					ai().script_engine().print_output(ai().script_engine().lua(), *m_script_name, l_iErrorCode);
 					ai().script_engine().on_error(ai().script_engine().lua());
 					return;
 				}
 			}
 
+			if (l_iErrorCode)
+				mcp_script_error(ai().script_engine().lua(), "console", *m_script_name);
 			ai().script_engine().print_output(ai().script_engine().lua(), *m_script_name, l_iErrorCode);
 		}
 	} //void	Execute
@@ -2899,11 +2903,16 @@ void CCC_RegisterCommands()
 	/* AVO: changing restriction to -dbg key instead of DEBUG */
 	//#ifndef MASTER_GOLD
 #ifdef MASTER_GOLD
+	if (Core.isDebug() || Core.ParamsData.test(ECoreParams::mcp_port))
+	{
+		CMD3(CCC_Mask, "g_god", &psActorFlags, AF_GODMODE);
+		CMD3(CCC_Mask, "g_unlimitedammo", &psActorFlags, AF_UNLIMITEDAMMO);
+		CMD3(CCC_Mask, "g_infinite_mag", &psActorFlags, AF_INFINITE_MAG);
+		CMD3(CCC_Mask, "g_norecoil", &psActorFlags, AF_NORECOIL);
+	}
 	if (0 != Core.isDebug())
 	{
 		CMD1(CCC_JumpToLevel, "jump_to_level");
-		CMD3(CCC_Mask, "g_god", &psActorFlags, AF_GODMODE);
-		CMD3(CCC_Mask, "g_unlimitedammo", &psActorFlags, AF_UNLIMITEDAMMO);
 		CMD1(CCC_Script, "run_script");
 		CMD1(CCC_ScriptCommand, "run_string");
 		//CMD3(CCC_Mask, "g_no_clip", &psActorFlags, AF_NO_CLIP);

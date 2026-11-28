@@ -13,6 +13,7 @@
 #include "script_process.h"
 #include "../build_config_defines.h"
 #include "script_storage.h"
+#include "../xrGame/mcp_events.h"
 #include <unordered_map>
 #include <set>
 #include <luabind/class_info.hpp>
@@ -188,6 +189,7 @@ void CScriptEngine::unload()
 
 int CScriptEngine::lua_panic(lua_State* L)
 {
+	mcp_script_error(L, "panic");
 	ai().script_engine().print_stack();
 	print_output(L, "PANIC", LUA_ERRRUN);
 	return (0);
@@ -220,6 +222,7 @@ xr_vector<xr_string> get_lua_stack(lua_State* L)
 
 void CScriptEngine::lua_error(lua_State* L)
 {
+	mcp_script_error(L, "luabind");
 	ai().script_engine().print_stack();
 	print_output(L, "", LUA_ERRRUN);
 	ai().script_engine().on_error(L);
@@ -247,6 +250,7 @@ void CScriptEngine::lua_error(lua_State* L)
 extern BOOL lua_busy_hands_debug;
 void CScriptEngine::lua_error_not_crash(lua_State* L)
 {
+	mcp_script_error(L, "luabind_not_crash");
     if (!lua_busy_hands_debug)
         return;
 
@@ -275,6 +279,7 @@ void printLuaStack()
 
 int CScriptEngine::lua_pcall_failed(lua_State* L)
 {
+	mcp_script_error(L, "callback");
 	ai().script_engine().print_stack();
 	print_output(L, "", LUA_ERRRUN);
 	ai().script_engine().on_error(L);
@@ -302,6 +307,7 @@ int CScriptEngine::lua_pcall_failed(lua_State* L)
 
 void lua_cast_failed(lua_State* L, LUABIND_TYPE_INFO info)
 {
+	mcp_script_error(L, "cast", nullptr, make_string("cannot cast lua value to %s", info->name()).c_str());
 	CScriptEngine::print_output(L, "", LUA_ERRRUN);
 
 	Debug.fatal(DEBUG_INFO, "LUA error: cannot cast lua value to %s", info->name());

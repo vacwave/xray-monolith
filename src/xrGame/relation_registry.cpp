@@ -14,6 +14,7 @@
 #include "alife_object_registry.h"
 #include "xrServer_Objects_ALife_Monsters.h"
 #include "script_engine.h"
+#include "mcp_events.h"
 
 
 //////////////////////////////////////////////////////////////////////////
@@ -154,7 +155,9 @@ void RELATION_REGISTRY::SetGoodwill(u16 from, u16 to, CHARACTER_GOODWILL goodwil
 	static Ivector2 gw_limits = pSettings->r_ivector2(ACTIONS_POINTS_SECT, "personal_goodwill_limits");
 	clamp(goodwill, gw_limits.x, gw_limits.y);
 
+	CHARACTER_GOODWILL old = GetGoodwill(from, to);
 	relation_data.personal[to].SetGoodwill(goodwill);
+	mcp_combat_relation(0, from, to, old, goodwill);
 }
 
 void RELATION_REGISTRY::ForceSetGoodwill(u16 from, u16 to, CHARACTER_GOODWILL goodwill)
@@ -174,7 +177,9 @@ void RELATION_REGISTRY::ForceSetGoodwill(u16 from, u16 to, CHARACTER_GOODWILL go
 	CHARACTER_GOODWILL community_to_community_goodwill = GetCommunityRelation(
 		from_obj->Community(), to_obj->Community());
 
+	CHARACTER_GOODWILL old = GetGoodwill(from, to);
 	relation_data.personal[to].SetGoodwill(goodwill - community_to_obj_goodwill - community_to_community_goodwill);
+	mcp_combat_relation(0, from, to, old, GetGoodwill(from, to));
 }
 
 
@@ -208,9 +213,11 @@ void RELATION_REGISTRY::SetCommunityGoodwill(CHARACTER_COMMUNITY_INDEX from_comm
 {
 	static Ivector2 gw_limits = pSettings->r_ivector2(ACTIONS_POINTS_SECT, "community_goodwill_limits");
 	clamp(goodwill, gw_limits.x, gw_limits.y);
+	CHARACTER_GOODWILL old = GetCommunityGoodwill(from_community, to_character);
 	RELATION_DATA& relation_data = relation_registry().registry().objects(to_character);
 
 	relation_data.communities[from_community].SetGoodwill(goodwill);
+	mcp_combat_relation(1, from_community, to_character, old, goodwill);
 }
 
 void RELATION_REGISTRY::ChangeCommunityGoodwill(CHARACTER_COMMUNITY_INDEX from_community, u16 to_character,
@@ -250,5 +257,7 @@ CHARACTER_GOODWILL RELATION_REGISTRY::GetReputationRelation(CHARACTER_REPUTATION
 void RELATION_REGISTRY::SetCommunityRelation(CHARACTER_COMMUNITY_INDEX index1, CHARACTER_COMMUNITY_INDEX index2,
                                              CHARACTER_GOODWILL goodwill)
 {
+	CHARACTER_GOODWILL old = GetCommunityRelation(index1, index2);
 	CHARACTER_COMMUNITY::set_relation(index1, index2, goodwill);
+	mcp_combat_relation(2, index1, index2, old, goodwill);
 }

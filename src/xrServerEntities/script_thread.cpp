@@ -16,6 +16,8 @@
 #include "script_engine.h"
 #include "script_thread.h"
 #include "ai_space.h"
+#include <luabind/detail/pcall.hpp>
+#include "../xrGame/mcp_events.h"
 
 #define LUABIND_HAS_BUGS_WITH_LUA_THREADS
 
@@ -61,6 +63,7 @@ CScriptThread::CScriptThread(LPCSTR caNamespaceName, bool do_string, bool reload
 				l_iErrorCode = lua_pcall(ai().script_engine().lua(), 0, 0, 0);
 				if (l_iErrorCode)
 				{
+					mcp_script_error(ai().script_engine().lua(), "thread_start", *m_script_name);
 					ai().script_engine().print_output(ai().script_engine().lua(), *m_script_name, l_iErrorCode);
 					ai().script_engine().on_error(ai().script_engine().lua());
 					return;
@@ -68,6 +71,7 @@ CScriptThread::CScriptThread(LPCSTR caNamespaceName, bool do_string, bool reload
 			}
 			else
 			{
+				mcp_script_error(ai().script_engine().lua(), "thread_start", *m_script_name);
 				ai().script_engine().print_output(ai().script_engine().lua(), *m_script_name, l_iErrorCode);
 				ai().script_engine().on_error(ai().script_engine().lua());
 				return;
@@ -150,10 +154,11 @@ bool CScriptThread::update()
 	{
 		ai().script_engine().current_thread(this);
 
-		int l_iErrorCode = lua_resume(lua(), 0);
+		int l_iErrorCode = luabind::detail::resume_impl(lua(), 0, 0); // = lua_resume, timed by the perf hook
 
 		if (l_iErrorCode && (l_iErrorCode != LUA_YIELD))
 		{
+			mcp_script_error(lua(), "thread", *script_name());
 			ai().script_engine().print_output(lua(), *script_name(), l_iErrorCode);
 			ai().script_engine().on_error(ai().script_engine().lua());
 #ifdef DEBUG

@@ -258,6 +258,14 @@ void xrLogger::FlushLog()
 	theLogger->UnpauseLogging();
 }
 
+void xrLogger::FlushLogSync()
+{
+	if (theLogger == nullptr)
+		return;
+	theLogger->InternalPrintAllRecords();
+	theLogger->InternalFlushLog();
+}
+
 void xrLogger::SetImmediateMode(bool enable)
 {
 	if (theLogger == nullptr)
@@ -349,6 +357,9 @@ void xrLogger::InternalPrintRecord()
 
 	{
 		xrCriticalSectionGuard g(&logDataGuard);
+		// Another printer (CloseLog / FlushLogSync vs. the log thread) may have taken the last record
+		if (logData->empty())
+			return;
 		theRecord = logData->front();
 		logData->pop();
 	}

@@ -96,6 +96,8 @@ enum class ECoreParams : u8
 	savescreenshots,
 	lua_studio,
 	clear_cs_constants,
+	mcp_port,
+	showwindow,
 
     //.peak volumetrics
     volumetric1,
@@ -105,4 +107,6 @@ enum class ECoreParams : u8
 
 namespace xrParams {
 	void LoadParams();
+	// -appdata <dir> (quoted if it has spaces) as a normalized absolute path without trailing slash
+	XRCORE_API bool GetAppDataArg(LPCSTR cmdline, string_path& out);
 }

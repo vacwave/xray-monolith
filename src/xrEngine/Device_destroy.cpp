@@ -109,18 +109,13 @@ void CRenderDevice::Reset(bool precache)
 		int monX, monY;
 		GetMonitorResolution(w, h);
 		GetMonitorPosition(monX, monY);
-		SetWindowLongPtr(Device.m_hWnd, GWL_STYLE, WS_VISIBLE | WS_POPUP);
-		SetWindowPos(Device.m_hWnd, HWND_TOP, monX, monY, w, h, SWP_FRAMECHANGED);
+		SetWindowStyle(WS_VISIBLE | WS_POPUP);
+		SetWindowRect(HWND_TOP, monX, monY, w, h, SWP_FRAMECHANGED);
 	}
 
 #ifndef DEDICATED_SERVER
 	ShowCursor(FALSE);
-	RECT winRect;
-	GetClientRect(m_hWnd, &winRect);
-	clientWidth = winRect.right;
-	clientHeight = winRect.bottom;
-	MapWindowPoints(m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
-	ClipCursor(&winRect);
+	UpdateClientRect();
 #endif
 
 	m_imgui.OnDeviceResetEnd();
@@ -190,12 +185,7 @@ bool CRenderDevice::ChangeOutputMonitor(HMONITOR hTargetMon)
 
 #ifndef DEDICATED_SERVER
 	ShowCursor(FALSE);
-	RECT winRect;
-	GetClientRect(m_hWnd, &winRect);
-	clientWidth  = winRect.right;
-	clientHeight = winRect.bottom;
-	MapWindowPoints(m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
-	ClipCursor(&winRect);
+	UpdateClientRect();
 #endif
 
 	m_imgui.OnDeviceResetEnd();

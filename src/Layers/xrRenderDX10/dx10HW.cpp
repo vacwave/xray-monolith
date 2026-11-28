@@ -650,6 +650,12 @@ void CHW::CreateDevice(HWND hwnd, bool move_window)
             "Please try to restart the game.\n"
 		    "CreateDevice returned 0x%08x", R
 		);
+        // MCP mode: no dialog, nonzero exit code
+        if (Core.ParamsData.test(ECoreParams::mcp_port))
+        {
+            xrLogger::FlushLogSync();
+            TerminateProcess(GetCurrentProcess(), 1);
+        }
         xrLogger::FlushLog();
 		MessageBox(NULL, "Failed to initialize graphics hardware.\nPlease try to restart the game.", "Error!",
             MB_OK | MB_ICONERROR);
@@ -840,7 +846,9 @@ void CHW::Reset(HWND hwnd)
     mode.Height      = cd.Height;
     mode.Format      = cd.Format;
     mode.RefreshRate = cd_fs.RefreshRate;
-    CHK_DX(m_pSwapChain->ResizeTarget(&mode));
+    // ResizeTarget restores and activates a minimized window; silent runs are always windowed
+    if (!Device.IsSilent())
+        CHK_DX(m_pSwapChain->ResizeTarget(&mode));
 #elif defined(USE_DX10)
     CHK_DX(m_pSwapChain->ResizeTarget(&desc));
 #endif
@@ -1204,7 +1212,7 @@ void CHW::updateWindowProps(HWND m_hWnd)
 		            dwWindowStyle |= WS_DLGFRAME | WS_SYSMENU | WS_MINIMIZEBOX;
 		    }
 
-            SetWindowLong(m_hWnd, GWL_STYLE, dwWindowStyle);
+            Device.SetWindowStyle(dwWindowStyle);
             // When moving from fullscreen to windowed mode, it is important to
             // adjust the window size after recreating the device rather than
             // beforehand to ensure that you get the window size you want.  For
@@ -1235,8 +1243,7 @@ void CHW::updateWindowProps(HWND m_hWnd)
                 (monW + res_width) / 2,
                 (monH + res_height) / 2);
 
-			SetWindowPos(m_hWnd,
-                HWND_NOTOPMOST,
+			Device.SetWindowRect(HWND_NOTOPMOST,
                 monX + m_rcWindowBounds.left,
                 monY + m_rcWindowBounds.top,
                 (m_rcWindowBounds.right - m_rcWindowBounds.left),
@@ -1246,10 +1253,12 @@ void CHW::updateWindowProps(HWND m_hWnd)
 	}
 	else
 	{
-        SetWindowLong(m_hWnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        Device.SetWindowStyle(WS_POPUP | WS_VISIBLE);
     }
 
     ShowCursor(FALSE);
+    if (Device.IsSilent())
+        return;
     SetForegroundWindow(m_hWnd);
     RECT winRect;
     GetClientRect(m_hWnd, &winRect);

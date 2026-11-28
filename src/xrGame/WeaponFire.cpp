@@ -14,9 +14,12 @@
 
 #include "game_cl_mp.h"
 #include "reward_event_generator.h"
+#include "WeaponRPG7.h"
 #include "../Layers/xrRender/xrRender_console.h"
 
 #define FLAME_TIME 0.05f
+
+u32 g_mcp_actor_shots = 0; // shots fired by the actor (mcp_nav shot counting)
 
 
 float _nrand(float sigma)
@@ -137,6 +140,11 @@ void CWeapon::FireTrace(const Fvector& P, const Fvector& D)
 
 	// Ammo
 	m_lastCartridge = l_cartridge;
+	bool actor_shot = ParentIsActor();
+	if (actor_shot)
+		++g_mcp_actor_shots;
+	if (actor_shot && psActorFlags.test(AF_INFINITE_MAG) && !smart_cast<CWeaponRPG7*>(this)) // the RPG needs a new rocket per round
+		return;
 	m_magazine.pop_back();
 	--iAmmoElapsed;
 

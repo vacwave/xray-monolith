@@ -133,6 +133,8 @@ void CLevel::IR_OnMouseMove(int dx, int dy)
 		if (IR) IR->IR_OnMouseMove(dx, dy);
 	}
 
+    if (Device.IsSilent()) // MCP silent runs never move the user's real cursor
+        return;
     POINT p;
     p.x = Device.clientWidth / 2;
     p.y = Device.clientHeight / 2;

@@ -25,6 +25,7 @@ public:
 	string2048 ls_header;
 	string2048 ls_tip_number;
 	string2048 ls_tip;
+	bool IsLoading() const { return ll_dwReference > 0; } // read by the MCP net thread
 private:
 	FactoryPtr<IApplicationRender> m_pRender;
 	string_path m_loading_logo_level{};

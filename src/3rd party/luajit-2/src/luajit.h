@@ -72,6 +72,8 @@ LUA_API void luaJIT_profile_start(lua_State *L, const char *mode,
 LUA_API void luaJIT_profile_stop(lua_State *L);
 LUA_API const char *luaJIT_profile_dumpstack(lua_State *L, const char *fmt,
 					     int depth, size_t *len);
+/* Host gate: timer ticks are dropped while *gate == 0 (host not inside Lua). NULL = sample always. */
+LUA_API void luaJIT_profile_gate(volatile long *gate);
 
 /* Speed up the GC userdata walk of this state (one state per process). */
 LUA_API void luaJIT_gc_udhint(lua_State *L);

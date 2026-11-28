@@ -1013,6 +1013,11 @@
     <ClInclude Include="xr_object.h" />
     <ClInclude Include="xr_object_list.h" />
     <ClInclude Include="x_ray.h" />
+    <ClInclude Include="mcp_input.h" />
+    <ClInclude Include="mcp_perf.h" />
+    <ClInclude Include="mcp_screenshot.h" />
+    <ClInclude Include="mcp_server.h" />
+    <ClInclude Include="mcp_time.h" />
     <ClInclude Include="_d3d_extensions.h" />
   </ItemGroup>
   <ItemGroup>
@@ -1137,6 +1142,11 @@
     <ClCompile Include="xr_object.cpp" />
     <ClCompile Include="xr_object_list.cpp" />
     <ClCompile Include="x_ray.cpp" />
+    <ClCompile Include="mcp_input.cpp" />
+    <ClCompile Include="mcp_perf.cpp" />
+    <ClCompile Include="mcp_screenshot.cpp" />
+    <ClCompile Include="mcp_server.cpp" />
+    <ClCompile Include="mcp_time.cpp" />
     <ClCompile Include="_scripting.cpp" />
   </ItemGroup>
   <ItemGroup>

@@ -38,6 +38,8 @@
 #include "CustomHUD.h"
 #include "EngineThreading.h"
 #include "IGame_Level.h"
+#include "mcp_perf.h"
+#include "mcp_time.h"
 
 #include "Rain.h"
 
@@ -375,6 +377,7 @@ void CRenderDevice::on_idle()
 
 	if (g_loading_events.size())
 	{
+		mcp_perf::frame_cancel();
 		// Loads lower the perf hub's gate, so the hub skips the frames they span
 		frame_record_on = false;
 		{
@@ -386,6 +389,7 @@ void CRenderDevice::on_idle()
 		pApp->LoadDraw();
 		return;
 	}
+	mcp_perf::frame_begin();
 
 	if (!Device.dwPrecacheFrame && !g_SASH.IsBenchmarkRunning() && g_bLoaded)
 	{
@@ -418,11 +422,13 @@ void CRenderDevice::on_idle()
 
 		Device.seqParallelBeforRender.clear();
 	}
+	mcp_perf::mark(mcp_perf::ph_before_frame);
 
 	// The perf hub raises the gate in seqFrame, so it holds from FrameMove to the next
 	if (frame_record_on)
 		frame_record.start = CPU::QPC();
 	FrameMove();
+	mcp_perf::mark(mcp_perf::ph_frame_move);
 	const bool record = frame_record_on;
 
     if (g_pGamePersistent != nullptr)
@@ -520,7 +526,8 @@ void CRenderDevice::on_idle()
 	Device.LuaGCCount = 0;
 
 	secondary_tasks.run(&XRay::Engine::GameThread);
-	
+	mcp_perf::mark(mcp_perf::ph_pre_render);
+
 	if (record)
 		frame_record.cap[0] = CPU::QPC();
 #ifdef ECO_RENDER // ECO_RENDER START
@@ -547,6 +554,7 @@ void CRenderDevice::on_idle()
 		tlastf = std::chrono::high_resolution_clock::now();
 	}
 #endif // ECO_RENDER END
+	mcp_perf::mark(mcp_perf::ph_limiter);
 	if (record)
 		frame_record.cap[1] = CPU::QPC();
 
@@ -566,14 +574,18 @@ void CRenderDevice::on_idle()
 			RENDER_SCOPE(stats);
 			Statistic->Show();
 		}
+		mcp_perf::mark(mcp_perf::ph_render);
 
 		End();
+		mcp_perf::mark(mcp_perf::ph_present);
+		dwRenderedFrames++;
 	}
 	Statistic->RenderTOTAL_Real.End();
 	Statistic->RenderTOTAL_Real.FrameEnd();
 	Statistic->RenderTOTAL.accum = Statistic->RenderTOTAL_Real.accum;
 #endif 
 	Device.isRendering = false;
+	mcp_perf::mark(mcp_perf::ph_render);
 
 	if (record)
 		frame_record.join[0] = CPU::QPC();
@@ -581,6 +593,7 @@ void CRenderDevice::on_idle()
 		PROF_EVENT("secondary_tasks.wait", PROF_CAT(Wait));
 		secondary_tasks.wait();
 	}
+	mcp_perf::mark(mcp_perf::ph_wait_tasks);
 	if (record)
 	{
 		frame_record.join[1] = CPU::QPC();
@@ -601,6 +614,7 @@ void CRenderDevice::on_idle()
 #endif
 	if (!b_is_Active)
 		Sleep(1);
+	mcp_perf::mark(mcp_perf::ph_inactive_sleep);
 }
 
 #ifdef INGAME_EDITOR
@@ -692,7 +706,8 @@ void CRenderDevice::Run()
 	seqAppStart.Process(rp_AppStart);
 
 	//m_pRender->ClearTarget();
-	SetForegroundWindow(m_hWnd);
+	if (!IsSilent())
+		SetForegroundWindow(m_hWnd);
 	message_loop();
 
 	seqAppEnd.Process(rp_AppEnd);
@@ -752,6 +767,7 @@ void CRenderDevice::FrameMove()
 		dwTimeGlobal = TimerGlobal.GetElapsed_ms();
 		dwTimeDelta = dwTimeGlobal - _old_global;
 	}
+	mcp_time::on_frame_time();
 
 	// Frame move
 	Statistic->EngineTOTAL.Begin();
@@ -841,13 +857,68 @@ bool CRenderDevice::Paused()
 	return g_pauseMngr().Paused();
 }
 
+bool CRenderDevice::IsSilent() const
+{
+	return Core.ParamsData.test(ECoreParams::mcp_port) && !Core.ParamsData.test(ECoreParams::showwindow);
+}
+
+void CRenderDevice::SetWindowStyle(LONG_PTR style)
+{
+	// MCP: borderless popups get a system menu and minimize box so the taskbar can minimize them
+	if (Core.ParamsData.test(ECoreParams::mcp_port) && (style & WS_POPUP))
+		style |= WS_SYSMENU | WS_MINIMIZEBOX;
+	if (IsSilent())
+		style |= GetWindowLongPtr(m_hWnd, GWL_STYLE) & (WS_VISIBLE | WS_MINIMIZE);
+	SetWindowLongPtr(m_hWnd, GWL_STYLE, style);
+}
+
+void CRenderDevice::SetWindowRect(HWND after, int x, int y, int w, int h, UINT flags)
+{
+	if (!IsSilent())
+	{
+		SetWindowPos(m_hWnd, after, x, y, w, h, flags);
+		return;
+	}
+
+	// Only move the restored rect; the window stays minimized and inactive
+	WINDOWPLACEMENT wp = { sizeof(wp) };
+	GetWindowPlacement(m_hWnd, &wp);
+	SetRect(&wp.rcNormalPosition, x, y, x + w, y + h);
+	wp.showCmd = SW_SHOWMINNOACTIVE;
+	SetWindowPlacement(m_hWnd, &wp);
+	// Still apply the z-order: HWND_NOTOPMOST drops the WS_EX_TOPMOST the window is created with
+	SetWindowPos(m_hWnd, after, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+void CRenderDevice::UpdateClientRect()
+{
+	// A minimized window has an empty client rect: use the render size and never clip the user's cursor
+	if (IsSilent())
+	{
+		RECT winRect;
+		if (IsIconic(m_hWnd) || !GetClientRect(m_hWnd, &winRect))
+			SetRect(&winRect, 0, 0, dwWidth, dwHeight);
+		clientWidth = winRect.right;
+		clientHeight = winRect.bottom;
+		return;
+	}
+
+	RECT winRect;
+	GetClientRect(m_hWnd, &winRect);
+	clientWidth = winRect.right;
+	clientHeight = winRect.bottom;
+	MapWindowPoints(m_hWnd, nullptr, reinterpret_cast<LPPOINT>(&winRect), 2);
+	ClipCursor(&winRect);
+}
+
 void CRenderDevice::OnWM_Activate(WPARAM wParam, LPARAM lParam)
 {
 	u16 fActive = LOWORD(wParam);
 	BOOL fMinimized = (BOOL)HIWORD(wParam);
 	BOOL bActive = ((fActive != WA_INACTIVE) && (!fMinimized)) ? TRUE : FALSE;
 
-	if (psDeviceFlags2.test(rsAlwaysActive) && g_screenmode != 2)
+	// MCP mode keeps simulating/rendering when unfocused, like g_always_active
+	if ((psDeviceFlags2.test(rsAlwaysActive) || Core.ParamsData.test(ECoreParams::mcp_port)) && g_screenmode != 2)
 	{
 		Device.b_is_Active = TRUE;
 

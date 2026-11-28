@@ -3,6 +3,7 @@
 
 #include "xr_input.h"
 #include "IInputReceiver.h"
+#include "mcp_input.h"
 //#include "../include/editor/ide.hpp"
 
 #ifndef _EDITOR
@@ -63,6 +64,8 @@ CInput::CInput(BOOL bExclusive, int deviceForInit)
 	ZeroMemory(timeStamp, sizeof(timeStamp));
 	ZeroMemory(timeSave, sizeof(timeStamp));
 	ZeroMemory(offs, sizeof(offs));
+	ZeroMemory(mcpKBState, sizeof(mcpKBState));
+	ZeroMemory(mcpMouseState, sizeof(mcpMouseState));
 
 	//===================== Dummy pack
 	iCapture(&dummyController);
@@ -414,7 +417,7 @@ bool CInput::dik_to_text(int dik, bool shift, bool caps, bool ctrl, bool alt, bo
 BOOL CInput::iGetAsyncKeyState(int dik)
 {
 	if (dik < COUNT_KB_BUTTONS)
-		return !!KBState[dik];
+		return KBState[dik] || mcpKBState[dik];
 	else if (dik >= MOUSE_1 && dik <= MOUSE_8)
 	{
 		int mk = dik - MOUSE_1;
@@ -426,6 +429,8 @@ BOOL CInput::iGetAsyncKeyState(int dik)
 
 BOOL CInput::iGetAsyncBtnState(int btn)
 {
+	if (mcpMouseState[btn])
+		return TRUE;
 	if ((btn == 0 || btn == 1) && !!GetSystemMetrics(SM_SWAPBUTTON))
 		btn = btn == 0 ? 1 : 0;
 	return !!mouseState[btn];
@@ -725,6 +730,7 @@ void CInput::OnFrame(void)
 	dwCurTime = RDEVICE.TimerAsync_MMT();
 	if (pKeyboard) KeyUpdate();
 	if (pMouse) MouseUpdate();
+	mcp_input::on_frame();
 	RDEVICE.Statistic->Input.End();
 }
 
