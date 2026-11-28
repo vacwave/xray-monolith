@@ -42,3 +42,4 @@ Source: upstream git history (239 merged PRs since 2026-01) + `gh` reads of PR b
 - Shared code -> `dev`; MT-only or risky container changes -> `dev-mt` first.
 - Keep out of buckets: new threading, architecture changes, anything mod-visible (behaviour changes need an option, default off). LD1 (bump spin) and GC pacing stay separate decisions.
 - Gamedata script fixes (axr_main) = their own PR (all mods depend on them).
+- 2026-11-28 opened (vacwave, user): #899 dev "Fix 3DSS ADS stutter from texture reloads on shader swap" (4d84b6760), #900 dev-mt same (3fe34d561, FBasicVisual.cpp context differs: dev-mt uses Engine.External.SetSkinningMode), #901 dev "Faster axr_main callbacks: sort once, reorder lazily" (54a1c1679 + ed107dd17; dev-mt axr_main identical, applies to both). Applied locally to dev-mt-mcp and dev-mt-trace.
