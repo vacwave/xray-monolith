@@ -13,8 +13,8 @@ Workflow: root CLAUDE.md; agents coder / developer / reader / investigator / pla
 2. Re-apply dropped perf fixes one goal at a time (fixes.md; clean ones first). Upstream-worthy ones go as PRs per upstream.md bucketing.
 
 ## Repo housekeeping
-- Fork PRs #114-#133 closed 11-28, their pr-* branches deleted except pr-levelgraph-vertex-scan (#114). Older closed-PR branches origin/pr/* (lua-*, load-*, cpu-*, alife-1) still exist: ask before deleting.
-- Kept: upstream PR branches (dev-*, dev-mt-*), backups dev-mt-mcp-old-2026-11-28 / dev-mt-trace-old-2026-11-28, local perf-bundle-1 (stale). Folders dev-3dss-scopefix, dev-mt-3dss-scopefix, dev-lua-callback = open upstream PR clones (remove after merge).
-- origin/dev-mt-mcp = old tip 8f64f89d7 (ahead 98 / behind 158 of local): pushing needs force; decide with the user. It holds the dropped fix commits too.
+- Fork PRs #114-#133 closed 11-28. All old pr-*, pr/*, perf-bundle-1 and *-old-2026-11-28 branches deleted (user); commits only in perf-baseline\old-fixes-2026-11-28.bundle (fixes.md).
+- Kept: upstream PR branches (dev-*, dev-mt-*). Folders dev-3dss-scopefix, dev-mt-3dss-scopefix, dev-lua-callback = open upstream PR clones (remove after merge).
+- origin/dev-mt-mcp force-pushed 11-28 (user) = local dev-mt-mcp (old tip 8f64f89d7 is in the bundle).
 - dev-mt-mcp-dlss be743bae, behind upstream (VS2022 sln). D:\projects\dev-mt-dlss clone gone; re-clone before porting.
 - MCP bug: with `log_timestamps 1`, lua_exec / console_exec stall main 2 s (mcp_server.cpp). Not fixed.

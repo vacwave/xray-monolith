@@ -1,5 +1,5 @@
 # Fixes register (written 2026-11-28 after the clean rebase on upstream/dev-mt 7e27ed3d2)
-Every fix we made before the rebase, with where it is now. Source of the commits: local branch `dev-mt-mcp-old-2026-11-28` (c08b9989b) and `origin/dev-mt-mcp` (8f64f89d7, old tip, not force-pushed). Fork PR branches pr-* were deleted 11-28; the commits live on in those two refs. Measurements per ID: `perf-baseline\results.md` and `perfwork.md`.
+Every fix we made before the rebase, with where it is now. All old branches (dev-mt-mcp-old-2026-11-28, old origin/dev-mt-mcp 8f64f89d7, perf-bundle-1, dev-mt-trace-old, pr-*, pr/*) were deleted 11-28 (user). Only copy of the commits: `D:\projects\xray-monolith-mcp\perf-baseline\old-fixes-2026-11-28.bundle` (`git bundle list-heads <file>`, then `git fetch <file> refs/keep/old-dev-mt-mcp-backup:tmp` and cherry-pick the hash below). Measurements per ID: `perf-baseline\results.md` and `perfwork.md`.
 "apply" = `git apply --check` of the old commit on dev-mt-mcp 80e2589d1: clean = cherry-pick should work, conflict = redo by hand.
 Re-apply one goal at a time; after a fix goes upstream or is re-applied, update its line here.
 
@@ -28,6 +28,11 @@ Re-apply one goal at a time; after a fix goes upstream or is re-applied, update 
 
 ## Dropped: perf, conflict (redo by hand on the new base)
 - R3 41f943ca5 physics debug draw skip (Level.cpp); R4 a35a406da CB slot reassign + bound list; R6 3334c5193 sampler anisotropy variants; V1 55ad6d78f set_Constants handler list; V2 d28c44918 skinning one upload; V3 5fe55b9c8 static light constant names; F5 d2975cfd8 luabind pcall error handler reuse; F10 28b8e532d xrServer ID_to_entity flat array; bfc8b476c CLevelGraph::vertex row search; dd4c52261 GC prefetch (vs #892).
+
+## Older fork PRs #88-#108 (11-14/15, base dev-mt-perftest, never in dev-mt-mcp unless noted; bundle refs refs/keep/pr-<name>)
+- Covered elsewhere: lua-1 object scan (= F1), lua-3 pcall errfunc (= F5), load-1 fs rescan (= L1), load-2 unlocalizer (= L2), load-5 XML single parse (= X1, upstream #889), cpu-2 custom static (= F4).
+- Only on these branches: lua-2 resolve script functions in one namespace walk; load-3 fewer per-line allocs in LTX parse; load-4 no section copies in DLTX evaluate (= candidate I1); load-6 FS init stops parent walk at first registered folder; load-7 cube textures keep full mip chain; load-8 unaligned BC6H/BC7 loaded uncompressed instead of re-encode; load-9 request only remaining mips with reduced lod; cpu-1 frame limiter sleeps instead of spinning in menus/pause; cpu-3 xalloc default construct/destroy so containers move; cpu-4 ID_Cycle_Safe name lookup cache (= candidate PR107); alife-1 skip saved objects whose parent failed to load (stability, pairs with the missing-parent save fatal); lua-4 lua_parallel_gc_pause cvar (GC pause tuning: rejected).
+- Bundles #97 load-fixes, #98 lua-fixes, #108 cpu-fixes = the same commits combined.
 
 ## Never adopt again (user decisions)
 - E1 exist() cache (rejected 11-26); LT1 mem_usage HeapWalk (noise); L4, V4-V7, U5, U8, S2 (results.md "Rejected"); build-HUD-data-only-for-actor (11-26, no gain).

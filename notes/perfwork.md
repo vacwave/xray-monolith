@@ -3,7 +3,7 @@ Where things are: done + measured = `perf-baseline\results.md`; checked / reject
 
 ## Status of the work (2026-11-28)
 - Since the clean rebase (11-28) dev-mt-mcp has none of the perf fixes. Per-fix status (upstream / open PR / dropped, commit, clean or conflicting re-apply): `fixes.md`. Fork PRs #114-#133 closed 11-28.
-- Branch `perf-bundle-1` (local, not pushed, 11-21) = old upstream/dev-mt + 22 first-pass commits: stale.
+- Old branches deleted 11-28; commits in `perf-baseline\old-fixes-2026-11-28.bundle` (see fixes.md).
 
 ## Benchmark protocol
 - Fresh launch with `exe=`, import + load the fixed save (`performancetest` plain Anomaly / `gammaperftest` GAMMA, both Zaton Skadovsk 112,-1.3,178; files `perf-baseline\performancetest.*` / `gammaperftest.*`, import with game_saves), `r__framelimit 0`, guard off, 60 s warm-up, 3 x 100 s game_perf, object counts before/after, patrol() timing, 20 s Lua profile. Raw records `runs.jsonl`. Coordinator REPL helpers (`bench`, `cpuProfile`, `walkRun`, `mapRun`, `idleRun`, `prOne`, ...) exist only in the session that made them: re-create from these descriptions.
