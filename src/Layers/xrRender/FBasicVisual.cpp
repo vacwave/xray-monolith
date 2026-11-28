@@ -148,6 +148,8 @@ void dxRender_Visual::SetShaderTexture(LPCSTR s_shader, LPCSTR s_texture)
 	Engine.External.SetSkinningMode(skinning);
     	bool prev_hud = ::Render->hud_loading;
     	::Render->hud_loading = hud;
+    	// Keep the replaced shader until level unload: script swaps toggle back (3DSS ADS) and would reload its textures from disk
+    	if (shader) DEV->PinShader(shader);
     	shader.create(*dbg_shader, *dbg_texture);
     	::Render->hud_loading = prev_hud;
 }
