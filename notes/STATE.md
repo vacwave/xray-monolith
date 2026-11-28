@@ -7,7 +7,7 @@ Workflow: agents coder / developer / reader / investigator / playtest; root CLAU
 - dev-mt-trace HEAD 9082040ef = 7e27ed3d2 + trace MCP commit (cherry of 67e2472f5). Dropped axr_main 7ac18bef/a0fe497d; #892/#893 now upstream. Built clean 11-28 08:47.
 - Backups (local): dev-mt-mcp-old-2026-11-28 (c08b9989b + ae786c03f notes/user.ltx), dev-mt-trace-old-2026-11-28 (a0fe497d). Old fixes recoverable from there.
 - origin/dev-mt-mcp diverged (ahead 98 / behind 158): pushing needs force; decide with the user.
-- Not deployed: bin_mcp exes and C:\Anomaly\db\mods db0 are still the old (fixed) builds. For a clean comparison deploy both new exes and repack db0 from upstream gamedata (or remove our db0).
+- Deployed 11-28 08:55: bin_mcp AnomalyDX11AVX.exe (= e6b0f000d) and AnomalyDX11AVX_trace.exe (= 9082040ef), + pdbs; db\mods 00_modded_exes_gamedata.db0 = upstream gamedata. Old files kept as *.pre_clean.
 - Next: compare plain dev-mt vs issues (crash-fix round 2, C7 strongest; candidates.md "Stability"); re-apply fixes one goal at a time.
 
 ## Repos
