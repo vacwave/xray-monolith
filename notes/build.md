@@ -1,0 +1,15 @@
+# Build & packing
+- Toolchain (2026-11-25): VS Community 2026 (`C:\Program Files\Microsoft Visual Studio\18\Community`, MSVC 14.52, v145, MFC/ATL installed) + `src\engine-vs2026.sln`, after merging upstream dc358e56. First DX11-AVX build clean (0 errors); smoke load of performancetest fine. VS2022 stays installed for dev-mt-mcp-dlss until it syncs to upstream (no engine-vs2026.sln there yet). The local clone D:\projects\dev-mt-dlss no longer exists (2026-11-26); its branch lives on origin (`dev-mt-dlss`, 49861e0c).
+- Output: `$(SolutionDir)..\_build\_game\bin_dbg\` (Common.props:13,20) → `_build\_game\bin_dbg\AnomalyDX11AVX.exe`.
+- `src\3rd party` is on the global IncludePath (Common.props:19): header-only libs need no vcxproj edits.
+- ws2_32.lib is linked only via `#pragma comment` (optick-git, xrEngine/mcp_server.cpp).
+- Pack: `compressor\! compress_gamedata.cmd` runs `xrCompress.exe gamedata -ltx build_patch.ltx -pack -strong -1024 -db`; output likely `gamedata.db0` (unverified) → rename `00_modded_exes_gamedata.db0` → `C:\Anomaly\db\mods\`.
+- gamedata/: configs, levels, materials, meshes, scripts, shaders.
+- Check build output via Get-Item/ls, not Read (Read on _build is denied). Get-Item on _build may also be blocked; Copy-Item to C:\Anomaly\bin_mcp works, then check there.
+- C:\Anomaly user.ltx is a low-settings baseline with r__framelimit 30; uncap it (r__framelimit 0) before any FPS test.
+- Deploy rule (user, 2026-11-22, hard): our exes go only into `C:\Anomaly\bin_mcp\` (`AnomalyDX11AVX.exe` + pdb = MCP build, the default; a DLSS build = `AnomalyDX11AVX_DLSS.exe` + `nvngx_dlss.dll` and the 2 FidelityFX DLLs, only when asked). Never write to `C:\Anomaly\bin`. The supervisor copies the other DLLs from `bin` on launch.
+- Smoke run: Start-Process C:\Anomaly\bin_mcp\AnomalyDX11AVX.exe -WorkingDirectory C:\Anomaly; CloseMainWindow() shuts down cleanly; log C:\Anomaly\appdata\logs\xray_<user>.log.
+- Engine is one static exe (xrCore etc. linked in): only AnomalyDX11AVX.exe + .pdb change in bin_dbg.
+- Blocked duplicate instance (presence mutex) exits within seconds with code 0; detect by quick exit, not code.
+- Parallel smoke runs: each dev copies C:\Anomaly\bin to its own C:\Anomaly\bin_<tag> with its exe+pdb and passes `game_launch(exe=...)`; never overwrite C:\Anomaly\bin_mcp\AnomalyDX11AVX.exe while a game runs it.
+- New worktree/clone: run `git submodule update --init --recursive` first (src/3rd party/optick-git is a submodule; without it optick.vcxproj fails C1083).
